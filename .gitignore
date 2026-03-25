@@ -32,3 +32,5 @@ tools/sterilizer/docker/*.tar   # exported images (docker save)
 # Rust / therarbg-cli
 tools/therarbg-cli/target/
 tools/therarbg-cli/Cargo.lock
+
+tsconfig.tsbuildinfo
