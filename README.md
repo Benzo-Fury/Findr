@@ -14,10 +14,9 @@ Findr is a standalone, self hosted, web app for automatically downloading tv sho
 > [!WARNING]
 > The use of Findr may be **ILLEGAL** in your country or jurisdiction. Read our [disclaimer](#disclaimer) before using the project.
 
-<img src="/apps/web/public/ui-example.png" width="900px"/>
-
-> [!NOTE]
-> The UI is still under construction and is currently very basic. Expect a more polished UI soon.
+<img src="/apps/web/public/ui-example-1.png" width="900px"/>
+<img src="/apps/web/public/ui-example-2.png" width="900px"/>
+<img src="/apps/web/public/ui-example-3.png" width="900px"/>
 
 ## Features
 
