@@ -1,36 +1,108 @@
 @import "tailwindcss";
 
 @theme {
-  --color-background: oklch(1 0 0);
-  --color-foreground: oklch(0.145 0 0);
-  --color-card: oklch(1 0 0);
-  --color-card-foreground: oklch(0.145 0 0);
-  --color-popover: oklch(1 0 0);
-  --color-popover-foreground: oklch(0.145 0 0);
-  --color-primary: oklch(0.205 0 0);
-  --color-primary-foreground: oklch(0.985 0 0);
-  --color-secondary: oklch(0.97 0 0);
-  --color-secondary-foreground: oklch(0.205 0 0);
-  --color-muted: oklch(0.97 0 0);
-  --color-muted-foreground: oklch(0.556 0 0);
-  --color-accent: oklch(0.97 0 0);
-  --color-accent-foreground: oklch(0.205 0 0);
-  --color-destructive: oklch(0.577 0.245 27.325);
-  --color-destructive-foreground: oklch(0.577 0.245 27.325);
-  --color-border: oklch(0.922 0 0);
-  --color-input: oklch(0.922 0 0);
-  --color-ring: oklch(0.708 0 0);
+  --font-sans: "Outfit", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --color-findr-bg: #F8F8F8;
+  --color-findr-surface: #FFFFFF;
+  --color-findr-hover: #F5F5F5;
+  --color-findr-border: #E0E0E0;
+  --color-findr-amber: #f5a826;
+  --color-findr-amber-hover: #fbbf24;
+  --color-findr-text: #1A1A1A;
+  --color-findr-secondary: #666666;
+  --color-findr-tertiary: #999999;
+  --color-findr-success: #22c55e;
+  --color-findr-error: #ef4444;
+
+  --color-background: #F8F8F8;
+  --color-foreground: #1A1A1A;
+  --color-card: #FFFFFF;
+  --color-card-foreground: #1A1A1A;
+  --color-popover: #FFFFFF;
+  --color-popover-foreground: #1A1A1A;
+  --color-primary: #f5a826;
+  --color-primary-foreground: #1A1A1A;
+  --color-secondary: #F5F5F5;
+  --color-secondary-foreground: #666666;
+  --color-muted: #F5F5F5;
+  --color-muted-foreground: #666666;
+  --color-accent: #F5F5F5;
+  --color-accent-foreground: #1A1A1A;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #ef4444;
+  --color-border: #E0E0E0;
+  --color-input: #E0E0E0;
+  --color-ring: #f5a826;
+
   --radius-sm: 0.25rem;
   --radius-md: 0.375rem;
   --radius-lg: 0.5rem;
   --radius-xl: 0.75rem;
+
+  --animate-fade-in: fade-in 0.2s ease-out forwards;
+  --animate-slide-up: slide-up 0.3s ease-out forwards;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 body {
-  font-family:
-    system-ui,
-    -apple-system,
-    sans-serif;
+  font-family: var(--font-sans);
   background-color: var(--color-background);
   color: var(--color-foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #999999 #F0F0F0;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: #F0F0F0;
+}
+*::-webkit-scrollbar-thumb {
+  background: #999999;
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #f5a826;
+}
+
+button,
+a,
+select,
+[role="button"],
+[type="button"],
+[type="submit"],
+[type="reset"] {
+  cursor: pointer;
+}
+
+.poster-gradient {
+  background: linear-gradient(to bottom, transparent 0%, transparent 40%, rgba(0,0,0,0.4) 65%, rgba(0,0,0,0.95) 100%);
+}
+.group:hover .poster-gradient {
+  background: linear-gradient(to bottom, transparent 0%, transparent 30%, rgba(0,0,0,0.6) 55%, rgba(0,0,0,0.98) 100%);
+}
+
+@keyframes progress-stripes {
+  from { background-position: 1rem 0; }
+  to { background-position: 0 0; }
+}
+.progress-striped {
+  background-image: linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%,transparent);
+  background-size: 1rem 1rem;
+  animation: progress-stripes 1s linear infinite;
 }
