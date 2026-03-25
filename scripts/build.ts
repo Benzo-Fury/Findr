@@ -13,7 +13,7 @@ const start = performance.now()
 await Promise.all([
   $`bun run ${root}/apps/api/scripts/build.ts`,
   $`cd ${root}/apps/web && bunx tsc -b && bunx vite build`,
-  $`bun run ${root}/rust/therarbg-cli/build.ts`,
+  // $`bun run ${root}/rust/therarbg-cli/build.ts`, The rarbg is temporarily disabled 
 ])
 
 const elapsed = ((performance.now() - start) / 1000).toFixed(2)
