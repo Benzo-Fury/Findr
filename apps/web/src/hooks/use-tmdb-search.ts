@@ -5,7 +5,10 @@ export interface TMDBResult {
   title: string
   mediaType: "movie" | "tv"
   year: string
+  releaseDate: string
+  rating: number
   posterPath: string | null
+  overview: string
   imdbId?: string
 }
 
@@ -38,13 +41,19 @@ export function useTMDBSearch(query: string) {
         const mapped: TMDBResult[] = (data.results ?? [])
           .filter((r: any) => r.media_type === "movie" || r.media_type === "tv")
           .slice(0, 8)
-          .map((r: any) => ({
-            id: r.id,
-            title: r.media_type === "movie" ? r.title : r.name,
-            mediaType: r.media_type as "movie" | "tv",
-            year: (r.media_type === "movie" ? r.release_date : r.first_air_date)?.slice(0, 4) ?? "",
-            posterPath: r.poster_path,
-          }))
+          .map((r: any) => {
+            const rawDate = (r.media_type === "movie" ? r.release_date : r.first_air_date) ?? ""
+            return {
+              id: r.id,
+              title: r.media_type === "movie" ? r.title : r.name,
+              mediaType: r.media_type as "movie" | "tv",
+              year: rawDate.slice(0, 4),
+              releaseDate: rawDate,
+              rating: Math.round((r.vote_average ?? 0) * 10) / 10,
+              posterPath: r.poster_path,
+              overview: r.overview ?? "",
+            }
+          })
 
         setResults(mapped)
       } catch {
@@ -63,6 +72,7 @@ export function useTMDBSearch(query: string) {
 }
 
 export interface TMDBMeta {
+  tmdbId: number
   title: string
   year: string
   posterPath: string | null
@@ -82,6 +92,7 @@ export async function fetchTMDBByImdbId(imdbId: string): Promise<TMDBMeta | null
     const item = movie ?? tv
     if (!item) return null
     return {
+      tmdbId: item.id,
       title: movie ? item.title : item.name,
       year: (movie ? item.release_date : item.first_air_date)?.slice(0, 4) ?? "",
       posterPath: item.poster_path ?? null,

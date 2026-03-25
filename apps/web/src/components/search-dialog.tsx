@@ -16,9 +16,10 @@ const TMDB_IMAGE = "https://image.tmdb.org/t/p/w92"
 
 interface SearchDialogProps {
   onJobCreated: () => void
+  trigger?: React.ReactNode
 }
 
-export function SearchDialog({ onJobCreated }: SearchDialogProps) {
+export function SearchDialog({ onJobCreated, trigger }: SearchDialogProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [creating, setCreating] = useState<number | null>(null)
@@ -65,10 +66,12 @@ export function SearchDialog({ onJobCreated }: SearchDialogProps) {
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setQuery(""); setError("") } }}>
       <DialogTrigger asChild>
-        <Button>
-          <Search className="size-4" />
-          Search
-        </Button>
+        {trigger ?? (
+          <Button>
+            <Search className="size-4" />
+            Search
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
