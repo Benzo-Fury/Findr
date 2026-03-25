@@ -47,12 +47,7 @@ const sterilize: Stage<JoblineCtx> = {
     const job = ctx.job as any;
     const log = ctx.log as (msg: string, level?: string) => Promise<void>;
 
-    const topTorrent = ctx.topTorrent;
-    if (!topTorrent) {
-      await log(`[sterilize] No top torrent in context`, "error");
-      throw new Error("No torrent to sterilize");
-    }
-
+    const topTorrent = ctx.topTorrent!;
     const top = { torrent: topTorrent, score: topTorrent.score };
 
     const downloadDir = join(config.paths.download, job.id);
@@ -196,11 +191,9 @@ const sterilize: Stage<JoblineCtx> = {
         await log(`[sterilize] Transcoded: ${src.split("/").at(-1)} → ${name}`);
       }
 
-      await rm(downloadDir, { recursive: true, force: true });
-      await log(`[sterilize] Deleted download dir: ${downloadDir}`);
     } finally {
-      await qbt.removeTorrent(infoHash, false).catch(() => {});
-      await log(`[sterilize] Torrent removed from qBittorrent`);
+      await qbt.removeTorrent(infoHash, true).catch(() => {});
+      await log(`[sterilize] Torrent and download files removed from qBittorrent`);
     }
 
     await log(`[sterilize] Done — sterilized files at ${outputDir}`);
