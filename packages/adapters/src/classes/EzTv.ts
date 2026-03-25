@@ -66,13 +66,20 @@ export default class EzTv extends Adapter {
     return all;
   }
 
-  /** Filters by season/year and maps to Torrent. */
+  /** Matches titles containing an episode indicator (e.g. S01E05, E05). */
+  private static readonly EPISODE_PATTERN = /S\d+E\d+|(?<!\w)E\d+/i;
+
+  /**
+   * Filters by season and keeps only season packs (titles with a season
+   * number but no episode number), then maps to Torrent.
+   */
   private filter(torrents: EzTvTorrent[], ops: AdapterSearchParams): Torrent[] {
     const results: Torrent[] = [];
 
     for (const t of torrents) {
       const season = parseInt(t.season, 10);
       if (ops.season !== undefined && season !== ops.season) continue;
+      if (ops.season !== undefined && EzTv.EPISODE_PATTERN.test(t.title)) continue;
 
       const parsed = parseTorrentTitle(t.filename);
       results.push({
