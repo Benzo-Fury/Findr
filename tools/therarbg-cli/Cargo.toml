@@ -1,0 +1,16 @@
+[package]
+name = "therarbg-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+rayon = "1.10"
+reqwest = { version = "0.12", features = ["native-tls"] }
+scraper = "0.19"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+urlencoding = "2.1"

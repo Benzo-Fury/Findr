@@ -1,0 +1,11 @@
+{
+  "name": "@findr/adapters",
+  "private": true,
+  "version": "0.0.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@findr/types": "workspace:*"
+  }
+}

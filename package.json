@@ -1,0 +1,23 @@
+{
+  "name": "findr",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "bun run dev:api & bun run dev:web",
+    "dev:api": "bun --filter @findr/api dev",
+    "dev:web": "bun --filter @findr/web dev",
+
+    "build": "bun run scripts/build.ts",
+    "build:api": "bun --filter @findr/api build",
+    "build:web": "bun --filter @findr/web build",
+
+    "start": "NODE_ENV=production bun run dist/index.js"
+  },
+  "dependencies": {
+    "better-auth": "^1.4.18"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

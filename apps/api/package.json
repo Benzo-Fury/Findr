@@ -1,0 +1,27 @@
+{
+  "name": "@findr/api",
+  "module": "esnext",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "build": "bun run scripts/build.ts",
+    "start": "NODE_ENV=production bun run ../../dist/index.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "@ctrl/qbittorrent": "^9.11.2",
+    "@findr/adapters": "workspace:*",
+    "@findr/config": "workspace:*",
+    "@findr/types": "workspace:*",
+    "drizzle-orm": "^0.45.1",
+    "hono": "^4.11.10",
+    "postgres": "^3.4.8",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "drizzle-kit": "^0.31.10"
+  }
+}

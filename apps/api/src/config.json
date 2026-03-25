@@ -1,0 +1,28 @@
+{
+  "port": 3030,
+  "routeDefaults": {
+    "authenticated": false,
+    "rateLimit": {
+      "max": 60,
+      "window": 60
+    }
+  },
+  "paths": {
+    "logs": "/Users/neo/Documents/plex/logs",
+    "download": "/Users/neo/Documents/plex/raw",
+    "movies": "/Users/neo/Documents/plex/movies",
+    "series": "/Users/neo/Documents/plex/tv",
+    "ffmpeg": "ffmpeg"
+  },
+  "ffmpeg": {
+    "disableAutoEncoder": false,
+    "extraArgs": []
+  },
+  "naming": {
+    "movieFolder": "{title} ({year})",
+    "movieFile": "{title} ({year})",
+    "seriesFolder": "{title} ({year})",
+    "seasonFolder": "Season {season}",
+    "seriesFile": "{title} - S{season}E{episode}"
+  }
+}
