@@ -1,13 +1,17 @@
 import { useState, useEffect, useCallback } from "react"
-import { useNavigate, Navigate, NavLink } from "react-router-dom"
-import { Film, Tv, LogOut, Briefcase } from "lucide-react"
+import { useNavigate, Navigate } from "react-router-dom"
+import { Film, Tv } from "lucide-react"
 import { auth } from "@/lib/auth"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { SearchDialog } from "@/components/search-dialog"
 import { IndexDialog } from "@/components/index-dialog"
 import { fetchTMDBByImdbId, type TMDBMeta } from "@/hooks/use-tmdb-search"
 import type { IndexWithTorrents } from "@findr/types"
+
+interface GroupedIndex {
+  imdbId: string
+  indexes: IndexWithTorrents[]
+}
 
 const TMDB_IMAGE = "https://image.tmdb.org/t/p/w342"
 
@@ -17,7 +21,7 @@ export default function Home() {
   const [indexes, setIndexes] = useState<IndexWithTorrents[]>([])
   const [meta, setMeta] = useState<Record<string, TMDBMeta>>({})
   const [loadingIndexes, setLoadingIndexes] = useState(true)
-  const [selectedIndex, setSelectedIndex] = useState<IndexWithTorrents | null>(null)
+  const [selectedGroup, setSelectedGroup] = useState<GroupedIndex | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
 
   const fetchIndexes = useCallback(async () => {
@@ -26,7 +30,6 @@ export default function Home() {
       if (res.ok) {
         const data: IndexWithTorrents[] = await res.json()
         setIndexes(data)
-        // Fetch TMDB metadata for any new imdbIds
         const unknown = data.filter((idx) => !meta[idx.imdbId])
         await Promise.all(
           unknown.map(async (idx) => {
@@ -50,111 +53,114 @@ export default function Home() {
   if (isPending) return null
   if (!session) return <Navigate to="/login" replace />
 
-  async function handleSignOut() {
-    await auth.signOut()
-    navigate("/login")
-  }
+  const grouped: GroupedIndex[] = (() => {
+    const map = new Map<string, IndexWithTorrents[]>()
+    for (const idx of indexes) {
+      const existing = map.get(idx.imdbId)
+      if (existing) existing.push(idx)
+      else map.set(idx.imdbId, [idx])
+    }
+    return Array.from(map, ([imdbId, idxs]) => ({
+      imdbId,
+      indexes: idxs.sort((a, b) => (a.season ?? 0) - (b.season ?? 0)),
+    }))
+  })()
 
-  function openIndex(idx: IndexWithTorrents) {
-    setSelectedIndex(idx)
+  function openGroup(group: GroupedIndex) {
+    setSelectedGroup(group)
     setDialogOpen(true)
   }
 
   return (
-    <div className="mx-auto min-h-screen max-w-5xl px-4 py-8">
-      <header className="mb-8 flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <h1 className="text-xl font-bold tracking-tight">Findr</h1>
-          <nav className="flex items-center gap-4">
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) =>
-                `text-sm transition-colors ${isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`
-              }
-            >
+    <div className="max-w-[1600px] mx-auto">
+      {/* Page Header */}
+      <div className="sticky top-16 bg-findr-bg/95 backdrop-blur-md z-40 border-b border-findr-border">
+        <div className="px-6 py-6 md:py-8 flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-extrabold tracking-tight text-findr-text mb-2">
               Library
-            </NavLink>
-            <NavLink
-              to="/jobs"
-              className={({ isActive }) =>
-                `text-sm transition-colors ${isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`
-              }
-            >
-              Jobs
-            </NavLink>
-          </nav>
-        </div>
-        <div className="flex items-center gap-2">
+            </h1>
+            <p className="text-findr-secondary text-sm font-medium">
+              Your indexed movies and TV shows.
+            </p>
+          </div>
           <SearchDialog onJobCreated={() => navigate("/jobs")} />
-          <Button variant="ghost" size="icon" onClick={handleSignOut}>
-            <LogOut className="size-4" />
-          </Button>
         </div>
-      </header>
+      </div>
 
-      {loadingIndexes ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="space-y-2">
-              <Skeleton className="aspect-[2/3] w-full rounded-md" />
-              <Skeleton className="h-4 w-3/4" />
-              <Skeleton className="h-3 w-1/2" />
-            </div>
-          ))}
-        </div>
-      ) : indexes.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-24 text-center">
-          <Film className="size-12 text-muted-foreground/40 mb-4" />
-          <p className="text-sm font-medium text-muted-foreground">Library is empty</p>
-          <p className="text-xs text-muted-foreground/70 mt-1">
-            Search for a movie or series to index it
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {indexes.map((idx) => {
-            const m = meta[idx.imdbId]
-            return (
-              <button
-                key={idx.id}
-                onClick={() => openIndex(idx)}
-                className="group text-left"
-              >
-                <div className="overflow-hidden rounded-md bg-muted aspect-[2/3] mb-2 transition-all group-hover:ring-2 group-hover:ring-primary/50">
-                  {m?.posterPath ? (
-                    <img
-                      src={`${TMDB_IMAGE}${m.posterPath}`}
-                      alt=""
-                      className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center">
-                      {m?.mediaType === "tv" ? (
-                        <Tv className="size-8 text-muted-foreground/40" />
-                      ) : (
-                        <Film className="size-8 text-muted-foreground/40" />
-                      )}
-                    </div>
-                  )}
-                </div>
-                <p className="truncate text-sm font-medium">{m?.title ?? idx.imdbId}</p>
-                <p className="text-xs text-muted-foreground">
-                  {m?.year ?? ""}
-                  {idx.season != null ? ` · S${idx.season}` : ""}
-                </p>
-              </button>
-            )
-          })}
-        </div>
-      )}
+      <div className="p-6 md:p-8">
+        {loadingIndexes ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5 md:gap-6">
+            {Array.from({ length: 10 }).map((_, i) => (
+              <div key={i} className="aspect-[2/3]">
+                <Skeleton className="w-full h-full rounded-xl" />
+              </div>
+            ))}
+          </div>
+        ) : indexes.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-24 text-center">
+            <Film className="size-12 text-findr-tertiary/40 mb-4" />
+            <p className="text-sm font-medium text-findr-secondary">
+              Library is empty
+            </p>
+            <p className="text-xs text-findr-tertiary mt-1">
+              Search for a movie or series to index it
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5 md:gap-6">
+            {grouped.map((group) => {
+              const m = meta[group.imdbId]
+              const seasonCount = group.indexes.filter((i) => i.season != null).length
+              return (
+                <button
+                  key={group.imdbId}
+                  onClick={() => openGroup(group)}
+                  className="group text-left"
+                >
+                  <div className="overflow-hidden rounded-xl bg-findr-hover aspect-[2/3] mb-2 border border-findr-border transition-all group-hover:shadow-lg group-hover:border-findr-amber/40">
+                    {m?.posterPath ? (
+                      <img
+                        src={`${TMDB_IMAGE}${m.posterPath}`}
+                        alt=""
+                        className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center">
+                        {m?.mediaType === "tv" ? (
+                          <Tv className="size-8 text-findr-tertiary/40" />
+                        ) : (
+                          <Film className="size-8 text-findr-tertiary/40" />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <p className="truncate text-sm font-semibold text-findr-text">
+                    {m?.title ?? group.imdbId}
+                  </p>
+                  <p className="text-xs text-findr-secondary">
+                    {m?.year ?? ""}
+                    {seasonCount > 0 ? ` · ${seasonCount} season${seasonCount > 1 ? "s" : ""}` : ""}
+                  </p>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
 
       <IndexDialog
-        index={selectedIndex}
-        meta={selectedIndex ? (meta[selectedIndex.imdbId] ?? null) : null}
+        indexes={selectedGroup?.indexes ?? []}
+        meta={selectedGroup ? (meta[selectedGroup.imdbId] ?? null) : null}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        onRedownloaded={fetchIndexes}
+        onRedownloaded={() => {
+          setDialogOpen(false)
+          navigate("/jobs")
+        }}
+        onRemoved={() => fetchIndexes()}
+        onReindexed={() => navigate("/jobs")}
+        onSeasonIndexed={() => navigate("/jobs")}
       />
     </div>
   )
