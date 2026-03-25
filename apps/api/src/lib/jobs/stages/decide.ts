@@ -167,10 +167,12 @@ const decide: Stage<JoblineCtx> = {
 
     // Point index at the top torrent
     const topTorrent = insertedTorrents[0];
-    if (topTorrent) {
-      await db.update(indexes).set({ sourceId: topTorrent.id }).where(eq(indexes.id, index.id));
-      await log(`[decide] Set index sourceId=${topTorrent.id}`);
+    if (!topTorrent) {
+      throw new Error("No eligible torrents found");
     }
+
+    await db.update(indexes).set({ sourceId: topTorrent.id }).where(eq(indexes.id, index.id));
+    await log(`[decide] Set index sourceId=${topTorrent.id}`);
 
     return { scoredTorrents, index, topTorrent };
   },
