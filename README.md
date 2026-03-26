@@ -157,6 +157,10 @@ Videos downloaded from the Bittorrent network notoriously contain malware. Findr
 > [!NOTE]
 > Any other files that may have been downloaded (such as subtitles, cover photos, malware, etc) are deleted.
 
+## Attribution
+
+[Roundup](https://github.com/0xlunar/roundup) by [0xlunar](https://github.com/0xlunar) - Findr was inspired by this project, and the TheRARBG web scraper was derived from it.
+
 ## Disclaimer
 
 Findr is provided strictly for **educational and personal use**. The developers of Findr do not host, distribute, or index any copyrighted content. Findr is a tool that interacts with publicly available torrent indexers and the BitTorrent protocol. What you do with it is your responsibility.
