@@ -56,6 +56,13 @@ const EnvSchema = z.object({
 
   /** Enables the LLM relevance filter when present. */
   ANTHROPIC_API_KEY: optional,
+
+  /**
+   * The mkvmerge binary. Deliberately an env var rather than a UI setting: an
+   * executable path editable from the browser would let a hijacked admin
+   * session run arbitrary programs on the server.
+   */
+  MKVMERGE_PATH: z.string().default("mkvmerge"),
 });
 
 /** The validated environment, with defaults applied. */
