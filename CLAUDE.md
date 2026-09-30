@@ -25,6 +25,8 @@ cd apps/web && bunx tsc -b
 
 The Sterilizer and pipeline tests need `mkvmerge` and `ffmpeg` on PATH and are skipped without them.
 
+External services (Prowlarr, qBittorrent, optional FlareSolverr) run from `docker/`: `compose.example.yml` and `.env.example` are committed; `compose.yml`, `.env` and `config/` are personal and gitignored. qBittorrent mounts the downloads folder at its host path because Findr passes host paths to it. Setup steps are in `docker/README.md`.
+
 ## What Findr does
 
 A self-hosted downloader for movies and TV seasons. A request is a TMDB id (plus a season for shows); Findr then:

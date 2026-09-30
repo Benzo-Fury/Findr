@@ -1,0 +1,68 @@
+# External services Findr depends on: Prowlarr (indexer search) and
+# qBittorrent (downloads), plus FlareSolverr as an opt-in helper for indexers
+# behind Cloudflare. Findr itself runs outside this stack, on the host.
+#
+#   cp compose.example.yml compose.yml && cp .env.example .env   # then edit .env
+#   docker compose up -d                                         # add --profile flaresolverr to include it
+#
+# See README.md in this folder for first-run setup.
+
+name: findr-services
+
+services:
+  # ---------- Prowlarr ---------- #
+  # Indexer manager. Findr queries its search API with PROWLARR_API_KEY.
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:${PROWLARR_TAG:-latest}
+    container_name: findr-prowlarr
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Etc/UTC}
+      # Pins the API key so Findr's .env and Prowlarr agree from the first start
+      - PROWLARR__AUTH__APIKEY=${PROWLARR_API_KEY:?set PROWLARR_API_KEY in .env}
+    volumes:
+      - ${CONFIG_ROOT:-./config}/prowlarr:/config
+    ports:
+      - ${BIND_ADDRESS:-127.0.0.1}:${PROWLARR_PORT:-9696}:9696
+    restart: unless-stopped
+
+  # ---------- qBittorrent ---------- #
+  # Torrent client. Findr drives it over the Web API and tells it exactly where
+  # to save each attempt, using paths on the host. The downloads folder is
+  # therefore mounted at the *same absolute path* inside the container, so the
+  # paths Findr sends mean the same thing on both sides.
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:${QBITTORRENT_TAG:-latest}
+    container_name: findr-qbittorrent
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Etc/UTC}
+      - WEBUI_PORT=${QBT_WEBUI_PORT:-8080}
+      - TORRENTING_PORT=${QBT_TORRENTING_PORT:-6881}
+    volumes:
+      - ${CONFIG_ROOT:-./config}/qbittorrent:/config
+      # Must match Findr's Settings → Paths → Downloads
+      - ${FINDR_DOWNLOADS_DIR:?set FINDR_DOWNLOADS_DIR in .env}:${FINDR_DOWNLOADS_DIR}
+    ports:
+      # The Web UI port must be the same on both sides (WEBUI_PORT)
+      - ${BIND_ADDRESS:-127.0.0.1}:${QBT_WEBUI_PORT:-8080}:${QBT_WEBUI_PORT:-8080}
+      # Peer connections: open to the network so peers can reach you
+      - ${QBT_TORRENTING_PORT:-6881}:${QBT_TORRENTING_PORT:-6881}
+      - ${QBT_TORRENTING_PORT:-6881}:${QBT_TORRENTING_PORT:-6881}/udp
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  # ---------- FlareSolverr (optional) ---------- #
+  # Solves Cloudflare challenges for indexers that need it. Only started with
+  # `--profile flaresolverr`; add it in Prowlarr as an indexer proxy at
+  # http://flaresolverr:8191 and tag the indexers that need it.
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:${FLARESOLVERR_TAG:-latest}
+    container_name: findr-flaresolverr
+    profiles: [flaresolverr]
+    environment:
+      - TZ=${TZ:-Etc/UTC}
+      - LOG_LEVEL=info
+    restart: unless-stopped

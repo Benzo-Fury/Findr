@@ -43,8 +43,8 @@ Sign-up is disabled. On startup, if the database has no users, Findr creates an 
 |---|---|---|---|
 | `TMDB_API_KEY` | **Yes** | — | [TMDB](https://developer.themoviedb.org/) API key, for browsing, metadata, episode lists and naming. |
 | `PROWLARR_URL` | **Yes** | — | Base URL of your [Prowlarr](https://prowlarr.com/) instance, e.g. `http://localhost:9696`. |
-| `PROWLARR_API_KEY` | **Yes** | — | Prowlarr API key (Settings → General). Never stored in the database or sent to the browser: Prowlarr's download links are saved with the key removed, and it is re-attached only when Findr fetches from this URL. |
-| `QBT_URL` | No | `http://localhost:8080` | qBittorrent Web UI URL. qBittorrent must see the same filesystem paths as Findr. |
+| `PROWLARR_API_KEY` | **Yes** | — | Prowlarr API key (Settings → General; the Docker setup pins it from `docker/.env`). Never stored in the database or sent to the browser: Prowlarr's download links are saved with the key removed, and it is re-attached only when Findr fetches from this URL. |
+| `QBT_URL` | No | `http://localhost:8080` | qBittorrent Web UI URL. qBittorrent must see the same filesystem paths as Findr; in Docker, mount the downloads folder at its host path (see [`docker/`](../docker/README.md)). |
 | `QBT_USERNAME` | Yes* | — | qBittorrent Web UI username. *Unless qBittorrent bypasses auth for Findr's address. |
 | `QBT_PASSWORD` | Yes* | — | qBittorrent Web UI password. |
 | `MKVMERGE_PATH` | No | `mkvmerge` | mkvmerge binary, from [MKVToolNix](https://mkvtoolnix.download/). An env var on purpose — an executable path should not be editable from a browser. |

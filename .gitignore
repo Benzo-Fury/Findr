@@ -26,17 +26,10 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Docker
-# The image itself lives in Docker's internal storage (/var/lib/docker)
-# and is never in the project directory. These are the local artifacts
-# that can appear around Docker usage.
-.dockerignore
-docker-compose.override.yml
-tools/sterilizer/docker/*.tar   # exported images (docker save)
-
-# Rust / therarbg-cli
-tools/therarbg-cli/target/
-tools/therarbg-cli/Cargo.lock
+# Docker: personal copies of the examples, and container state
+docker/compose.yml
+docker/compose.override.yml
+docker/config/
 
 tsconfig.tsbuildinfo
 # Local, uncommitted notes

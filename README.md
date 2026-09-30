@@ -66,6 +66,8 @@ If any step fails because of the release, it is rejected with the reason, its fi
 | [Anthropic API key](https://console.anthropic.com/) *(optional)* | The wrong-title filter |
 | [Bun](https://bun.sh) 1.3+ | Only needed to build from source |
 
+Prowlarr and qBittorrent can run in Docker: [`docker/`](docker/README.md) has a Compose file for both (plus optional FlareSolverr) and a step-by-step setup guide.
+
 ## Installation
 
 ### From a binary
@@ -115,6 +117,8 @@ Every variable and setting is documented in **[docs/Config.md](docs/Config.md)**
 ### qBittorrent
 
 In qBittorrent → Preferences → Web UI: enable the Web UI and set a username and password matching `QBT_USERNAME` / `QBT_PASSWORD`. Findr tags everything it adds with `findr` and removes its torrents when each attempt ends; it does not seed.
+
+If qBittorrent runs in a container, mount the downloads folder at the same absolute path inside it as on the host, since Findr passes host paths. The [Docker setup](docker/README.md) does this for you.
 
 ## Usage
 
@@ -185,6 +189,7 @@ packages/
   config/               scoring weights (@findr/config/scoring)
 docs/
   Config.md             every environment variable and setting
+docker/                 Compose file and setup guide for Prowlarr, qBittorrent, FlareSolverr
 ```
 
 ## Attribution
