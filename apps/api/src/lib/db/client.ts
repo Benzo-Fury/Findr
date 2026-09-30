@@ -1,6 +1,6 @@
 /**
- * SQLite database client. Owns the single `bun:sqlite` connection the rest of
- * the application queries through, and applies the schema on startup.
+ * SQLite database client. Owns the single `bun:sqlite` connection the models
+ * query through, and migrates the schema on startup.
  *
  * The database file location comes from the `DATABASE_PATH` environment
  * variable, falling back to `findr.db` at the repository root. Passing
@@ -10,21 +10,9 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { jobsSchema } from "./schema/jobs";
-import { indexesSchema } from "./schema/indexes";
 import { env } from "../env/Env";
-
-/**
- * Every table and index the application owns, in dependency order. Each
- * statement is idempotent (`IF NOT EXISTS`), so applying the list to an
- * already-populated database is a no-op.
- *
- * BetterAuth's tables are deliberately absent: it derives its own schema from
- * its options and creates them through `migrateAuth`. The foreign keys onto
- * `user` still resolve, because SQLite checks them when a row is written
- * rather than when the table is declared.
- */
-const schema = [...jobsSchema, ...indexesSchema];
+import { migrations } from "./migrations";
+import { Migrator } from "./Migrator";
 
 /**
  * Owns the SQLite connection and keeps its schema up to date.
@@ -69,7 +57,7 @@ export class DatabaseClient {
 
     // Prepare the connection, then bring the schema up to date
     this.applyPragmas();
-    this.applySchema();
+    new Migrator(this.connection, migrations).migrate();
   }
 
   /**
@@ -110,19 +98,6 @@ export class DatabaseClient {
 
     // Wait rather than immediately erroring when another writer holds the lock
     this.connection.run("PRAGMA busy_timeout = 5000");
-  }
-
-  /**
-   * Creates any missing tables and indexes. This is create-only: it brings a
-   * fresh database up to the current schema but does not alter existing
-   * tables, so a change to a column that is already deployed needs a migration
-   * statement rather than an edit to the `CREATE TABLE` it came from.
-   */
-  private applySchema(): void {
-    // Apply the whole schema as one unit so a failure leaves nothing behind
-    this.connection.transaction(() => {
-      for (const statement of schema) this.connection.run(statement);
-    })();
   }
 
   /**

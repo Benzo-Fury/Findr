@@ -1,3 +1,8 @@
-Models are a way consumers and the codebase can interact with the db. All of the codebase requests data from the db via models. 
+Models are the only way the codebase talks to the database. Every table has a model class in this directory, and nothing outside it writes SQL.
 
-They then get an instanced class representing the row of the data they requested. Essentially an API to request data.
+- Static methods find, list and create rows (`Download.find(id)`, `Candidate.pendingFor(...)`).
+- They return model instances: one object per row, with typed camelCase fields and methods for the changes that row can undergo (`download.setStatus(...)`, `candidate.reject(reason)`).
+- Instances serialise themselves into the shared API types from `@findr/types` (`toSummary()`, `toRecord()`), so routes never shape rows by hand.
+- Multi-model writes go through `Model.transaction(() => ...)`.
+
+Schema changes are migrations in `../migrations.ts`, applied by `../Migrator.ts` on startup.
