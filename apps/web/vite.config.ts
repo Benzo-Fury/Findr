@@ -7,14 +7,14 @@ const dirname = import.meta.dirname
 
 /**
  * The app is served from the root of the API in both environments — Vite's
- * dev server behind the API's proxy, and the built output from `dist/public/`
- * in production — so there is no base path to configure. Static assets in
- * `public/` are copied into that same output directory.
+ * dev server behind the API's proxy, and in production the files the API build
+ * embeds from `apps/web/dist/` — so there is no base path to configure. Static
+ * assets in `public/` are copied into that same output directory.
  */
 export default defineConfig({
   plugins: [tailwindcss(), react()],
   build: {
-    outDir: path.resolve(dirname, "../../dist/public"),
+    outDir: path.resolve(dirname, "dist"),
     emptyOutDir: true,
   },
   server: {

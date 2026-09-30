@@ -40,7 +40,7 @@ export type MethodEntry = Handler | MethodConfig
  * location within `src/routes/` — it is not specified here.
  *
  * Defaults for `authenticated` and `rateLimit` are applied by `factory`
- * from `config.json` — only override what differs.
+ * from `ROUTE_DEFAULTS` — only override what differs.
  */
 export type Route = {
   authenticated?: boolean

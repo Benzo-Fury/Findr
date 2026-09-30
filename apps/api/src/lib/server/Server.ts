@@ -9,12 +9,12 @@
 
 import { Hono } from "hono"
 import { METHODS } from "hono/router"
-import { serveStatic } from "hono/bun"
 import type { Route, HttpMethod } from "../../types/Route"
-import config from "../../config.json"
+import { env } from "../env/Env"
 import { requireAuth } from "../../middleware/requireAuth"
 import { validateBody } from "../../middleware/validateBody"
 import { derivePath } from "../routing/derivePath"
+import { WebAssets } from "./WebAssets"
 
 /**
  * Application HTTP server.
@@ -30,12 +30,12 @@ import { derivePath } from "../routing/derivePath"
  */
 export class Server extends Hono {
   /**
-   * Binds the server to the port specified in `config.json` via `Bun.serve`.
+   * Binds the server to the `PORT` environment variable via `Bun.serve`.
    * Must be called after `constructRoutes` has registered all endpoints.
    */
   start() {
-    Bun.serve({ fetch: this.fetch, port: config.port })
-    console.log(`[Server] Listening on port ${config.port}`)
+    Bun.serve({ fetch: this.fetch, port: env.PORT })
+    console.log(`[Server] Listening on port ${env.PORT}`)
   }
 
   /**
@@ -70,24 +70,24 @@ export class Server extends Hono {
     }
 
     console.log(`[Server] Registered ${Object.keys(routes).length} routes`)
-    this.mountWebApp()
+    await this.mountWebApp()
   }
 
   /**
    * Serves the web app at `/`.
    *
-   * In production, serves pre-built static files from `dist/public/` with
-   * an SPA fallback to `index.html` for client-side routing.
-   * In development, proxies all non-API requests to the Vite dev server
-   * so HMR and other dev features work seamlessly.
+   * In production, serves the files the asset map embedded into the build —
+   * next to the bundle, or inside a compiled executable — with an SPA fallback
+   * to `index.html` for client-side routing. In development, proxies all
+   * non-API requests to the Vite dev server so HMR works seamlessly.
    */
-  private mountWebApp() {
+  private async mountWebApp() {
     if (process.env.NODE_ENV === "production") {
-      const root = import.meta.dir + "/public"
+      const { assets } = await import("../../_asset.map")
+      const web = new WebAssets(assets)
 
-      this.use("/*", serveStatic({ root }))
-      this.get("*", serveStatic({ root, path: "index.html" }))
-      console.log("[Server] Mounted web app (static files)")
+      this.get("*", (c) => web.serve(c))
+      console.log(`[Server] Mounted web app (${Object.keys(assets).length} embedded files)`)
     } else {
       console.log("[Server] Mounted web app (dev proxy)")
       this.all("*", async (c) => {

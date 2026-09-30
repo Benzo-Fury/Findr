@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth"
 import { database } from "../db/client"
+import { env } from "../env/Env"
 
 /**
  * BetterAuth instance. Handed the raw `bun:sqlite` connection, which BetterAuth
@@ -13,8 +14,9 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
   },
-  baseURL: process.env.BASE_URL,
-  trustedOrigins: process.env.NODE_ENV === "development"
+  baseURL: env.BASE_URL,
+  secret: env.BETTER_AUTH_SECRET,
+  trustedOrigins: env.NODE_ENV === "development"
     ? ["http://localhost:5173"]
     : [],
 })

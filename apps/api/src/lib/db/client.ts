@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { jobsSchema } from "./schema/jobs";
 import { indexesSchema } from "./schema/indexes";
+import { env } from "../env/Env";
 
 /**
  * Every table and index the application owns, in dependency order. Each
@@ -52,7 +53,7 @@ export class DatabaseClient {
    * working directory, so the same file is used whether the API is started
    * from the repo root, from `apps/api`, or from the production bundle.
    */
-  constructor(path: string = process.env.DATABASE_PATH ?? "findr.db") {
+  constructor(path: string = env.DATABASE_PATH) {
     this.ephemeral = path === ":memory:" || path === "";
 
     // Anchor relative paths to the repo root; leave in-memory names alone

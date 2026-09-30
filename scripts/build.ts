@@ -1,20 +1,27 @@
 /**
- * Production build pipeline. Builds both the API and web app in parallel.
+ * Production build orchestrator. Builds the web app, then the API — in that
+ * order, because the API build embeds the web app's output.
  *
- * Invokes each app's own build script so the logic stays local to each app.
- * Run via `bun run build` from the repo root.
+ * Produces `dist/index.js` (a single JS bundle, run with `bun`), `dist/web/`
+ * (the web files that bundle serves), and `dist/findr` (a standalone
+ * executable with everything embedded).
+ *
+ * Invokes each app's own build so the logic stays local to each app. Run via
+ * `bun run build` from the repo root.
  */
 
 import { $ } from "bun"
+import { rm } from "node:fs/promises"
 
 const root = `${import.meta.dir}/..`
 const start = performance.now()
 
-await Promise.all([
-  $`bun run ${root}/apps/api/scripts/build.ts`,
-  $`cd ${root}/apps/web && bunx tsc -b && bunx vite build`,
-  $`bun run ${root}/tools/therarbg-cli/build.ts`,
-])
+// Start from an empty dist so stale hashed assets never ship
+await rm(`${root}/dist`, { recursive: true, force: true })
+
+// Web first — the API build embeds its output
+await $`cd ${root}/apps/web && bunx tsc -b && bunx vite build`
+await $`bun run ${root}/apps/api/scripts/build.ts`
 
 const elapsed = ((performance.now() - start) / 1000).toFixed(2)
 console.log(`Build complete in ${elapsed}s.`)

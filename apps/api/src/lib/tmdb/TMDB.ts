@@ -15,11 +15,13 @@ import type {
   TMDBMediaType,
 } from "@findr/types";
 import SelfManagedSingleton from "../other/SelfManagedSingleton";
+import { env } from "../env/Env";
 import {
   FEED_ROWS,
   LIST_SOURCES,
   resolveParams,
   type FeedRow,
+  type ListSource,
   type ListSourceKey,
 } from "./sources";
 
@@ -88,7 +90,7 @@ export default class TMDB extends SelfManagedSingleton {
    * correct within the page but not across page boundaries.
    */
   public async list(key: ListSourceKey, options: ListOptions = {}): Promise<PosterPage> {
-    const source = LIST_SOURCES[key];
+    const source: ListSource = LIST_SOURCES[key];
     const page = this.clampPage(options.page ?? 1);
     const params = { ...resolveParams(source), page: String(page) };
 
@@ -225,7 +227,7 @@ export default class TMDB extends SelfManagedSingleton {
     path: string,
     params: Record<string, string> = {},
   ): Promise<T> {
-    const key = process.env.TMDB_API_KEY;
+    const key = env.TMDB_API_KEY;
     if (!key) throw new TMDBError("TMDB_API_KEY is not configured");
 
     const url = new URL(`${BASE_URL}${path}`);

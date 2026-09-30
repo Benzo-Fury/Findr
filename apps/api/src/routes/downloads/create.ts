@@ -19,7 +19,8 @@ const downloadSchema = z.object({
 });
 
 export default factory({
-    GET: {
+    authenticated: true,
+    POST: {
         handler: async (ctx) => {
             const { title } = ctx.get("body") as z.infer<typeof downloadSchema>;
 

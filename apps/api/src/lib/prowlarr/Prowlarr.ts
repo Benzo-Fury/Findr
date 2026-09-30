@@ -11,6 +11,7 @@
  * failures as a short array, not an error status.
  */
 
+import { env } from "../env/Env";
 import SelfManagedSingleton from "../other/SelfManagedSingleton";
 
 /* ------------------------------------------------------------------------ */
@@ -174,8 +175,8 @@ export default class Prowlarr extends SelfManagedSingleton {
 
   /** Reads and validates the Prowlarr connection details from the env. */
   private credentials(): { baseUrl: string; apiKey: string } {
-    const baseUrl = process.env.PROWLARR_URL;
-    const apiKey = process.env.PROWLARR_API_KEY;
+    const baseUrl = env.PROWLARR_URL;
+    const apiKey = env.PROWLARR_API_KEY;
 
     if (!baseUrl) throw new ProwlarrError("PROWLARR_URL is not configured");
     if (!apiKey) throw new ProwlarrError("PROWLARR_API_KEY is not configured");
