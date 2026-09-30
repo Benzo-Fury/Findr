@@ -128,7 +128,7 @@ Secrets and service credentials are configured via environment variables in `app
 | Variable | Required | Description |
 |---|---|---|
 | `NODE_ENV` | No | Set to `development` or `production`. Controls trusted auth origins and console log output. Defaults to `development`. |
-| `DATABASE_URL` | Yes | PostgreSQL connection string. Example: `postgres://localhost:5432/findr` |
+| `DATABASE_PATH` | No | Path to the SQLite database file. Relative paths resolve from the repo root. Defaults to `findr.db`. |
 | `BETTER_AUTH_SECRET` | Yes | Secret key used to encrypt sessions. Generate a long random string (e.g. `openssl rand -hex 32`). |
 | `BASE_URL` | Yes | The base URL of the API server, used by BetterAuth for redirects. Example: `http://localhost:3030` |
 | `TMDB_API_KEY` | Yes | API key from [TMDB](https://developer.themoviedb.org/). Used to fetch movie/series metadata (titles, years) for naming and library organization. Free to register. |

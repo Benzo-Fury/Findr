@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="/apps/web/public/findr-banner-rounded.png" width="900px"/>
+  <img src="apps/web/public/findr-banner-rounded.png" width="900px"/>
   <h1>Find. Anything.</h1>
   <h4>Automated torrent downloader for movies and tv shows.</h4>
 </div>
@@ -16,11 +16,11 @@ Findr is a standalone, self hosted, web app for automatically downloading tv sho
 
 <table>
   <tr>
-    <td><img src="/apps/web/public/ui-example-1.png" width="450px"/></td>
-    <td><img src="/apps/web/public/ui-example-2.png" width="450px"/></td>
+    <td><img src="apps/web/public/ui-example-1.png" width="450px"/></td>
+    <td><img src="apps/web/public/ui-example-2.png" width="450px"/></td>
   </tr>
   <tr>
-    <td colspan="2" align="center"><img src="/apps/web/public/ui-example-3.png" width="450px"/></td>
+    <td colspan="2" align="center"><img src="apps/web/public/ui-example-3.png" width="450px"/></td>
   </tr>
 </table>
 
@@ -62,7 +62,6 @@ You'll need the following installed on your system before setting up Findr:
 | -------------------------------------------------- | ------------------------------------------------ |
 | [Bun](https://bun.sh)                              | JavaScript runtime & package manager             |
 | [Rust/Cargo](https://rustup.rs)                    | Compiles the `therarbg-cli` torrent scraper      |
-| [PostgreSQL](https://www.postgresql.org/download/) | Database for jobs, indexes, and auth             |
 | [qBittorrent](https://www.qbittorrent.org/)        | Torrent download client (Web UI must be enabled) |
 | [ffmpeg](https://ffmpeg.org/download.html)         | Video re-encoding & sterilization                |
 | [TMDB API Key](https://developer.themoviedb.org/)  | Movie & TV metadata (free to register)           |
@@ -83,7 +82,6 @@ Create `apps/api/.env`:
 
 ```env
 NODE_ENV=development
-DATABASE_URL=postgres://localhost:5432/findr
 BETTER_AUTH_SECRET=<generate-a-secure-random-string>
 BASE_URL=http://localhost:3030
 TMDB_API_KEY=<your-tmdb-api-key>
@@ -117,14 +115,15 @@ Edit `apps/api/src/config.json` and set the directory paths for your system:
 > [!NOTE]
 > All directories must exist before starting Findr. The `download` path is temporary storage during sterilization. Finished files are moved to `movies` or `series`.
 
-**4. Initialize the database**
+**4. The database**
 
-Create a PostgreSQL database called `findr`, then push the schema:
+Nothing to set up. Findr uses SQLite through Bun's built-in driver, so there is
+no database server to install or start. The database file is created at
+`findr.db` in the repo root the first time the API runs, and the schema is
+applied automatically on startup.
 
-```bash
-createdb findr
-bun db:push
-```
+To keep it somewhere else, set `DATABASE_PATH` in `apps/api/.env` — relative
+paths resolve from the repo root.
 
 **5. Enable qBittorrent Web UI**
 
@@ -152,7 +151,7 @@ Findr runs on `http://localhost:3030`. The API and web UI are served from the sa
 Videos downloaded from the Bittorrent network notoriously contain malware. Findr combats this 2 ways:
 
 1. **Reputable Sources** - Findr only get's its sources from reputable services.
-2. **FFMPEG Re-Encoding** - Findr runs FFMPEG over all downloaded video files, reducing the attack vector for malware (see [Video Re-Encoding](/docs/Video_Re-Encoding.md)).
+2. **FFMPEG Re-Encoding** - Findr runs FFMPEG over all downloaded video files, reducing the attack vector for malware (see [Video Re-Encoding](docs/Video_Re-Encoding.md)).
 
 > [!NOTE]
 > Any other files that may have been downloaded (such as subtitles, cover photos, malware, etc) are deleted.
@@ -172,3 +171,13 @@ Downloading copyrighted material without permission may be **illegal** in your c
 - Findr was developed and tested exclusively using content uploaded by the developers themselves
 
 **If you are unsure whether using Findr is legal where you live, do not use it.**
+
+## Aditional Functionality I want (dont commit this)
+- Auto updating (doesn't overwrite config's and env's)
+- Improved logging in the dashboard for jobs (sterilization 60% complete).
+- Improved Qbittorrent bridge (create a class for interacting with qbittorrent that handles it's connection and provides improved error handling when qbittorrent fails/isn't working. Would be cool if It can identify outbound connections aren't working.)
+- Admin Dashboard
+- Track how long job took (create median)
+- Signup support (enable or disable)
+- Either encode as av1 and disable transcoding (need modern device) or save as is and then re-encode - allows users to watch quickly and overwrite later.
+- Torrents dialog shows the torrent source and the index it came from.  

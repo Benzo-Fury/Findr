@@ -3,10 +3,18 @@ import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import path from "path"
 
+const dirname = import.meta.dirname
+
+/**
+ * The app is served from the root of the API in both environments — Vite's
+ * dev server behind the API's proxy, and the built output from `dist/public/`
+ * in production — so there is no base path to configure. Static assets in
+ * `public/` are copied into that same output directory.
+ */
 export default defineConfig({
   plugins: [tailwindcss(), react()],
   build: {
-    outDir: path.resolve(__dirname, "../../dist/public"),
+    outDir: path.resolve(dirname, "../../dist/public"),
     emptyOutDir: true,
   },
   server: {
@@ -16,7 +24,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(dirname, "./src"),
     },
   },
 })

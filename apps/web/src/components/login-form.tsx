@@ -1,104 +1,105 @@
-import { useState } from "react"
-import { useNavigate, Link } from "react-router-dom"
-import { cn } from "@/lib/utils"
-import { auth } from "@/lib/auth"
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
+import * as React from "react"
 
-export function LoginForm({
-  className,
-  ...props
-}: React.ComponentProps<"div">) {
-  const navigate = useNavigate()
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
-  const [error, setError] = useState("")
-  const [loading, setLoading] = useState(false)
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { cn } from "@/lib/utils"
+import { signIn } from "@/lib/auth"
+import { MediaGrid } from "@/components/media-grid"
+
+/**
+ * Sign-in is the only way into the app. Accounts are provisioned out of band,
+ * so there is no registration form and nothing here links to one.
+ */
+
+interface LoginFormProps extends React.ComponentProps<"form"> {
+  onSuccess?: () => void
+}
+
+export function LoginForm({ className, onSuccess, ...props }: LoginFormProps) {
+  const [email, setEmail] = React.useState("")
+  const [password, setPassword] = React.useState("")
+  const [error, setError] = React.useState<string | null>(null)
+  const [isPending, setIsPending] = React.useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setError("")
-    setLoading(true)
+    setError(null)
+    setIsPending(true)
 
-    const { error: authError } = await auth.signIn.email({
-      email,
-      password,
-    })
+    const { error } = await signIn.email({ email, password })
 
-    setLoading(false)
+    setIsPending(false)
 
-    if (authError) {
-      setError(authError.message ?? "Failed to sign in")
-      return
+    if (error) {
+      setError(error.message ?? "Invalid email or password.")
+    } else {
+      onSuccess?.()
     }
-
-    navigate("/")
   }
 
   return (
-    <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <Card>
-        <CardHeader>
-          <CardTitle>Welcome back</CardTitle>
-          <CardDescription>
-            Sign in to your Findr account
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit}>
-            <FieldGroup>
-              {error && (
-                <p className="text-sm text-destructive text-center">{error}</p>
-              )}
-              <Field>
-                <FieldLabel htmlFor="email">Email</FieldLabel>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="you@example.com"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="password">Password</FieldLabel>
-                <Input
-                  id="password"
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </Field>
-              <Field>
-                <Button type="submit" disabled={loading}>
-                  {loading ? "Signing in..." : "Sign in"}
-                </Button>
-                <FieldDescription className="text-center">
-                  Don&apos;t have an account?{" "}
-                  <Link to="/signup" className="underline underline-offset-4">
-                    Sign up
-                  </Link>
-                </FieldDescription>
-              </Field>
-            </FieldGroup>
-          </form>
-        </CardContent>
-      </Card>
+    <form
+      className={cn("flex flex-col gap-6", className)}
+      onSubmit={handleSubmit}
+      {...props}
+    >
+      <div className="flex flex-col items-center gap-1 text-center">
+        <h1 className="text-2xl font-bold">Login to your account</h1>
+        <p className="text-sm text-balance text-muted-foreground">
+          Enter your email below to login to your account
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            placeholder="m@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="password">Password</Label>
+          <Input
+            id="password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+        </div>
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+
+        <Button type="submit" disabled={isPending}>
+          {isPending ? "Logging in..." : "Login"}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+export function LoginPage({ onSuccess }: { onSuccess?: () => void }) {
+  return (
+    <div className="relative min-h-svh overflow-hidden bg-black">
+      <MediaGrid />
+      <div className="relative z-30 flex min-h-svh items-center justify-center p-4">
+        <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-background/90 p-8 shadow-2xl backdrop-blur-md">
+          <div className="mb-8 flex items-center justify-center gap-2">
+            <img src="/findr-logo.svg" alt="Findr" className="size-7" />
+            <span className="text-lg font-bold" style={{ color: "oklch(0.77 0.165 70)" }}>
+              Findr
+            </span>
+          </div>
+          <LoginForm onSuccess={onSuccess} />
+        </div>
+      </div>
     </div>
   )
 }

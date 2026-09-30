@@ -83,7 +83,7 @@ export class Server extends Hono {
    */
   private mountWebApp() {
     if (process.env.NODE_ENV === "production") {
-      const root = import.meta.dir + "/../public"
+      const root = import.meta.dir + "/public"
 
       this.use("/*", serveStatic({ root }))
       this.get("*", serveStatic({ root, path: "index.html" }))

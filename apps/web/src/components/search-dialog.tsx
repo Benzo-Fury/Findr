@@ -1,155 +1,133 @@
-import { useState } from "react"
-import { Search, Film, Tv, Loader2 } from "lucide-react"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
+import * as React from "react"
+import { Search, Film, Tv, Loader2, X } from "lucide-react"
+import { Dialog, DialogContent } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { useTMDBSearch, fetchIMDbId, type TMDBResult } from "@/hooks/use-tmdb-search"
+import { searchTMDB } from "@/lib/api"
+import type { PosterItem } from "@/lib/types"
 
-const TMDB_IMAGE = "https://image.tmdb.org/t/p/w92"
+/**
+ * Title search. The API returns results already narrowed to movies and shows
+ * in the same poster shape the grids use, so a pick can be handed straight to
+ * the title dialog.
+ */
 
 interface SearchDialogProps {
-  onJobCreated: () => void
-  trigger?: React.ReactNode
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSelectItem?: (item: PosterItem) => void
 }
 
-export function SearchDialog({ onJobCreated, trigger }: SearchDialogProps) {
-  const [open, setOpen] = useState(false)
-  const [query, setQuery] = useState("")
-  const [creating, setCreating] = useState<number | null>(null)
-  const [error, setError] = useState("")
-  const { results, loading } = useTMDBSearch(query)
+const POSTER_BASE = "https://image.tmdb.org/t/p/w92"
 
-  async function handleSelect(result: TMDBResult) {
-    setError("")
-    setCreating(result.id)
+/** Wait for typing to settle before spending a request. */
+const DEBOUNCE_MS = 300
 
-    try {
-      const imdbId = await fetchIMDbId(result.id, result.mediaType)
-      if (!imdbId) {
-        setError("Could not find IMDb ID for this title")
-        setCreating(null)
-        return
-      }
+export function SearchDialog({ open, onOpenChange, onSelectItem }: SearchDialogProps) {
+  const [query, setQuery] = React.useState("")
+  const [results, setResults] = React.useState<PosterItem[]>([])
+  const [searching, setSearching] = React.useState(false)
+  const inputRef = React.useRef<HTMLInputElement>(null)
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout>>(undefined)
 
-      const res = await fetch("/api/jobs/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          imdbId,
-          ...(result.mediaType === "tv" ? { season: 1 } : {}),
-        }),
-      })
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => null)
-        throw new Error(data?.message ?? `Request failed (${res.status})`)
-      }
-
-      setOpen(false)
+  React.useEffect(() => {
+    if (open) {
       setQuery("")
-      onJobCreated()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create job")
-    } finally {
-      setCreating(null)
+      setResults([])
+      setTimeout(() => inputRef.current?.focus(), 50)
     }
+  }, [open])
+
+  function handleSearch(value: string) {
+    setQuery(value)
+    clearTimeout(debounceRef.current)
+
+    if (value.trim().length < 2) {
+      setResults([])
+      return
+    }
+
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true)
+      try {
+        const data = await searchTMDB(value)
+        setResults(data.results.slice(0, 8))
+      } catch {
+        setResults([])
+      }
+      setSearching(false)
+    }, DEBOUNCE_MS)
+  }
+
+  function handleSelect(item: PosterItem) {
+    onOpenChange(false)
+    onSelectItem?.(item)
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setQuery(""); setError("") } }}>
-      <DialogTrigger asChild>
-        {trigger ?? (
-          <Button>
-            <Search className="size-4" />
-            Search
-          </Button>
-        )}
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Find a movie or series</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search movies & TV shows..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="pl-9"
-              autoFocus
-            />
-          </div>
-
-          {error && (
-            <p className="text-sm text-destructive">{error}</p>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md gap-0 overflow-hidden p-0">
+        <div className="flex items-center gap-2 border-b px-3">
+          <Search className="size-4 shrink-0 text-muted-foreground" />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => handleSearch(e.target.value)}
+            placeholder="Search movies and TV shows..."
+            className="flex-1 bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground"
+          />
+          {searching && (
+            <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
           )}
-
-          {loading && (
-            <div className="flex items-center justify-center py-6 text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-            </div>
-          )}
-
-          {!loading && results.length > 0 && (
-            <div className="max-h-80 space-y-1 overflow-y-auto">
-              {results.map((result) => (
-                <button
-                  key={`${result.mediaType}-${result.id}`}
-                  onClick={() => handleSelect(result)}
-                  disabled={creating !== null}
-                  className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-colors hover:bg-accent disabled:opacity-50"
-                >
-                  {result.posterPath ? (
-                    <img
-                      src={`${TMDB_IMAGE}${result.posterPath}`}
-                      alt=""
-                      className="h-14 w-10 rounded object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-14 w-10 items-center justify-center rounded bg-muted">
-                      {result.mediaType === "movie" ? (
-                        <Film className="size-4 text-muted-foreground" />
-                      ) : (
-                        <Tv className="size-4 text-muted-foreground" />
-                      )}
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="truncate font-medium text-sm">
-                      {result.title}
-                    </p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      {result.year && (
-                        <span className="text-xs text-muted-foreground">{result.year}</span>
-                      )}
-                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                        {result.mediaType === "movie" ? "Movie" : "Series"}
-                      </Badge>
-                    </div>
-                  </div>
-                  {creating === result.id && (
-                    <Loader2 className="size-4 animate-spin text-muted-foreground" />
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {!loading && query.length >= 2 && results.length === 0 && (
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              No results found
-            </p>
-          )}
+          <button
+            onClick={() => onOpenChange(false)}
+            className="rounded-md p-1 text-muted-foreground hover:text-foreground"
+          >
+            <X className="size-4" />
+          </button>
         </div>
+
+        {results.length > 0 && (
+          <div className="max-h-80 overflow-y-auto p-1">
+            {results.map((item) => (
+              <button
+                key={`${item.mediaType}-${item.id}`}
+                onClick={() => handleSelect(item)}
+                className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted"
+              >
+                {item.posterPath ? (
+                  <img
+                    src={`${POSTER_BASE}${item.posterPath}`}
+                    alt={item.title}
+                    className="size-10 rounded object-cover"
+                  />
+                ) : (
+                  <div className="flex size-10 items-center justify-center rounded bg-muted">
+                    {item.mediaType === "movie" ? (
+                      <Film className="size-4 text-muted-foreground" />
+                    ) : (
+                      <Tv className="size-4 text-muted-foreground" />
+                    )}
+                  </div>
+                )}
+
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{item.title}</p>
+                  <p className="text-xs text-muted-foreground">{item.year}</p>
+                </div>
+
+                <Badge variant={item.mediaType === "movie" ? "success" : "warning"}>
+                  {item.mediaType === "movie" ? "Movie" : "Series"}
+                </Badge>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {query.trim().length >= 2 && !searching && results.length === 0 && (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            No results found
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   )

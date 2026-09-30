@@ -1,53 +1,81 @@
-import {
-  pgTable,
-  uuid,
-  text,
-  integer,
-  real,
-  timestamp,
-  foreignKey,
-  uniqueIndex,
-  type AnyPgColumn,
-} from "drizzle-orm/pg-core";
-import { user } from "./auth";
+/**
+ * The `indexes` and `torrents` tables: indexed content and the scored torrent
+ * results behind it.
+ *
+ * The two tables reference each other — an index points at its chosen source
+ * torrent, and every torrent belongs to an index. SQLite resolves foreign keys
+ * at write time rather than at `CREATE TABLE` time, so the forward reference
+ * from `indexes` to `torrents` is fine as long as both exist before any insert.
+ *
+ * Timestamps are INTEGER holding Unix epoch milliseconds; converting them to
+ * `Date` is the model's job.
+ */
+
+/** An `indexes` row as stored, with `created_at` in epoch ms. */
+export type IndexRow = {
+  id: string;
+  imdb_id: string;
+  season: number | null;
+  /** The chosen torrent, or null until the decide stage picks one. */
+  source_id: string | null;
+  user_id: string;
+  created_at: number;
+};
+
+/** A `torrents` row as stored, with `created_at` in epoch ms. */
+export type TorrentRow = {
+  id: string;
+  index_id: string;
+  title: string;
+  magnet_link: string;
+  size_mb: number;
+  seeders: number;
+  leechers: number;
+  resolution: string | null;
+  video_codec: string | null;
+  audio_codec: string | null;
+  hdr_format: string | null;
+  release_type: string | null;
+  uploader_name: string | null;
+  /** Computed ranking score, stored as REAL. */
+  score: number;
+  created_at: number;
+};
 
 /**
- * A scored torrent result belonging to an index. Stores all metadata
- * needed to download and identify the torrent, plus the computed
- * score used for ranking.
+ * Statements that create both tables and their indexes.
+ *
+ * `indexes` is created first so that `torrents.index_id` resolves, and the
+ * unique index on `(imdb_id, season)` keeps one index per movie or season.
  */
-export const torrents = pgTable("torrents", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  indexId: uuid("index_id").notNull().references((): AnyPgColumn => indexes.id, { onDelete: "cascade" }),
-  title: text("title").notNull(),
-  magnetLink: text("magnet_link").notNull(),
-  sizeMB: integer("size_mb").notNull(),
-  seeders: integer("seeders").notNull(),
-  leechers: integer("leechers").notNull(),
-  resolution: text("resolution"),
-  videoCodec: text("video_codec"),
-  audioCodec: text("audio_codec"),
-  hdrFormat: text("hdr_format"),
-  releaseType: text("release_type"),
-  uploaderName: text("uploader_name"),
-  score: real("score").notNull(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-});
-
-/**
- * An indexed piece of content. Created when a job successfully finds
- * and scores torrents for a movie or series. Points to the chosen
- * source (highest scoring torrent) but the user can switch to any
- * other torrent belonging to this index.
- */
-export const indexes = pgTable("indexes", (t) => ({
-  id: t.uuid("id").primaryKey().defaultRandom(),
-  imdbId: t.text("imdb_id").notNull(),
-  season: t.integer("season"),
-  sourceId: t.uuid("source_id"),
-  userId: t.text("user_id").notNull().references(() => user.id),
-  createdAt: t.timestamp("created_at").notNull().defaultNow(),
-}), (table) => [
-  foreignKey({ columns: [table.sourceId], foreignColumns: [torrents.id as AnyPgColumn] }),
-  uniqueIndex("indexes_imdb_season_idx").on(table.imdbId, table.season),
-]);
+export const indexesSchema = [
+  `CREATE TABLE IF NOT EXISTS indexes (
+    id         TEXT PRIMARY KEY NOT NULL,
+    imdb_id    TEXT NOT NULL,
+    season     INTEGER,
+    source_id  TEXT REFERENCES torrents(id),
+    user_id    TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES user(id)
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS indexes_imdb_season_idx ON indexes (imdb_id, season)`,
+  `CREATE INDEX IF NOT EXISTS indexes_user_id_idx ON indexes (user_id)`,
+  `CREATE TABLE IF NOT EXISTS torrents (
+    id            TEXT PRIMARY KEY NOT NULL,
+    index_id      TEXT NOT NULL REFERENCES indexes(id) ON DELETE CASCADE,
+    title         TEXT NOT NULL,
+    magnet_link   TEXT NOT NULL,
+    size_mb       INTEGER NOT NULL,
+    seeders       INTEGER NOT NULL,
+    leechers      INTEGER NOT NULL,
+    resolution    TEXT,
+    video_codec   TEXT,
+    audio_codec   TEXT,
+    hdr_format    TEXT,
+    release_type  TEXT,
+    uploader_name TEXT,
+    score         REAL NOT NULL,
+    created_at    INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS torrents_index_id_idx ON torrents (index_id)`,
+];
