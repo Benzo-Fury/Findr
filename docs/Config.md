@@ -1,143 +1,139 @@
 # Configuration
 
-Findr is configured through two mechanisms: a JSON config file for application settings, and environment variables for secrets and service credentials.
+Findr has two kinds of configuration, stored in two places:
 
-## Config File
+| Kind | Where | Changed by | Examples |
+|---|---|---|---|
+| **Deployment** — how and where the server runs, and every secret | Environment variables (`.env`) | Whoever runs the server; needs a restart | Port, database file, API keys, service URLs |
+| **Settings** — how Findr searches, downloads and saves | The database, edited on the **Settings** page | Admins, in the browser; applies to the next download | Library paths, naming, release preferences, watchdog |
 
-**Location:** `apps/api/src/config.json`
+There is no config file. Secrets never go in the database, and nothing the browser can edit can point Findr at an executable.
 
-This file controls paths, port, naming, ffmpeg behaviour, and route defaults. Bun imports it directly at build time.
+---
 
-### `port`
+## Environment variables
 
-The port the API server listens on. In production, both the API and web UI are served from this port.
+Bun reads `.env` from the working directory automatically — in development that is `apps/api/.env`; for the compiled `findr` binary it is the directory you run it from. A starting point is in [`apps/api/.env.example`](../apps/api/.env.example).
 
-```json
-"port": 3030
-```
+Startup fails with a list of problems if anything required is missing or malformed.
 
-### `paths`
+### Server
 
-Filesystem paths Findr uses for storage and external binaries. All paths must be absolute.
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `NODE_ENV` | No | `development` | `production` in builds. In development the API proxies the web app to Vite and trusts `http://localhost:5173` for auth. |
+| `PORT` | No | `3030` | Port for the API and web app. |
+| `DATABASE_PATH` | No | `findr.db` | SQLite file. Relative paths resolve from the repo root in development, and from the working directory for the compiled binary. |
+| `BASE_URL` | **Yes** | — | Public URL of the server, e.g. `http://localhost:3030`. Used by BetterAuth for cookies and redirects. |
+| `BETTER_AUTH_SECRET` | **Yes** | — | Session signing secret. Generate with `openssl rand -hex 32`. |
+| `TRUST_PROXY` | No | `false` | Use the first `X-Forwarded-For` address for rate limiting. Only enable behind a reverse proxy you control. |
 
-```json
-"paths": {
-  "logs": "/path/to/logs",
-  "download": "/path/to/temp/downloads",
-  "movies": "/path/to/library/movies",
-  "series": "/path/to/library/tv",
-  "ffmpeg": "ffmpeg"
-}
-```
+### First admin
 
-| Key | Description |
-|---|---|
-| `logs` | Directory where per-job log files are written. Each job gets its own timestamped log file. |
-| `download` | Temporary storage for torrent downloads. Files are held here during download and transcoding, then deleted after being moved to their final destination. |
-| `movies` | Final library path for movies. Sterilized movie files are organized here using the naming templates. Point this at your Plex (or equivalent) movies directory. |
-| `series` | Final library path for TV series. Same as above, but for series. |
-| `ffmpeg` | Path to the ffmpeg binary. Use `"ffmpeg"` if it's in your system PATH, or provide an absolute path to a custom build (e.g. `"/usr/local/bin/ffmpeg-rkmpp"`). |
-
-> [!IMPORTANT]
-> All directories (`logs`, `download`, `movies`, `series`) must exist before starting Findr. It will not create them for you.
-
-### `ffmpeg`
-
-Controls how Findr selects and configures the video encoder. See [Video Re-Encoding](/docs/Video_Re-Encoding.md) for a deeper explanation of hardware encoder detection.
-
-```json
-"ffmpeg": {
-  "disableAutoEncoder": false,
-  "extraArgs": []
-}
-```
-
-| Key | Default | Description |
-|---|---|---|
-| `disableAutoEncoder` | `false` | When `true`, skips automatic hardware encoder detection entirely. The encoder must then be specified manually via `extraArgs`. When `false`, Findr probes ffmpeg on first transcode and picks the best available hardware encoder. |
-| `extraArgs` | `[]` | Additional flags passed to ffmpeg. Behaviour depends on `disableAutoEncoder`: |
-
-**When `disableAutoEncoder` is `false`** (default): `extraArgs` are appended *after* the auto-detected encoder's flags. Useful for adding options like `["-threads", "4"]` without overriding the encoder itself.
-
-**When `disableAutoEncoder` is `true`**: `extraArgs` become the *only* encoder flags. You must include `-c:v <encoder>` and any quality arguments yourself. If `extraArgs` is empty in this mode, Findr falls back to libx264 software encoding.
-
-Example for a Rockchip RK3588 board with a custom ffmpeg build:
-
-```json
-"paths": {
-  "ffmpeg": "/usr/local/bin/ffmpeg-rkmpp"
-},
-"ffmpeg": {
-  "disableAutoEncoder": true,
-  "extraArgs": ["-c:v", "h264_rkmpp", "-rc_mode", "CQP", "-qp_init", "26"]
-}
-```
-
-### `naming`
-
-Templates that control how files and folders are named when saved to your library. Templates use `{token}` placeholders that are replaced with metadata from TMDB.
-
-```json
-"naming": {
-  "movieFolder": "{title} ({year})",
-  "movieFile": "{title} ({year})",
-  "seriesFolder": "{title} ({year})",
-  "seasonFolder": "Season {season}",
-  "seriesFile": "{title} - S{season}E{episode}"
-}
-```
-
-| Key | Available tokens | Example output |
-|---|---|---|
-| `movieFolder` | `{title}`, `{year}` | `Interstellar (2014)/` |
-| `movieFile` | `{title}`, `{year}` | `Interstellar (2014).mp4` |
-| `seriesFolder` | `{title}`, `{year}` | `Breaking Bad (2008)/` |
-| `seasonFolder` | `{season}` | `Season 01/` |
-| `seriesFile` | `{title}`, `{year}`, `{season}`, `{episode}` | `Breaking Bad - S01E01.mp4` |
-
-The file extension (`.mp4`) is appended automatically. Don't include it in the template. Characters that are illegal on macOS, Linux, or Windows filesystems are stripped automatically.
-
-If TMDB metadata can't be fetched for a given IMDb ID, files keep their original names and the folder falls back to the raw IMDb ID.
-
-### `routeDefaults`
-
-Default settings applied to every API route unless explicitly overridden by a specific route.
-
-```json
-"routeDefaults": {
-  "authenticated": false,
-  "rateLimit": {
-    "max": 60,
-    "window": 60
-  }
-}
-```
-
-| Key | Description |
-|---|---|
-| `authenticated` | Whether routes require authentication by default. Individual routes can override this. |
-| `rateLimit.max` | Maximum number of requests allowed within the time window. |
-| `rateLimit.window` | Time window in seconds. |
-
-## Environment Variables
-
-Secrets and service credentials are configured via environment variables in `apps/api/.env` and `apps/web/.env`. These are never committed to the repo.
-
-### API (`apps/api/.env`)
+Sign-up is disabled. On startup, if the database has no users, Findr creates an admin from these. Once any account exists they are ignored and can be removed. Further accounts are created on the Settings page.
 
 | Variable | Required | Description |
 |---|---|---|
-| `NODE_ENV` | No | Set to `development` or `production`. Controls trusted auth origins and console log output. Defaults to `development`. |
-| `DATABASE_PATH` | No | Path to the SQLite database file. Relative paths resolve from the repo root. Defaults to `findr.db`. |
-| `BETTER_AUTH_SECRET` | Yes | Secret key used to encrypt sessions. Generate a long random string (e.g. `openssl rand -hex 32`). |
-| `BASE_URL` | Yes | The base URL of the API server, used by BetterAuth for redirects. Example: `http://localhost:3030` |
-| `TMDB_API_KEY` | Yes | API key from [TMDB](https://developer.themoviedb.org/). Used to fetch movie/series metadata (titles, years) for naming and library organization. Free to register. |
-| `QBT_PORT` | No | Port of the qBittorrent Web UI. Defaults to `8080`. |
-| `QBT_USERNAME` | Yes | Username for qBittorrent Web UI authentication. |
-| `QBT_PASSWORD` | Yes | Password for qBittorrent Web UI authentication. |
+| `FINDR_ADMIN_EMAIL` | On first run | Email for the first admin account. |
+| `FINDR_ADMIN_PASSWORD` | On first run | Password for the first admin account. |
 
-### Web (`apps/web/.env`)
+### Services
 
-| Variable | Required | Description |
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `TMDB_API_KEY` | **Yes** | — | [TMDB](https://developer.themoviedb.org/) API key, for browsing, metadata, episode lists and naming. |
+| `PROWLARR_URL` | **Yes** | — | Base URL of your [Prowlarr](https://prowlarr.com/) instance, e.g. `http://localhost:9696`. |
+| `PROWLARR_API_KEY` | **Yes** | — | Prowlarr API key (Settings → General). Never stored in the database or sent to the browser: Prowlarr's download links are saved with the key removed, and it is re-attached only when Findr fetches from this URL. |
+| `QBT_URL` | No | `http://localhost:8080` | qBittorrent Web UI URL. qBittorrent must see the same filesystem paths as Findr. |
+| `QBT_USERNAME` | Yes* | — | qBittorrent Web UI username. *Unless qBittorrent bypasses auth for Findr's address. |
+| `QBT_PASSWORD` | Yes* | — | qBittorrent Web UI password. |
+| `MKVMERGE_PATH` | No | `mkvmerge` | mkvmerge binary, from [MKVToolNix](https://mkvtoolnix.download/). An env var on purpose — an executable path should not be editable from a browser. |
+| `ANTHROPIC_API_KEY` | No | — | Enables the wrong-title filter (see below). Without it the filter is skipped. |
+
+---
+
+## Settings
+
+Admins edit these on the **Settings** page; they are stored in the database and read at the start of each unit of work, so changes apply to the next download without a restart. Every setting has a default, so a fresh install works once the paths are set.
+
+The same data is available at `GET /api/settings` and `PATCH /api/settings` (admins only; a patch may contain any subset of fields and is validated as a whole before anything is saved).
+
+### Library paths — `paths`
+
+Absolute paths on the server. They must be set before the first download.
+
+| Field | Description |
+|---|---|
+| `downloads` | Scratch space. Each attempt gets its own folder, `downloads/<download id>/<release id>/`, deleted when the attempt ends however it ends. |
+| `movies` | Library root for movies, e.g. your Jellyfin or Plex movies folder. |
+| `series` | Library root for shows. |
+
+Files are placed atomically: they are written under a hidden temporary name inside the destination folder and renamed into place, so the library never contains a half-written file — even across filesystems or if Findr is killed mid-copy.
+
+### Naming — `naming`
+
+Templates using `{title}`, `{year}`, `{season}` and `{episode}`. Titles and years come from TMDB; seasons and episodes are zero-padded. `.mkv` is always appended. Characters illegal on macOS, Linux or Windows are removed, and empty `()` from a missing year are dropped.
+
+| Field | Default | Example |
 |---|---|---|
-| `VITE_TMDB_API_KEY` | Yes | Same TMDB API key as the API. Used by the frontend to search for movies and TV shows and display poster art. |
+| `movieFolder` | `{title} ({year})` | `Interstellar (2014)/` |
+| `movieFile` | `{title} ({year})` | `Interstellar (2014).mkv` |
+| `seriesFolder` | `{title} ({year})` | `Breaking Bad (2008)/` |
+| `seasonFolder` | `Season {season}` | `Season 01/` |
+| `seriesFile` | `{title} - S{season}E{episode}` | `Breaking Bad - S01E01.mkv` |
+
+A file holding several episodes is named with a range, e.g. `S01E01-E02`.
+
+### Release preferences — `preferences`
+
+| Field | Default | Description |
+|---|---|---|
+| `resolutions` | `1080p, 720p, 2160p` | Preferred resolutions, best first. Unlisted resolutions score nothing for resolution but are not rejected. Options: `480p`, `720p`, `1080p`, `2160p`. |
+| `maxFileSizeGB` | `10` | Largest allowed size per movie or per episode. Season packs are judged per episode. |
+| `minSeeders` | `5` | Releases with fewer seeders are rejected. |
+| `blacklistedReleaseTypes` | `CAM, TS, SCR` | Release types never downloaded. |
+
+Scoring weights themselves (how much resolution, codec, size, seeders and so on count) are in [`packages/config/src/scoring.ts`](../packages/config/src/scoring.ts).
+
+### Queue — `queue`
+
+| Field | Default | Description |
+|---|---|---|
+| `maxConcurrent` | `2` | Downloads running at once. |
+| `maxAttempts` | `5` | Failed attempts allowed per unit of work — the movie, the season pack, or each episode — in one run before that unit gives up. Attempts cut short by a restart or by an unavailable service do not count. |
+
+### Download watchdog — `watchdog`
+
+A torrent that trips any of these is abandoned, its files deleted, and the next release tried.
+
+| Field | Default | Description |
+|---|---|---|
+| `metadataTimeoutMinutes` | `5` | How long a magnet may take to produce its file list. |
+| `stallTimeoutMinutes` | `10` | How long a download may go without receiving any new data. |
+| `minSpeedKBps` | `50` | Average speed floor, judged over a full `speedWindowMinutes`. `0` disables it. |
+| `speedWindowMinutes` | `10` | The window the average speed is measured over. |
+| `pollIntervalSeconds` | `5` | How often progress is checked. |
+
+### Wrong-title filter — `llmFilter`
+
+An optional pass that asks Claude which of the best-scoring releases are clearly for a different title — a remake, sequel, spin-off or similarly named film — and drops them before anything downloads. It only runs when `ANTHROPIC_API_KEY` is set. It **fails open**: on any error, refusal or timeout every release is kept, so it can never block a download.
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Turn the filter on or off. |
+| `model` | `claude-haiku-4-5` | Claude model used. |
+| `maxCandidates` | `20` | How many of the top-scoring releases are screened. |
+| `timeoutSeconds` | `20` | Request timeout. |
+
+---
+
+## What gets rejected, and when
+
+For reference, every check a release goes through, in order:
+
+1. **Search** — Prowlarr results are de-duplicated (the same torrent from several indexers counts once).
+2. **Hard filters** — wrong structure (a TV release for a movie, a single episode for a season, a multi-season pack), blacklisted type, too few seeders, over the size limit, or a movie from a different year. Rejected with the reason; never downloaded.
+3. **Wrong-title filter** — optional, see above.
+4. **File inspection** — after the torrent's file list arrives but *before any payload downloads*: any executable or script (`.exe`, `.scr`, `.lnk`, `.bat`, `.cmd`, `.ps1`, `.msi`, `.js`, …) rejects the whole torrent, as does an archive-only release or one with no full-length video. Season packs must contain every aired episode. Only the needed video files are downloaded.
+5. **Watchdog** — while downloading, see above.
+6. **Sterilize** — mkvmerge rejects unreadable containers and files without a video stream.

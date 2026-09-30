@@ -39,3 +39,5 @@ tools/therarbg-cli/target/
 tools/therarbg-cli/Cargo.lock
 
 tsconfig.tsbuildinfo
+# Local, uncommitted notes
+*.local.md

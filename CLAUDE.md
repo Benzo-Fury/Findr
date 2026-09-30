@@ -6,51 +6,85 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Development
-bun run dev:api          # Start API with hot reload (port 3030), proxies / to Vite
-bun run dev:web          # Start Vite dev server (port 5173)
-bun run dev              # Start both API and web concurrently
+bun run dev              # API (port 3030, hot reload) and Vite (port 5173) together
+bun run dev:api          # API only; proxies non-API requests to Vite
+bun run dev:web          # Vite only
 
-# Build & Production
-bun run build            # Build everything → dist/ (API, web, Rust binary)
-bun run build:api        # Run cartographer + Bun.build → dist/index.js
-bun run build:web        # Vite production build → dist/public/
-bun run start            # Run production bundle (serves API + web on port 3030)
+# Build & production
+bun run build            # Web → API bundle → compiled binary, all into dist/
+bun run start            # Run dist/index.js (serves API + web on PORT)
+./dist/findr             # Or run the standalone executable
 
-# Type checking
-cd apps/api && bunx tsc --noEmit   # Type check API
-cd apps/web && bunx tsc --noEmit   # Type check web
+# Tests (bun test; a preload pins the database to :memory:)
+cd apps/api && bun test
+
+# Type checking — generate the build maps first on a fresh checkout
+cd apps/api && bun run scripts/cartographer.ts && bun run scripts/assetmap.ts --allow-empty && bunx tsc --noEmit
+cd apps/web && bunx tsc -b
 ```
+
+The Sterilizer and pipeline tests need `mkvmerge` and `ffmpeg` on PATH and are skipped without them.
+
+## What Findr does
+
+A self-hosted downloader for movies and TV seasons. A request is a TMDB id (plus a season for shows); Findr then:
+
+1. **Searches** Prowlarr, **parses** every release title, **scores** it against hard filters and weights, and optionally **screens** the best with Claude for wrong-title matches. All results, rejected ones included, are stored as candidates.
+2. **Attempts** the best pending candidate: qBittorrent fetches the file list only, the list is **inspected** (executables, archive-only, incomplete packs are rejected), the chosen files **download** under a watchdog, **mkvmerge** strips everything but video and audio, and the result is **saved** atomically into the library.
+3. On a bad release it **rejects** that candidate with the reason, cleans up, and tries the next — up to `queue.maxAttempts`. Seasons try a complete pack first, then fall back to one unit per aired episode; mixed outcomes end as `partial`.
 
 ## Architecture
 
-Bun monorepo with two apps (`apps/api`, `apps/web`) and a shared `packages/` directory.
+Bun monorepo: `apps/api` (Hono on Bun), `apps/web` (React 19 + react-router-dom + Vite + Tailwind), and shared `packages/`.
 
-### API (`apps/api`)
+### Packages
 
-**Runtime:** Bun + Hono. **Auth:** BetterAuth with MongoDB adapter (email+password).
+- `@findr/types` — Zod schemas and inferred types shared by API and web. Import by subpath (`@findr/types/downloads`, `/settings`, `/release`, `/media`); new modules get their own file, not a re-export from the index.
+- `@findr/config` — code-level constants (`@findr/config/scoring`: scoring weights and rank tables).
 
-**Shared types** — `@findr/types` (`packages/types`) is the single source of truth for data shapes. It exports Zod schemas and inferred TypeScript types.
+### API (`apps/api/src`)
 
-**Routing system** — Path-based route discovery with a declarative Route type. Each file in `src/routes/` exports a single `factory()` Route; the URL path is derived from the file location (prefixed with `/api/`), never declared manually. Each HTTP method on a route can be a bare handler or a `MethodConfig` object (`{ handler, body? }`) for per-method body validation.
+- **Routing** — each file in `routes/` exports one `factory()` Route; the URL is derived from its path under `/api/` (`downloads/[id]/cancel.ts` → `/api/downloads/:id/cancel`, `downloads/index.ts` → `/api/downloads`). Methods are bare handlers or `MethodConfig` (`{ handler, body?, query? }`); read validated input with `bodyOf(c, Schema)` / `queryOf(c, Schema)` from `lib/routing/input.ts`.
+- **Route options** — `authenticated` (default **true**), `admin` (admins only), `rateLimit` (default 600/min; public routes use `PUBLIC_RATE_LIMIT` or their own). `Server.constructRoutes` builds each chain: rate limit → auth → admin → query/body validation → middleware → handler.
+- **Auth** — BetterAuth (email + password, `admin` plugin) on the shared SQLite connection. Sign-up is disabled; the first admin is seeded from `FINDR_ADMIN_*`; admins create further accounts through the admin plugin.
+- **Database** — raw `bun:sqlite` (`lib/db/client.ts`). Schema changes are append-only entries in `lib/db/migrations.ts`, applied by `Migrator` using `PRAGMA user_version`. BetterAuth migrates its own tables.
+- **Models** (`lib/db/models/`) — the only code that writes SQL. Static finders return class instances with typed camelCase fields and mutation methods; instances serialise to `@findr/types` records (`toSummary()`, `toRecord()`, `toDetail()`). Tables: `titles`, `downloads`, `episodes`, `candidates`, `attempts`, `settings`.
+- **Configuration** — deployment config and secrets come from the environment, validated in `lib/env/Env.ts`. User-tunable settings live in the database (`SettingsStore`, schema in `@findr/types/settings`) and are edited on the web Settings page. There is no JSON config file.
+- **Pipeline** (`lib/pipeline/`)
+  - `DownloadQueue` — singleton owning enqueue/cancel/retry/delete, concurrency, and startup `recover()` (closes interrupted attempts, rejects their candidates, deletes their scratch dirs, sweeps leftover torrents, resumes unfinished downloads).
+  - `DownloadRunner` — one download: movie unit, or season pack then per-episode units; the attempt loop.
+  - `CandidateSearch` — Prowlarr → `ReleaseParser` → `ReleaseScorer` → `RelevanceFilter` → persisted candidates.
+  - `AttemptRunner` — one candidate: `TorrentSession` → `Sterilizer` → `LibrarySaver`, always cleaning up.
+  - `errors.ts` — `AttemptFailure` (reject this release, try the next), `FatalDownloadError` (environment broken; don't blame the release), `CancelledError`.
+- **Downloader** (`lib/downloader/`) — `Downloader` interface with `QBittorrentDownloader`; `FileInspector` (safety and file selection), `Watchdog` (metadata/stall/speed), `TorrentSession`, `AttemptWorkspace` (`<downloads>/<downloadId>/<candidateId>/`).
+- **Media** (`lib/media/`) — `Sterilizer` (mkvmerge, video + audio only) and `LibrarySaver` (naming templates, atomic temp-name-then-rename placement).
+- **Prowlarr** (`lib/prowlarr/Prowlarr.ts`) — search, plus link handling: API keys are stripped into `prowlarr:` references before storage and re-attached only when fetching from `PROWLARR_URL`.
+- **TMDB** (`lib/tmdb/`) — cached client behind the `/api/tmdb/*` proxy routes, plus `titleFacts` / `seasonEpisodes` for the pipeline.
 
-**Middleware** (`src/middleware/`) — `requireAuth` and `validateBody` live here. `validateBody` is inserted automatically when a route declares a `body` schema for a given method.
+### Build & compile
 
-**Server class** (`src/lib/server/Server.ts`) extends Hono. Key methods:
-- `constructRoutes()` — discovers routes then registers them with the Hono router under `/api/`, wiring auth, validation, and custom middleware into each method's chain. Also mounts the web app at `/` (static files in prod, Vite proxy in dev).
-- `start()` — binds to port via `Bun.serve`
+`scripts/build.ts` orchestrates: Vite builds the web app into `apps/web/dist/`, then `apps/api/scripts/build.ts` runs:
 
-**Build output** — all builds output to `dist/` at the repo root: `dist/index.js` (API), `dist/public/` (web), `dist/therarbg-cli` (Rust binary). In production the API serves the web app's static files directly.
+1. **Cartographer** (`scripts/cartographer.ts`) — writes `src/_route.map.ts`, statically importing every route so the bundler sees them.
+2. **Asset map** (`scripts/assetmap.ts`) — writes `src/_asset.map.ts`, importing every web file with `with { type: "file" }` so it ships with the build.
+3. `Bun.build` → `dist/index.js` (+ `dist/web/` assets) and `bun build --compile` → `dist/findr`.
 
-### Web (`apps/web`)
+Both generated files are gitignored. In production the server imports them; in development it globs `routes/` and proxies to Vite instead. Anything new that must ship — routes, assets — has to reach the bundle through static imports; no runtime filesystem discovery in production code paths.
 
-React 19 + TanStack Router + Vite. File-based routing via the TanStack Router plugin. Routes live in `src/routes/`.
+### Web (`apps/web/src`)
+
+Pages in `pages/` (Library, Discover, Downloads, Settings), routed in `App.tsx`. `lib/api.ts` is the only place URLs are written; request/response types come from `@findr/types`. Status labels and badge variants live in `lib/download-status.ts`; formatting helpers in `lib/format.ts`; shared hooks (TMDB metadata, polling, infinite scroll) in `lib/hooks.ts`.
 
 ## Conventions
 
-- **Object-oriented systems** — major libraries and systems (server, routing, auth) should use classes that encapsulate related logic, not loose functions scattered across files.
-- **TypeDoc comments** — use TypeDoc-style doc comments but avoid `@` tags (`@param`, `@returns`, `@module`, `@example`). Write natural prose descriptions instead.
-- **Config** — API configuration lives in `src/config.json`. Bun imports JSON directly.
-- **Shared types** — import Zod schemas and inferred types from `@findr/types`, never from local files. When adding a new entity, define its Zod schema in `packages/types/src/` and re-export from the package index.
-- **API routes** — Use `factory()`, never export raw Route literals, never set a `path` property. Use `folder/[...index].ts` for catch-all routes within a directory. For body validation, use `MethodConfig` objects (`{ handler, body? }`) instead of bare handlers — access the parsed body via `c.get("body")`.
-- **Pagination** — never fetch large collections without pagination. Bulk/list endpoints must always support and enforce pagination with server-side limits.
-- **Validation** — all data validation lives in Zod schemas (`@findr/types`), enforced at the API boundary via `validateBody`.
+- **Object-oriented systems** — major systems are classes that group related state and behaviour, not loose functions.
+- **TypeDoc comments** — doc comments on every declaration in natural prose, no `@` tags. Brief inline comments head each block of logic.
+- **Strict TypeScript** — no `any`; typed boundaries via `@findr/types`.
+- **No barrel files** — import from the source module (packages use subpath exports).
+- **Models own SQL** — nothing outside `lib/db/models/` builds queries.
+- **Validation** — Zod schemas in `@findr/types`, enforced at the API boundary by `validateBody` / `validateQuery`.
+- **Pagination** — list endpoints take `page` / `pageSize` and cap page size server-side (`MAX_PAGE_SIZE`), returning `Paginated<T>`.
+- **Secrets** — never stored in the database or sent to the client; candidate records exclude download links entirely.
+- **Library writes** — only through `LibrarySaver`, which never exposes a partial file.
+- **Errors** — API errors are `{ error: "<snake_case_code>" }`; the web maps codes to messages in `lib/api.ts`.
+- **Commits** — conventional commit messages.
