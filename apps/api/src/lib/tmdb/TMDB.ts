@@ -45,6 +45,38 @@ interface RawPage {
   results?: RawItem[];
 }
 
+/** The fields of TMDB's movie and TV detail payloads the download pipeline reads. */
+interface RawTitleDetails {
+  title?: string;
+  name?: string;
+  release_date?: string;
+  first_air_date?: string;
+  overview?: string;
+  external_ids?: { imdb_id?: string | null; tvdb_id?: number | null };
+}
+
+/** The fields of TMDB's season payload the download pipeline reads. */
+interface RawSeason {
+  episodes?: Array<{ episode_number: number; air_date: string | null }>;
+}
+
+/** What the download pipeline needs to know about a title to search for and name it. */
+export interface TitleFacts {
+  name: string;
+  /** Null when TMDB has no release or first-air date. */
+  year: number | null;
+  overview: string;
+  imdbId: string | null;
+  tvdbId: number | null;
+}
+
+/** One episode of a season, with its air date when TMDB knows it. */
+export interface SeasonEpisode {
+  number: number;
+  /** `YYYY-MM-DD`, or null when unannounced. */
+  airDate: string | null;
+}
+
 /** Options accepted when reading a list from the catalog. */
 interface ListOptions {
   page?: number;
@@ -211,6 +243,39 @@ export default class TMDB extends SelfManagedSingleton {
     return this.request(`/${mediaType}/${id}`, {
       append_to_response: extras.join(","),
     });
+  }
+
+  /**
+   * The facts a download needs about a title: its name and year for naming,
+   * its overview for the relevance filter, and its IMDb and TVDB ids for
+   * indexer searches.
+   */
+  public async titleFacts(mediaType: TMDBMediaType, id: number): Promise<TitleFacts> {
+    const data = await this.request<RawTitleDetails>(`/${mediaType}/${id}`, {
+      append_to_response: "external_ids",
+    });
+
+    // Movies and shows name the same facts differently
+    const name = (mediaType === "movie" ? data.title : data.name) ?? "";
+    const date = mediaType === "movie" ? data.release_date : data.first_air_date;
+    if (!name) throw new TMDBError(`TMDB has no name for ${mediaType}/${id}`);
+
+    return {
+      name,
+      year: date ? Number(date.slice(0, 4)) : null,
+      overview: data.overview ?? "",
+      imdbId: data.external_ids?.imdb_id || null,
+      tvdbId: data.external_ids?.tvdb_id || null,
+    };
+  }
+
+  /** Every episode TMDB lists for a season, in order, with air dates. */
+  public async seasonEpisodes(tvId: number, season: number): Promise<SeasonEpisode[]> {
+    const data = await this.request<RawSeason>(`/tv/${tvId}/season/${season}`);
+
+    return (data.episodes ?? [])
+      .map((episode) => ({ number: episode.episode_number, airDate: episode.air_date || null }))
+      .sort((a, b) => a.number - b.number);
   }
 
   /** Resolves an IMDb ID to its TMDB records. Passed through untouched. */

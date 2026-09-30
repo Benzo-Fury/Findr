@@ -105,6 +105,11 @@ export class Candidate extends Model {
     return this.statusValue;
   }
 
+  /** Whether a user chose this candidate to be tried first. */
+  public get pinned(): boolean {
+    return this.pinnedValue;
+  }
+
   // ---------- Queries ---------- //
 
   /** Records a batch of search results for one download (or one episode of it). */
@@ -207,6 +212,15 @@ export class Candidate extends Model {
 
   public reject(reason: string): void {
     this.setStatus("rejected", reason);
+  }
+
+  /**
+   * Puts a candidate back in line after its attempt stopped for reasons that
+   * were not its fault — a cancellation or a broken environment. Its pin, if
+   * any, is kept.
+   */
+  public release(): void {
+    this.setStatus("pending", null);
   }
 
   /**

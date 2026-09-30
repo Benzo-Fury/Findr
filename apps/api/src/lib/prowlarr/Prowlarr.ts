@@ -27,8 +27,10 @@ import { AttemptFailure, FatalDownloadError } from "../pipeline/errors";
 export interface TitleQuery {
   name: string;
   year: number | null;
-  /** Null when TMDB has no IMDb id for the title; the search goes straight to text. */
+  /** Null when TMDB has no IMDb id for the title. */
   imdbId: string | null;
+  /** Preferred over IMDb for series, which TV indexers key on TVDB. */
+  tvdbId?: number | null;
   type: MediaType;
   /** Series only. */
   season?: number;
@@ -110,7 +112,8 @@ export default class Prowlarr extends SelfManagedSingleton {
    */
   public async search(title: TitleQuery, options: SearchOptions = {}): Promise<ProwlarrRelease[]> {
     // Try the precise id-based query, then widen to text if nothing landed
-    let releases = title.imdbId ? await this.request(this.idQuery(title, title.imdbId), title, options) : [];
+    const idQuery = this.idQuery(title);
+    let releases = idQuery ? await this.request(idQuery, title, options) : [];
     if (releases.length === 0) {
       releases = await this.request(this.textQuery(title), title, options);
     }
@@ -146,9 +149,18 @@ export default class Prowlarr extends SelfManagedSingleton {
 
   // ---------- Queries ---------- //
 
-  /** Builds the id-based query in Prowlarr's search DSL, narrowed by season and episode for series. */
-  private idQuery(title: TitleQuery, imdbId: string): string {
-    return [`{ImdbId:${imdbId}}`, ...this.episodeTokens(title)].join(" ");
+  /**
+   * Builds the id-based query in Prowlarr's search DSL, narrowed by season and
+   * episode for series. TV prefers the TVDB id; null when there is no id.
+   */
+  private idQuery(title: TitleQuery): string | null {
+    const id =
+      title.type === "tv" && title.tvdbId
+        ? `{TvdbId:${title.tvdbId}}`
+        : title.imdbId
+          ? `{ImdbId:${title.imdbId}}`
+          : null;
+    return id ? [id, ...this.episodeTokens(title)].join(" ") : null;
   }
 
   /** Builds the plain text fallback: name plus year for movies, name plus season tokens for series. */

@@ -90,14 +90,15 @@ describe("Download", () => {
     expect(Download.findUnfinished(title.id, 1)?.id).toBe(download.id);
     expect(Download.findUnfinished(title.id, 2)).toBeNull();
 
-    download.finish("completed", { files: ["/lib/a.mkv"] }, "Saved");
+    download.recordSavedFiles(["/lib/a.mkv"]);
+    download.finish("completed", "Saved");
     expect(Download.findUnfinished(title.id, 1)).toBeNull();
     expect(Download.find(download.id)?.toSummary().result).toEqual({ files: ["/lib/a.mkv"] });
   });
 
   test("a new run re-queues and increments the run counter", () => {
     const download = Download.create(Title.findOrCreate(1, "movie"), null, null);
-    download.finish("failed", null, "No candidates");
+    download.finish("failed", "No candidates");
     download.startNewRun();
     const reloaded = Download.find(download.id);
     expect(reloaded?.status).toBe("queued");
@@ -107,7 +108,7 @@ describe("Download", () => {
   test("filters by active and finished state", () => {
     const title = Title.findOrCreate(1, "movie");
     Download.create(title, null, null);
-    Download.create(Title.findOrCreate(2, "movie"), null, null).finish("failed", null, null);
+    Download.create(Title.findOrCreate(2, "movie"), null, null).finish("failed", null);
     expect(Download.list({ page: 1, pageSize: 10, state: "active" }).total).toBe(1);
     expect(Download.list({ page: 1, pageSize: 10, state: "finished" }).total).toBe(1);
   });

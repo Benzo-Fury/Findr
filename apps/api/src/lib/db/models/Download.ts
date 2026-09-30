@@ -203,34 +203,52 @@ export class Download extends Model {
     this.updatedAtValue = now;
   }
 
-  /** Ends the download with its final status, what it produced, and a summary line. */
-  public finish(status: "completed" | "partial" | "failed", result: DownloadResult | null, message: string | null): void {
-    const now = Date.now();
+  /**
+   * Adds library files to the result as each unit succeeds, so a restart
+   * part-way through a season never loses track of what was saved.
+   */
+  public recordSavedFiles(files: string[]): void {
+    const current = this.resultValue ?? { files: [] };
+    this.writeResult({ ...current, files: [...new Set([...current.files, ...files])] });
+  }
+
+  /**
+   * Ends the download with its final status and a summary line. Season
+   * downloads also record which episodes ended which way; saved files are
+   * already on the result.
+   */
+  public finish(
+    status: "completed" | "partial" | "failed",
+    message: string | null,
+    episodes?: NonNullable<DownloadResult["episodes"]>,
+  ): void {
+    const current = this.resultValue ?? { files: [] };
+    this.writeResult(episodes ? { ...current, episodes } : current);
+    this.setStatus(status, message);
+  }
+
+  /** Persists the result document. */
+  private writeResult(result: DownloadResult): void {
     Download.db
-      .query(
-        "UPDATE downloads SET status = $status, status_message = $message, result = $result, updated_at = $now WHERE id = $id",
-      )
-      .run({ id: this.id, status, message, result: result ? JSON.stringify(result) : null, now });
-    this.statusValue = status;
-    this.statusMessageValue = message;
+      .query("UPDATE downloads SET result = $result WHERE id = $id")
+      .run({ id: this.id, result: JSON.stringify(result) });
     this.resultValue = result;
-    this.updatedAtValue = now;
   }
 
   /**
    * Re-queues a finished download as a new run. Attempts from earlier runs are
-   * kept as history but no longer count toward the attempt limit.
+   * kept as history but no longer count toward the attempt limit. Files saved
+   * by earlier runs stay on the result — they are still in the library.
    */
   public startNewRun(): void {
     const now = Date.now();
     Download.db
       .query(
-        "UPDATE downloads SET status = 'queued', status_message = NULL, result = NULL, run = run + 1, updated_at = $now WHERE id = $id",
+        "UPDATE downloads SET status = 'queued', status_message = NULL, run = run + 1, updated_at = $now WHERE id = $id",
       )
       .run({ id: this.id, now });
     this.statusValue = "queued";
     this.statusMessageValue = null;
-    this.resultValue = null;
     this.runValue += 1;
     this.updatedAtValue = now;
   }
@@ -279,7 +297,7 @@ export class Download extends Model {
          JOIN candidates c ON c.id = a.candidate_id
          LEFT JOIN episodes e ON e.id = a.episode_id
          WHERE a.download_id = $id AND a.outcome IS NULL
-         ORDER BY a.started_at DESC LIMIT 1`,
+         ORDER BY a.started_at DESC, a.rowid DESC LIMIT 1`,
       )
       .get({ id: this.id });
 

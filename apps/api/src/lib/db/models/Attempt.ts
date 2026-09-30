@@ -110,7 +110,7 @@ export class Attempt extends Model {
   public static forDownload(downloadId: string): Attempt[] {
     return this.db
       .query<AttemptRow, { downloadId: string }>(
-        "SELECT * FROM attempts WHERE download_id = $downloadId ORDER BY started_at DESC",
+        "SELECT * FROM attempts WHERE download_id = $downloadId ORDER BY started_at DESC, rowid DESC",
       )
       .all({ downloadId })
       .map((row) => new Attempt(row));
@@ -120,7 +120,7 @@ export class Attempt extends Model {
   public static activeFor(downloadId: string): Attempt | null {
     const row = this.db
       .query<AttemptRow, { downloadId: string }>(
-        "SELECT * FROM attempts WHERE download_id = $downloadId AND outcome IS NULL ORDER BY started_at DESC LIMIT 1",
+        "SELECT * FROM attempts WHERE download_id = $downloadId AND outcome IS NULL ORDER BY started_at DESC, rowid DESC LIMIT 1",
       )
       .get({ downloadId });
     return row ? new Attempt(row) : null;
@@ -134,13 +134,18 @@ export class Attempt extends Model {
       .map((row) => new Attempt(row));
   }
 
-  /** How many attempts of one unit have failed in the given run. Counts toward the attempt limit. */
+  /**
+   * How many attempts of one unit have failed in the given run — the count
+   * the attempt limit applies to. Interrupted attempts (a restart, or the
+   * environment breaking mid-attempt) are not the release's fault and do not
+   * count.
+   */
   public static failuresFor(downloadId: string, episodeId: string | null, run: number): number {
     const row = this.db
       .query<{ total: number }, { downloadId: string; episodeId: string | null; run: number }>(
         `SELECT COUNT(*) AS total FROM attempts
          WHERE download_id = $downloadId AND episode_id IS $episodeId AND run = $run
-           AND outcome IN ('failed', 'interrupted')`,
+           AND outcome = 'failed'`,
       )
       .get({ downloadId, episodeId, run });
     return row?.total ?? 0;
