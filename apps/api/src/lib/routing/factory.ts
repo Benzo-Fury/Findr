@@ -14,11 +14,17 @@ import type { Route } from "../../types/Route"
  * Defaults every route starts from. These describe how the API is built rather
  * than anything a user tunes, so they live in code instead of the settings
  * store.
+ *
+ * Routes are private unless they opt out, and signed-in traffic gets a loose
+ * limit — the web app polls. Public routes set their own, much stricter one.
  */
 export const ROUTE_DEFAULTS = {
-  authenticated: false,
-  rateLimit: { max: 60, window: 60 },
+  authenticated: true,
+  rateLimit: { max: 600, window: 60 },
 } as const satisfies Partial<Route>
+
+/** The limit for unauthenticated endpoints, which anyone on the network can hit. */
+export const PUBLIC_RATE_LIMIT = { max: 30, window: 60 } as const
 
 /**
  * Creates a fully-resolved Route by merging the defaults onto the given

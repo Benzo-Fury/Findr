@@ -278,11 +278,6 @@ export default class TMDB extends SelfManagedSingleton {
       .sort((a, b) => a.number - b.number);
   }
 
-  /** Resolves an IMDb ID to its TMDB records. Passed through untouched. */
-  public async find(imdbId: string): Promise<unknown> {
-    return this.request(`/find/${imdbId}`, { external_source: "imdb_id" });
-  }
-
   /* ---------------------------------------------------------------------- */
   /* Internals                                                                */
   /* ---------------------------------------------------------------------- */

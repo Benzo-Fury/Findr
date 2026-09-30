@@ -1,6 +1,6 @@
 import { Outlet, NavLink, useLocation } from "react-router-dom"
 import { Search, Menu, X, LogOut } from "lucide-react"
-import { signOut } from "@/lib/auth"
+import { isAdmin, signOut, type Session } from "@/lib/auth"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { SearchDialog } from "@/components/search-dialog"
@@ -17,20 +17,29 @@ import type { PosterItem } from "@/lib/types"
 import * as React from "react"
 
 interface AppLayoutProps {
-  session: { user: { email: string; name?: string | null } }
+  session: Session
 }
 
-const NAV_ITEMS = [
+interface NavItem {
+  to: string
+  label: string
+}
+
+const NAV_ITEMS: NavItem[] = [
   { to: "/", label: "Library" },
   { to: "/discover", label: "Discover" },
-  { to: "/jobs", label: "Jobs" },
-] as const
+  { to: "/downloads", label: "Downloads" },
+]
+
+/** Only admins can change settings or manage accounts. */
+const ADMIN_NAV_ITEMS: NavItem[] = [{ to: "/settings", label: "Settings" }]
 
 export function AppLayout({ session }: AppLayoutProps) {
   const [searchOpen, setSearchOpen] = React.useState(false)
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
   const [titleItem, setTitleItem] = React.useState<PosterItem | null>(null)
   const location = useLocation()
+  const navItems = isAdmin(session) ? [...NAV_ITEMS, ...ADMIN_NAV_ITEMS] : NAV_ITEMS
 
   // Close sidebar on route change
   React.useEffect(() => {
@@ -75,7 +84,7 @@ export function AppLayout({ session }: AppLayoutProps) {
           </NavLink>
 
           <nav className="hidden h-14 items-center gap-6 md:flex lg:h-16 lg:gap-8">
-            {NAV_ITEMS.map(({ to, label }) => (
+            {navItems.map(({ to, label }) => (
               <NavLink
                 key={to}
                 to={to}
@@ -196,7 +205,7 @@ export function AppLayout({ session }: AppLayoutProps) {
             </Button>
           </div>
           <div className="border-t px-2 py-2">
-            {NAV_ITEMS.map(({ to, label }) => (
+            {navItems.map(({ to, label }) => (
               <NavLink
                 key={to}
                 to={to}

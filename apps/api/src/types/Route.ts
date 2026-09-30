@@ -7,7 +7,8 @@
 
 import type { Handler, MiddlewareHandler } from "hono"
 import { METHODS } from "hono/router"
-import type { ZodSchema } from "zod"
+import type { ZodType } from "zod"
+import type { RateLimit } from "../middleware/RateLimiter"
 
 /**
  * Union of uppercase HTTP method strings derived from Hono's internal
@@ -16,13 +17,14 @@ import type { ZodSchema } from "zod"
 export type HttpMethod = Uppercase<(typeof METHODS)[number]>
 
 /**
- * Per-method configuration that bundles a handler with optional body
- * validation. When a method needs validation, wrap the handler in this
- * object instead of using a bare Handler.
+ * Per-method configuration that bundles a handler with optional body and
+ * query-string validation. When a method needs validation, wrap the handler
+ * in this object instead of using a bare Handler.
  */
 export type MethodConfig = {
   handler: Handler
-  body?: ZodSchema
+  body?: ZodType
+  query?: ZodType
 }
 
 /**
@@ -44,7 +46,9 @@ export type MethodEntry = Handler | MethodConfig
  */
 export type Route = {
   authenticated?: boolean
-  rateLimit?: { max: number; window: number }
+  /** Restricts every method to admins. Implies `authenticated`. */
+  admin?: boolean
+  rateLimit?: RateLimit
   middleware?: MiddlewareHandler[]
 } & {
   [M in HttpMethod]?: MethodEntry

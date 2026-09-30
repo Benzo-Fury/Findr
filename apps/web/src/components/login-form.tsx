@@ -8,8 +8,9 @@ import { signIn } from "@/lib/auth"
 import { MediaGrid } from "@/components/media-grid"
 
 /**
- * Sign-in is the only way into the app. Accounts are provisioned out of band,
- * so there is no registration form and nothing here links to one.
+ * Sign-in is the only way into the app. Sign-up is disabled on the server;
+ * accounts are created by an admin on the settings page, so there is no
+ * registration form and nothing here links to one.
  */
 
 interface LoginFormProps extends React.ComponentProps<"form"> {

@@ -1,62 +1,64 @@
 import * as React from "react"
 import { Search } from "lucide-react"
+import type { DownloadStatus, TitleSummary } from "@findr/types/downloads"
+import { fetchTitles } from "@/lib/api"
+import { DOWNLOAD_STATUS } from "@/lib/download-status"
+import { tmdbKey, useInfiniteScroll, useTMDBMeta } from "@/lib/hooks"
+import type { PosterItem } from "@/lib/types"
 import { MediaCard } from "@/components/media-card"
-import { Skeleton } from "@/components/ui/skeleton"
+import { StatusBadge } from "@/components/status-badge"
 import { TitleDialog } from "@/components/title-dialog"
-import { fetchIndexes } from "@/lib/api"
-import { useTMDBMeta } from "@/lib/hooks"
-import type { IndexWithTorrents, PosterItem } from "@/lib/types"
+import { Skeleton } from "@/components/ui/skeleton"
 
 /**
- * Everything the user has indexed.
- *
- * Indexes are stored per season, so several rows can belong to one title. They
- * are grouped by IMDb ID and rendered as a single poster, with artwork and
- * names resolved from TMDB since the index rows carry neither.
+ * Everything that has been requested, one poster per title with the state of
+ * its most recent download. Artwork and names are resolved from TMDB, since
+ * titles store only their TMDB identity.
  */
+
+const PAGE_SIZE = 50
+
 export function LibraryPage() {
-  const [indexes, setIndexes] = React.useState<IndexWithTorrents[]>([])
+  const [titles, setTitles] = React.useState<TitleSummary[]>([])
+  const [total, setTotal] = React.useState(0)
+  const [page, setPage] = React.useState(1)
   const [loading, setLoading] = React.useState(true)
-  const { meta, loadingIds, fetchMeta } = useTMDBMeta()
+  const [loadingMore, setLoadingMore] = React.useState(false)
   const [titleItem, setTitleItem] = React.useState<PosterItem | null>(null)
+  const { meta, fetchMeta } = useTMDBMeta()
 
+  // Append each page as it arrives
   React.useEffect(() => {
-    fetchIndexes()
-      .then(setIndexes)
+    fetchTitles(page, PAGE_SIZE)
+      .then((result) => {
+        setTitles((prev) => (page === 1 ? result.items : [...prev, ...result.items]))
+        setTotal(result.total)
+      })
       .catch(() => {})
-      .finally(() => setLoading(false))
+      .finally(() => {
+        setLoading(false)
+        setLoadingMore(false)
+      })
+  }, [page])
+
+  const hasMore = titles.length < total
+  const loadMore = React.useCallback(() => {
+    setLoadingMore(true)
+    setPage((current) => current + 1)
   }, [])
+  const sentinel = useInfiniteScroll(loadMore, hasMore, loadingMore)
 
   React.useEffect(() => {
-    const uniqueImdbIds = [...new Set(indexes.map((index) => index.imdbId))]
-    uniqueImdbIds.forEach(fetchMeta)
-  }, [indexes, fetchMeta])
-
-  const grouped = React.useMemo(() => {
-    const byImdbId = new Map<string, IndexWithTorrents[]>()
-
-    for (const index of indexes) {
-      const existing = byImdbId.get(index.imdbId) ?? []
-      existing.push(index)
-      byImdbId.set(index.imdbId, existing)
-    }
-
-    return Array.from(byImdbId.entries()).map(([imdbId, entries]) => ({
-      imdbId,
-      indexes: entries,
-      meta: meta[imdbId],
-    }))
-  }, [indexes, meta])
+    for (const title of titles) fetchMeta(title.mediaType, title.tmdbId)
+  }, [titles, fetchMeta])
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-6 lg:px-6 lg:py-8">
-      <div className="mb-6 flex items-center justify-between">
-        {!loading && (
-          <span className="text-sm text-muted-foreground">
-            {grouped.length} {grouped.length === 1 ? "title" : "titles"}
-          </span>
-        )}
-      </div>
+      {!loading && (
+        <p className="mb-6 text-sm text-muted-foreground">
+          {total} {total === 1 ? "title" : "titles"}
+        </p>
+      )}
 
       {loading ? (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
@@ -64,7 +66,7 @@ export function LibraryPage() {
             <Skeleton key={i} className="aspect-[2/3] rounded-xl" />
           ))}
         </div>
-      ) : grouped.length === 0 ? (
+      ) : titles.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <Search className="mb-4 size-12 text-muted-foreground/50" />
           <h2 className="mb-1 text-lg font-medium">Your library is empty</h2>
@@ -73,32 +75,40 @@ export function LibraryPage() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {grouped.map((group) =>
-            !group.meta && loadingIds.has(group.imdbId) ? (
-              <Skeleton key={group.imdbId} className="aspect-[2/3] rounded-xl" />
-            ) : (
-              <MediaCard
-                key={group.imdbId}
-                title={group.meta?.title || group.imdbId}
-                year={group.meta?.year}
-                posterPath={group.meta?.posterPath ?? null}
-                mediaType={group.meta?.mediaType || "movie"}
-                onClick={() => {
-                  if (!group.meta) return
-                  setTitleItem({
-                    id: group.meta.tmdbId,
-                    mediaType: group.meta.mediaType,
-                    title: group.meta.title,
-                    posterPath: group.meta.posterPath,
-                    voteAverage: 0,
-                    year: group.meta.year,
-                  })
-                }}
-              />
-            ),
-          )}
-        </div>
+        <>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            {titles.map((title) => {
+              const info = meta[tmdbKey(title.mediaType, title.tmdbId)]
+              if (!info) return <Skeleton key={title.id} className="aspect-[2/3] rounded-xl" />
+
+              const latest = latestStatus(title)
+              return (
+                <div key={title.id} className="relative">
+                  <MediaCard
+                    title={info.title}
+                    year={info.year}
+                    posterPath={info.posterPath}
+                    mediaType={title.mediaType}
+                    onClick={() =>
+                      setTitleItem({
+                        id: title.tmdbId,
+                        mediaType: title.mediaType,
+                        title: info.title,
+                        posterPath: info.posterPath,
+                        voteAverage: 0,
+                        year: info.year,
+                      })
+                    }
+                  />
+                  {latest && (
+                    <StatusBadge status={DOWNLOAD_STATUS[latest]} className="pointer-events-none absolute top-2 left-2 shadow" />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          <div ref={sentinel} className="h-1" />
+        </>
       )}
 
       {titleItem && (
@@ -110,4 +120,9 @@ export function LibraryPage() {
       )}
     </div>
   )
+}
+
+/** The status of a title's most recent download, which is what its poster shows. */
+function latestStatus(title: TitleSummary): DownloadStatus | null {
+  return title.downloads[0]?.status ?? null
 }

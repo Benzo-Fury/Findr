@@ -11,8 +11,11 @@ import { Hono } from "hono"
 import { METHODS } from "hono/router"
 import type { Route, HttpMethod } from "../../types/Route"
 import { env } from "../env/Env"
+import { RateLimiter } from "../../middleware/RateLimiter"
+import { requireAdmin } from "../../middleware/requireAdmin"
 import { requireAuth } from "../../middleware/requireAuth"
 import { validateBody } from "../../middleware/validateBody"
+import { validateQuery } from "../../middleware/validateQuery"
 import { derivePath } from "../routing/derivePath"
 import { WebAssets } from "./WebAssets"
 
@@ -48,6 +51,7 @@ export class Server extends Hono {
    */
   async constructRoutes() {
     const routes = await this.discoverRoutes()
+    const limiter = new RateLimiter()
 
     for (const [path, route] of Object.entries(routes)) {
       for (const method of METHODS) {
@@ -58,9 +62,14 @@ export class Server extends Hono {
         const isConfig = typeof entry === "object" && "handler" in entry
         const handler = isConfig ? entry.handler : entry
         const bodySchema = isConfig ? entry.body : undefined
+        const querySchema = isConfig ? entry.query : undefined
 
+        // Throttle first, then authenticate, authorise and validate
         const chain = [
-          ...(route.authenticated ? [requireAuth] : []),
+          ...(route.rateLimit ? [limiter.forRoute(`${key} ${path}`, route.rateLimit)] : []),
+          ...(route.authenticated || route.admin ? [requireAuth] : []),
+          ...(route.admin ? [requireAdmin] : []),
+          ...(querySchema ? [validateQuery(querySchema)] : []),
           ...(bodySchema ? [validateBody(bodySchema)] : []),
           ...(route.middleware ?? []),
           handler,

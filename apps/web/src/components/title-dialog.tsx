@@ -1,30 +1,35 @@
 import * as React from "react"
-import { X, Download, TriangleAlert, RefreshCw, MoreVertical, Trash2 } from "lucide-react"
+import { X, Download, TriangleAlert, RefreshCw, MoreVertical, Trash2, Activity } from "lucide-react"
 import { useNavigate } from "react-router-dom"
-import { Dialog, DialogContent } from "@/components/ui/dialog"
+import type { DownloadDetail, DownloadSummary, TitleSummary } from "@findr/types/downloads"
+import {
+  createDownload,
+  deleteTitle,
+  fetchDownload,
+  fetchTMDBDetails,
+  lookupTitle,
+  retryDownload,
+} from "@/lib/api"
+import { DOWNLOAD_STATUS, FINISHED_STATUSES } from "@/lib/download-status"
+import type { PosterItem } from "@/lib/types"
+import { cn } from "@/lib/utils"
+import { CandidateList } from "@/components/candidate-list"
 import { MediaCard } from "@/components/media-card"
-import { Skeleton } from "@/components/ui/skeleton"
+import { StatusBadge } from "@/components/status-badge"
+import { TorrentText } from "@/components/torrent-text"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { TorrentText } from "@/components/torrent-text"
-import {
-  createJob,
-  deleteIndex,
-  fetchTMDBDetails,
-  lookupIndexes,
-  redownload,
-  reindex,
-} from "@/lib/api"
-import type { IndexWithTorrents, PosterItem, Torrent } from "@/lib/types"
-import { cn } from "@/lib/utils"
+import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { Skeleton } from "@/components/ui/skeleton"
 
 /**
  * The full-screen view of a single title: artwork, metadata, trailer, and
- * whatever Findr has stored for it.
+ * whatever Findr has done with it.
  *
- * The dialog resolves a TMDB id to an IMDb id, then asks whether that title is
- * already indexed. That answer decides what the primary action does — queue a
- * new job, or offer to re-index and swap the chosen torrent.
+ * The dialog asks the API whether this title has been requested. For the
+ * movie, or the selected season of a show, the latest download decides the
+ * primary action — start a download, follow one in progress, or retry one
+ * that failed — and a finished download's releases can be hand-picked.
  */
 
 const BACKDROP_BASE = "https://image.tmdb.org/t/p/w1280"
@@ -66,68 +71,65 @@ interface TitleDialogProps {
 export function TitleDialog({ item, onClose, onItemClick }: TitleDialogProps) {
   const navigate = useNavigate()
   const [details, setDetails] = React.useState<Record<string, unknown> | null>(null)
-  const [indexes, setIndexes] = React.useState<IndexWithTorrents[]>([])
-  const [status, setStatus] = React.useState<"loading" | "indexed" | "not-indexed">("loading")
+  const [requested, setRequested] = React.useState<TitleSummary | null>(null)
+  const [loaded, setLoaded] = React.useState(false)
   const [working, setWorking] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [season, setSeason] = React.useState(1)
-  const [activeSeason, setActiveSeason] = React.useState<number | null>(null)
+  const [releases, setReleases] = React.useState<DownloadDetail | null>(null)
   const [showMenu, setShowMenu] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
-  const [switchingTo, setSwitchingTo] = React.useState<string | null>(null)
+  const [tryingId, setTryingId] = React.useState<string | null>(null)
   const contentRef = React.useRef<HTMLDivElement>(null)
   const menuRef = React.useRef<HTMLDivElement>(null)
 
+  // Load TMDB details and whatever Findr has for this title
   React.useEffect(() => {
-    setStatus("loading")
+    setLoaded(false)
     setDetails(null)
-    setIndexes([])
+    setRequested(null)
+    setReleases(null)
     setError(null)
-    setSeason(1)
-    setActiveSeason(null)
     setShowMenu(false)
     setDeleting(false)
-    setSwitchingTo(null)
+    setTryingId(null)
     contentRef.current?.scrollTo(0, 0)
 
     const controller = new AbortController()
     const opts = { signal: controller.signal }
 
-    async function load() {
-      try {
-        const data = await fetchTMDBDetails(item.mediaType, item.id, opts)
+    Promise.all([fetchTMDBDetails(item.mediaType, item.id, opts), lookupTitle(item.id, item.mediaType, opts)])
+      .then(([data, title]) => {
         setDetails(data)
+        setRequested(title)
+        // Open on the most recently requested season, if any
+        const latestSeason = title?.downloads.find((download) => download.season !== null)?.season
+        setSeason(latestSeason ?? 1)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!controller.signal.aborted) setLoaded(true)
+      })
 
-        const imdbId = (data.imdb_id ||
-          (data.external_ids as Record<string, unknown>)?.imdb_id) as string | undefined
-
-        if (!imdbId) {
-          setStatus("not-indexed")
-          return
-        }
-
-        const found = await lookupIndexes(imdbId, opts)
-
-        if (found.length > 0) {
-          setIndexes(found)
-          setActiveSeason(found[0]?.season ?? null)
-          setStatus("indexed")
-        } else {
-          setStatus("not-indexed")
-        }
-      } catch {
-        if (!controller.signal.aborted) setStatus("not-indexed")
-      }
-    }
-
-    load()
     return () => controller.abort()
   }, [item.mediaType, item.id])
 
-  const isIndexed = status === "indexed"
-  const currentIndex = indexes.find((index) => index.season === activeSeason) ?? indexes[0]
-  const torrents = currentIndex?.torrents ?? []
-  const selectedTorrentId = currentIndex?.sourceId ?? null
+  // The latest download for the movie, or for the selected season
+  const current: DownloadSummary | undefined = requested?.downloads.find((download) =>
+    item.mediaType === "movie" ? true : download.season === season,
+  )
+  const isFinished = current ? FINISHED_STATUSES.includes(current.status) : false
+
+  // Load the current download's releases so they can be hand-picked
+  React.useEffect(() => {
+    setReleases(null)
+    if (!current) return
+    const controller = new AbortController()
+    fetchDownload(current.id, { signal: controller.signal })
+      .then(setReleases)
+      .catch(() => {})
+    return () => controller.abort()
+  }, [current?.id])
 
   React.useEffect(() => {
     if (!showMenu) return
@@ -142,77 +144,54 @@ export function TitleDialog({ item, onClose, onItemClick }: TitleDialogProps) {
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [showMenu])
 
-  /** Reads the IMDb id off the loaded details, wherever TMDB put it. */
-  function imdbIdOf(data: Record<string, unknown>): string | undefined {
-    return (data.imdb_id || (data.external_ids as Record<string, unknown>)?.imdb_id) as
-      | string
-      | undefined
+  /** Runs a download action, then shows its progress on the downloads page. */
+  async function act(work: () => Promise<DownloadSummary>, failure: string) {
+    setWorking(true)
+    setError(null)
+    try {
+      const download = await work()
+      onClose()
+      navigate(`/downloads/${download.id}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : failure)
+      setWorking(false)
+      setTryingId(null)
+    }
   }
 
-  async function handleDeleteIndex() {
-    if (!currentIndex) return
+  function handleDownload() {
+    act(
+      () =>
+        createDownload(
+          item.mediaType === "tv"
+            ? { tmdbId: item.id, mediaType: "tv", season }
+            : { tmdbId: item.id, mediaType: "movie" },
+        ),
+      "Could not start the download",
+    )
+  }
+
+  function handleRetry() {
+    if (current) act(() => retryDownload(current.id), "Could not retry the download")
+  }
+
+  function handleTryRelease(candidateId: string) {
+    if (!current) return
+    setTryingId(candidateId)
+    act(() => retryDownload(current.id, candidateId), "Could not start that release")
+  }
+
+  /** Forgets the title and its download history. Library files stay. */
+  async function handleRemove() {
+    if (!requested) return
     setDeleting(true)
 
     try {
-      // Every season of this title goes, not just the one on screen
-      for (const index of indexes) await deleteIndex(index.id)
+      await deleteTitle(requested.id)
       onClose()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to delete index")
+      setError(e instanceof Error ? e.message : "Could not remove the title")
       setDeleting(false)
-    }
-  }
-
-  async function handleIndex() {
-    if (!details) return
-    setWorking(true)
-    setError(null)
-
-    try {
-      const imdbId = imdbIdOf(details)
-      if (!imdbId) {
-        setError("Could not find an IMDb ID for this title.")
-        setWorking(false)
-        return
-      }
-
-      await createJob(imdbId, item.mediaType === "tv" ? season : undefined)
-      onClose()
-      navigate("/jobs")
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create job")
-      setWorking(false)
-    }
-  }
-
-  async function handleReindex() {
-    if (!currentIndex) return
-    setWorking(true)
-    setError(null)
-
-    try {
-      await reindex(currentIndex.id)
-      onClose()
-      navigate("/jobs")
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to re-index")
-      setWorking(false)
-    }
-  }
-
-  /** Repoints the index at another torrent and queues the download again. */
-  async function handleSwitchTorrent(torrentId: string) {
-    if (!currentIndex || torrentId === selectedTorrentId) return
-    setSwitchingTo(torrentId)
-    setError(null)
-
-    try {
-      await redownload(currentIndex.id, torrentId)
-      onClose()
-      navigate("/jobs")
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to switch torrent")
-      setSwitchingTo(null)
     }
   }
 
@@ -251,6 +230,9 @@ export function TitleDialog({ item, onClose, onItemClick }: TitleDialogProps) {
       voteAverage: r.vote_average,
       year: (r.release_date || r.first_air_date || "").slice(0, 4) || undefined,
     }))
+
+  // Movie and season-pack releases; per-episode ones live on the downloads page
+  const mainReleases = releases?.candidates.filter((candidate) => candidate.episodeId === null) ?? []
 
   const availabilityWarning = React.useMemo(() => {
     if (!details) return null
@@ -312,7 +294,7 @@ export function TitleDialog({ item, onClose, onItemClick }: TitleDialogProps) {
     <Dialog open onOpenChange={() => onClose()}>
       <DialogContent className="max-h-[90vh] max-w-4xl gap-0 overflow-hidden p-0">
         <div ref={contentRef} className="max-h-[90vh] overflow-y-auto">
-          {status === "loading" ? (
+          {!loaded ? (
             <DialogSkeleton onClose={onClose} />
           ) : (
             <>
@@ -334,7 +316,7 @@ export function TitleDialog({ item, onClose, onItemClick }: TitleDialogProps) {
                   <X className="size-5" />
                 </button>
 
-                {isIndexed && (
+                {requested && (
                   <div ref={menuRef} className="absolute top-3 right-3">
                     <button
                       onClick={() => setShowMenu((open) => !open)}
@@ -346,12 +328,13 @@ export function TitleDialog({ item, onClose, onItemClick }: TitleDialogProps) {
                     {showMenu && (
                       <div className="absolute right-0 mt-1 w-44 rounded-lg bg-popover p-1 shadow-xl ring-1 ring-border animate-in fade-in-0 zoom-in-95">
                         <button
-                          onClick={handleDeleteIndex}
+                          onClick={handleRemove}
                           disabled={deleting}
+                          title="Forget this title and its download history. Files in your library are kept."
                           className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-red-500 transition-colors hover:bg-red-500/10 disabled:opacity-50"
                         >
                           <Trash2 className="size-4" />
-                          {deleting ? "Deleting..." : "Delete Index"}
+                          {deleting ? "Removing..." : "Remove from library"}
                         </button>
                       </div>
                     )}
@@ -368,11 +351,8 @@ export function TitleDialog({ item, onClose, onItemClick }: TitleDialogProps) {
                   )}
 
                   <div className="min-w-0 flex-1">
-                    {isIndexed && (
-                      <span className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/90 px-3 py-1 text-xs font-semibold text-white shadow-lg backdrop-blur-sm">
-                        <span className="size-1.5 animate-pulse rounded-full bg-white" />
-                        Indexed
-                      </span>
+                    {current && (
+                      <StatusBadge status={DOWNLOAD_STATUS[current.status]} className="mb-2 shadow-lg" />
                     )}
 
                     <h1 className="text-2xl font-bold text-foreground sm:text-3xl lg:text-4xl">
@@ -384,24 +364,24 @@ export function TitleDialog({ item, onClose, onItemClick }: TitleDialogProps) {
                     )}
 
                     <div className="mt-4 flex flex-wrap items-center gap-3">
-                      {isIndexed ? (
-                        <Button
-                          onClick={handleReindex}
-                          disabled={working}
-                          variant="outline"
-                          className="gap-2"
-                        >
+                      {current && !isFinished ? (
+                        <Button onClick={() => { onClose(); navigate(`/downloads/${current.id}`) }} className="gap-2">
+                          <Activity className="size-4" />
+                          View progress
+                        </Button>
+                      ) : current && current.status !== "completed" ? (
+                        <Button onClick={handleRetry} disabled={working} className="gap-2">
                           <RefreshCw className={cn("size-4", working && "animate-spin")} />
-                          {working ? "Re-indexing..." : "Re-Index"}
+                          {working ? "Retrying..." : "Retry"}
                         </Button>
                       ) : (
-                        <Button onClick={handleIndex} disabled={working} className="gap-2">
+                        <Button onClick={handleDownload} disabled={working} className="gap-2">
                           <Download className="size-4" />
-                          {working ? "Creating..." : "Index"}
+                          {working ? "Starting..." : current ? "Download again" : "Download"}
                         </Button>
                       )}
 
-                      {!isIndexed && item.mediaType === "tv" && numberOfSeasons > 0 && (
+                      {item.mediaType === "tv" && numberOfSeasons > 0 && (
                         <select
                           value={season}
                           onChange={(e) => setSeason(Number(e.target.value))}
@@ -410,23 +390,7 @@ export function TitleDialog({ item, onClose, onItemClick }: TitleDialogProps) {
                           {Array.from({ length: numberOfSeasons }, (_, i) => i + 1).map((s) => (
                             <option key={s} value={s}>
                               Season {s}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-
-                      {isIndexed && indexes.length > 1 && (
-                        <select
-                          value={activeSeason ?? ""}
-                          onChange={(e) => {
-                            const value = e.target.value
-                            setActiveSeason(value === "" ? null : Number(value))
-                          }}
-                          className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
-                        >
-                          {indexes.map((index) => (
-                            <option key={index.id} value={index.season ?? ""}>
-                              {index.season === null ? "Movie" : `Season ${index.season}`}
+                              {requested?.downloads.some((download) => download.season === s) ? " ✓" : ""}
                             </option>
                           ))}
                         </select>
@@ -520,40 +484,25 @@ export function TitleDialog({ item, onClose, onItemClick }: TitleDialogProps) {
                   </div>
                 )}
 
-                {isIndexed && (
+                {releases && (
                   <div className="mt-6">
                     <h3 className="mb-3 text-lg font-semibold">
-                      Torrents{" "}
-                      {torrents.length > 0 && (
-                        <span className="text-sm font-normal text-muted-foreground">
-                          ({torrents.length})
-                        </span>
-                      )}
+                      <TorrentText>Releases</TorrentText>{" "}
+                      <span className="text-sm font-normal text-muted-foreground">
+                        ({mainReleases.length})
+                      </span>
                     </h3>
-
-                    {torrents.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        No torrents stored for this index.
-                      </p>
-                    ) : (
-                      <>
-                        <p className="mb-3 text-sm text-muted-foreground">
-                          Pick a different release to download it instead.
-                        </p>
-                        <div className="space-y-2">
-                          {torrents.map((torrent) => (
-                            <TorrentRow
-                              key={torrent.id}
-                              torrent={torrent}
-                              isSelected={torrent.id === selectedTorrentId}
-                              isSwitching={switchingTo === torrent.id}
-                              disabled={switchingTo !== null}
-                              onClick={() => handleSwitchTorrent(torrent.id)}
-                            />
-                          ))}
-                        </div>
-                      </>
-                    )}
+                    <p className="mb-3 text-sm text-muted-foreground">
+                      {isFinished
+                        ? "Pick a different release to download it instead."
+                        : "Releases being tried for this download."}
+                    </p>
+                    <CandidateList
+                      candidates={mainReleases}
+                      onTry={isFinished ? handleTryRelease : undefined}
+                      tryingId={tryingId}
+                      emptyLabel="No whole-season releases were found; episodes are fetched one by one."
+                    />
                   </div>
                 )}
 
@@ -639,53 +588,5 @@ function DialogSkeleton({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </>
-  )
-}
-
-interface TorrentRowProps {
-  torrent: Torrent
-  isSelected: boolean
-  isSwitching: boolean
-  disabled: boolean
-  onClick: () => void
-}
-
-function TorrentRow({ torrent, isSelected, isSwitching, disabled, onClick }: TorrentRowProps) {
-  const sizeDisplay =
-    torrent.sizeMB >= 1024
-      ? `${(torrent.sizeMB / 1024).toFixed(1)} GB`
-      : `${torrent.sizeMB} MB`
-
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled || isSelected}
-      className={cn(
-        "w-full rounded-lg border p-4 text-left transition-colors",
-        isSelected ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50",
-        disabled && !isSwitching && "opacity-60",
-      )}
-    >
-      <p className="truncate text-sm font-medium">{torrent.title}</p>
-
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        {torrent.resolution && <Badge variant="secondary">{torrent.resolution}</Badge>}
-        {torrent.videoCodec && <Badge variant="secondary">{torrent.videoCodec}</Badge>}
-        {torrent.audioCodec && <Badge variant="secondary">{torrent.audioCodec}</Badge>}
-        {torrent.hdrFormat && torrent.hdrFormat !== "SDR" && (
-          <Badge variant="info">{torrent.hdrFormat}</Badge>
-        )}
-        {torrent.releaseType && <Badge variant="outline">{torrent.releaseType}</Badge>}
-        {isSelected && <Badge variant="default">Selected</Badge>}
-        {isSwitching && <Badge variant="warning">Switching...</Badge>}
-      </div>
-
-      <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
-        <span>{sizeDisplay}</span>
-        <span>{torrent.seeders} seeders</span>
-        <span>Score {torrent.score.toFixed(1)}</span>
-        {torrent.uploaderName && <span className="truncate">{torrent.uploaderName}</span>}
-      </div>
-    </button>
   )
 }

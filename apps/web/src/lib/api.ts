@@ -8,10 +8,17 @@
  */
 
 import type {
+  CreateDownloadRequest,
+  DownloadDetail,
+  DownloadSummary,
+  ListDownloadsQuery,
+  Paginated,
+  TitleSummary,
+} from "@findr/types/downloads"
+import type { SettingsPatch, SettingsResponse } from "@findr/types/settings"
+import type {
   DiscoverFeed,
   DiscoverRow,
-  IndexWithTorrents,
-  Job,
   MediaType,
   PosterItem,
   PosterPage,
@@ -23,12 +30,16 @@ import type {
 
 /** Error codes the API returns, in the words a user should see instead. */
 const ERROR_MESSAGES: Record<string, string> = {
-  already_indexed: "This title has already been indexed.",
+  already_downloading: "This is already downloading.",
+  not_finished: "Wait for the download to finish first.",
+  candidate_not_found: "That release is no longer available.",
   tmdb_unavailable: "TMDB is unreachable right now. Try again shortly.",
   unknown_source: "That list does not exist.",
   not_found: "That item no longer exists.",
-  torrent_not_found: "That torrent is no longer available.",
   unauthorized: "Your session expired. Sign in again.",
+  forbidden: "Only admins can do that.",
+  rate_limited: "Too many requests. Wait a moment and try again.",
+  validation_failed: "Some of those values are not valid.",
 }
 
 /** Raised for any non-2xx response, carrying the API's error code when present. */
@@ -46,11 +57,6 @@ export class ApiError extends Error {
 async function toError(res: Response): Promise<ApiError> {
   const body = await res.json().catch(() => ({}) as Record<string, unknown>)
   const code = typeof body.error === "string" ? body.error : null
-
-  // Too many requests has no error body — the job creation route rate limits.
-  if (res.status === 429) {
-    return new ApiError("You're creating jobs too quickly. Wait a moment.", code, 429)
-  }
 
   const message =
     (code && ERROR_MESSAGES[code]) ?? code ?? `Request failed: ${res.status}`
@@ -72,12 +78,21 @@ async function send(url: string, init: RequestInit): Promise<void> {
 }
 
 /** Serialises a JSON body with the header the validation middleware expects. */
-function json(body: unknown): RequestInit {
+function json(body: unknown, method: "POST" | "PATCH" = "POST"): RequestInit {
   return {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   }
+}
+
+/** Builds a query string from defined values only. */
+function query(params: Record<string, string | number | undefined>): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) search.set(key, String(value))
+  }
+  return search.toString()
 }
 
 /* -------------------------------------------------------------------------- */
@@ -124,65 +139,77 @@ function toPosterPage(raw: RawPosterPage): PosterPage {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Indexes                                                                    */
+/* Titles                                                                     */
 /* -------------------------------------------------------------------------- */
 
-/** Every index belonging to the signed-in user, each with its scored torrents. */
-export function fetchIndexes(): Promise<IndexWithTorrents[]> {
-  return request<IndexWithTorrents[]>("/api/indexes")
+/** A page of requested titles, most recently active first, each with its downloads. */
+export function fetchTitles(page = 1, pageSize = 100): Promise<Paginated<TitleSummary>> {
+  return request(`/api/titles?${query({ page, pageSize })}`)
 }
 
-/**
- * The indexes recorded for one title.
- *
- * The API has no per-title lookup, so this filters the user's full index list.
- * A dedicated endpoint would make this a single cheap request.
- */
-export async function lookupIndexes(
-  imdbId: string,
+/** The requested title for a TMDB identity, or null when it has never been requested. */
+export async function lookupTitle(
+  tmdbId: number,
+  mediaType: MediaType,
   init?: RequestInit,
-): Promise<IndexWithTorrents[]> {
-  const all = await request<IndexWithTorrents[]>("/api/indexes", init)
-  return all.filter((index) => index.imdbId === imdbId)
+): Promise<TitleSummary | null> {
+  const page = await request<Paginated<TitleSummary>>(`/api/titles?${query({ tmdbId, mediaType })}`, init)
+  return page.items[0] ?? null
 }
 
-/** Removes an index and every torrent stored beneath it. */
-export function deleteIndex(id: string): Promise<void> {
-  return send(`/api/indexes/${id}/delete`, { method: "DELETE" })
-}
-
-/** Drops an index and queues a fresh job for the same title in one call. */
-export function reindex(id: string): Promise<Job> {
-  return request<Job>(`/api/indexes/${id}/reindex`, { method: "POST" })
-}
-
-/** Repoints an index at a different torrent and queues the download again. */
-export function redownload(id: string, torrentId: string): Promise<Job> {
-  return request<Job>(`/api/indexes/${id}/redownload`, json({ torrentId }))
+/** Forgets a title and its download history. Library files are kept. */
+export function deleteTitle(id: string): Promise<void> {
+  return send(`/api/titles/${id}`, { method: "DELETE" })
 }
 
 /* -------------------------------------------------------------------------- */
-/* Jobs                                                                       */
+/* Downloads                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/** The signed-in user's most recent jobs, newest first. */
-export function fetchJobs(): Promise<Job[]> {
-  return request<Job[]>("/api/jobs")
+/** A page of downloads, newest activity first. */
+export function fetchDownloads(
+  options: Partial<Pick<ListDownloadsQuery, "page" | "pageSize" | "state">> = {},
+): Promise<Paginated<DownloadSummary>> {
+  return request(`/api/downloads?${query(options)}`)
 }
 
-/**
- * Queues a search for a title. Season is only meaningful for shows.
- *
- * The API answers with the existing job when one is already running for this
- * title, and rejects with `already_indexed` when it has been indexed before.
- */
-export function createJob(imdbId: string, season?: number): Promise<Job> {
-  return request<Job>("/api/jobs/create", json({ imdbId, season }))
+/** Everything about one download: episodes, candidates and attempts. */
+export function fetchDownload(id: string, init?: RequestInit): Promise<DownloadDetail> {
+  return request(`/api/downloads/${id}`, init)
 }
 
-/** Removes a finished or failed job from the list. */
-export function deleteJob(id: string): Promise<void> {
-  return send(`/api/jobs/${id}/delete`, { method: "DELETE" })
+/** Queues a movie, or one season of a show. */
+export function createDownload(body: CreateDownloadRequest): Promise<DownloadSummary> {
+  return request("/api/downloads", json(body))
+}
+
+/** Stops a download; resolves once it has cleaned up. */
+export function cancelDownload(id: string): Promise<DownloadSummary> {
+  return request(`/api/downloads/${id}/cancel`, { method: "POST" })
+}
+
+/** Runs a finished download again, optionally trying a specific release first. */
+export function retryDownload(id: string, candidateId?: string): Promise<DownloadSummary> {
+  return request(`/api/downloads/${id}/retry`, json(candidateId ? { candidateId } : {}))
+}
+
+/** Removes a download and its history. Library files are kept. */
+export function deleteDownload(id: string): Promise<void> {
+  return send(`/api/downloads/${id}`, { method: "DELETE" })
+}
+
+/* -------------------------------------------------------------------------- */
+/* Settings                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** The server's settings. Admins only. */
+export function fetchSettings(): Promise<SettingsResponse> {
+  return request("/api/settings")
+}
+
+/** Changes any subset of settings and returns the result. Admins only. */
+export function updateSettings(patch: SettingsPatch): Promise<SettingsResponse> {
+  return request("/api/settings", json(patch, "PATCH"))
 }
 
 /* -------------------------------------------------------------------------- */
@@ -247,14 +274,6 @@ export function fetchTMDBDetails(
   init?: RequestInit,
 ): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>(`/api/tmdb/details/${mediaType}/${id}`, init)
-}
-
-/** Resolves an IMDb ID to its TMDB records. */
-export function findByImdbId(
-  imdbId: string,
-  init?: RequestInit,
-): Promise<Record<string, unknown>> {
-  return request<Record<string, unknown>>(`/api/tmdb/find/${imdbId}`, init)
 }
 
 /** Trending posters for the login backdrop. The one endpoint open to guests. */

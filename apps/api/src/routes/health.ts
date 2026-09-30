@@ -8,5 +8,6 @@ import { factory } from "../lib/routing/factory"
 
 export default factory({
   authenticated: false,
+  rateLimit: { max: 120, window: 60 },
   GET: (c) => c.json({ status: "ok" }),
 })

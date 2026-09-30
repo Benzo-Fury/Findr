@@ -6,11 +6,13 @@
  */
 
 import { Server } from "./lib/server/Server"
-import { migrateAuth } from "./lib/auth/client"
+import { bootstrapAdmin, migrateAuth } from "./lib/auth/client"
 import DownloadQueue from "./lib/pipeline/DownloadQueue"
 
-// Create BetterAuth's tables before any request can hit them
+// Create BetterAuth's tables before any request can hit them, then make
+// sure a fresh install has an admin to sign in with
 await migrateAuth()
+await bootstrapAdmin()
 
 const server = new Server()
 

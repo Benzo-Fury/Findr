@@ -1,11 +1,12 @@
 /**
  * Shared data-loading hooks: paging through a TMDB list, driving that paging
- * from a scroll sentinel, and resolving IMDb IDs to titles and artwork.
+ * from a scroll sentinel, resolving TMDB ids to titles and artwork, and
+ * polling while something is in progress.
  */
 
 import * as React from "react"
-import type { PosterItem, TMDBMeta } from "./types"
-import { fetchList, findByImdbId, type ListSource } from "./api"
+import type { MediaType, PosterItem, TMDBMeta } from "./types"
+import { fetchList, fetchTMDBDetails, type ListSource } from "./api"
 
 /**
  * Pages through one of the API's named TMDB lists.
@@ -140,57 +141,60 @@ export function useInfiniteScroll(
   return attachObserver
 }
 
+/** Cache key for a TMDB identity; movie and show ids overlap. */
+export function tmdbKey(mediaType: MediaType, tmdbId: number): string {
+  return `${mediaType}-${tmdbId}`
+}
+
 /**
- * Resolves IMDb IDs to titles and artwork.
+ * Resolves TMDB ids to titles and artwork.
  *
- * Jobs and indexes store only an IMDb ID, so anything listing them needs this
- * to render something a person recognises. Results are memoised per ID and
- * in-flight lookups are de-duplicated.
+ * Downloads and titles store only TMDB identity, so anything listing them
+ * needs this to render something a person recognises. Results are memoised
+ * per title and in-flight lookups are de-duplicated. Look results up with
+ * `tmdbKey`.
  */
 export function useTMDBMeta() {
   const [meta, setMeta] = React.useState<Record<string, TMDBMeta>>({})
-  const [loadingIds, setLoadingIds] = React.useState<Set<string>>(new Set())
-  const pending = React.useRef(new Set<string>())
+  const requested = React.useRef(new Set<string>())
 
-  const fetchMeta = React.useCallback(
-    (imdbId: string) => {
-      if (meta[imdbId] || pending.current.has(imdbId)) return
+  const fetchMeta = React.useCallback((mediaType: MediaType, tmdbId: number) => {
+    const key = tmdbKey(mediaType, tmdbId)
+    if (requested.current.has(key)) return
+    requested.current.add(key)
 
-      pending.current.add(imdbId)
-      setLoadingIds((prev) => new Set(prev).add(imdbId))
+    fetchTMDBDetails(mediaType, tmdbId)
+      .then((data) => {
+        const date = String(data.release_date ?? data.first_air_date ?? "")
+        setMeta((prev) => ({
+          ...prev,
+          [key]: {
+            title: String(data.title ?? data.name ?? ""),
+            year: date.slice(0, 4),
+            posterPath: typeof data.poster_path === "string" ? data.poster_path : null,
+          },
+        }))
+      })
+      .catch(() => {
+        // Let a later render try again
+        requested.current.delete(key)
+      })
+  }, [])
 
-      findByImdbId(imdbId)
-        .then((data) => {
-          const movie = (data.movie_results as Record<string, unknown>[])?.[0]
-          const tv = (data.tv_results as Record<string, unknown>[])?.[0]
-          const item = movie || tv
-          if (!item) return
+  return { meta, fetchMeta }
+}
 
-          const date = (item.release_date || item.first_air_date || "") as string
+/**
+ * Calls `load` every `intervalMs` while `active` is true. The latest `load` is
+ * always used, so callers need not memoise it.
+ */
+export function usePolling(load: () => void, active: boolean, intervalMs: number) {
+  const latest = React.useRef(load)
+  latest.current = load
 
-          setMeta((prev) => ({
-            ...prev,
-            [imdbId]: {
-              tmdbId: item.id as number,
-              title: (item.title || item.name) as string,
-              year: date.slice(0, 4),
-              posterPath: (item.poster_path as string | null) ?? null,
-              overview: (item.overview as string) ?? "",
-              mediaType: movie ? "movie" : "tv",
-            },
-          }))
-        })
-        .catch(() => {})
-        .finally(() => {
-          setLoadingIds((prev) => {
-            const next = new Set(prev)
-            next.delete(imdbId)
-            return next
-          })
-        })
-    },
-    [meta],
-  )
-
-  return { meta, loadingIds, fetchMeta }
+  React.useEffect(() => {
+    if (!active) return
+    const timer = setInterval(() => latest.current(), intervalMs)
+    return () => clearInterval(timer)
+  }, [active, intervalMs])
 }

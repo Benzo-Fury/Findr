@@ -3,8 +3,9 @@ import { LoginPage } from "@/components/login-form"
 import { AppLayout } from "@/components/app-layout"
 import { LibraryPage } from "@/pages/library"
 import { DiscoverPage } from "@/pages/discover"
-import { JobsPage } from "@/pages/jobs"
-import { useSession } from "@/lib/auth"
+import { DownloadsPage } from "@/pages/downloads"
+import { SettingsPage } from "@/pages/settings"
+import { isAdmin, useSession } from "@/lib/auth"
 
 /**
  * Routing, split by whether there is a session.
@@ -42,7 +43,9 @@ function App() {
           <Route index element={<LibraryPage />} />
           <Route path="/discover" element={<DiscoverPage />} />
           <Route path="/discover/:mediaType/:id" element={<DiscoverPage />} />
-          <Route path="/jobs" element={<JobsPage />} />
+          <Route path="/downloads" element={<DownloadsPage />} />
+          <Route path="/downloads/:id" element={<DownloadsPage />} />
+          {isAdmin(session) && <Route path="/settings" element={<SettingsPage />} />}
         </Route>
         <Route path="/login" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />

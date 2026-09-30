@@ -1,24 +1,24 @@
-import type { MiddlewareHandler } from "hono"
-import type { ZodSchema } from "zod"
-
 /**
  * Creates a middleware that parses and validates the request JSON body against
  * the given Zod schema. On success the parsed value is stored on context as
- * `"body"` so handlers can access it type-safely without re-parsing. On
- * failure a 400 response is returned with the Zod error details.
+ * `"body"` so handlers can access it without re-parsing. On failure a 400 is
+ * returned with the Zod issues.
  */
-export function validateBody(schema: ZodSchema): MiddlewareHandler {
+
+import type { MiddlewareHandler } from "hono"
+import type { ZodType } from "zod"
+
+export function validateBody(schema: ZodType): MiddlewareHandler {
   return async (c, next) => {
     let raw: unknown
     try {
       raw = await c.req.json()
     } catch {
-      return c.json({ error: "Invalid or missing JSON body" }, 400)
+      return c.json({ error: "invalid_json" }, 400)
     }
     const result = schema.safeParse(raw)
     if (!result.success) {
-      console.log(`[Validation] Body validation failed on ${c.req.method} ${c.req.path}: ${JSON.stringify(result.error.issues)}`)
-      return c.json({ error: "Validation failed", details: result.error.issues }, 400)
+      return c.json({ error: "validation_failed", details: result.error.issues }, 400)
     }
     c.set("body", result.data)
     await next()
