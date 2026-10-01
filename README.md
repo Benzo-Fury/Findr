@@ -33,7 +33,7 @@ Findr is a self-hosted web app that turns "I want this movie" or "I want season 
 - 💾 **Library-safe** — files land atomically under your naming templates, so your media server never sees a half-copied file.
 - 🔁 **Resilient** — a persistent queue resumes after restarts and cleans up anything a crash left behind.
 - 👥 **Private by default** — no public sign-up; admins create accounts. Rate-limited API.
-- 📦 **One binary** — ships as a single executable with the web UI built in.
+- 📦 **One binary, one service** — a single executable with the web UI and a BitTorrent client built in, for Linux, macOS or Windows. Prowlarr is the only service it needs.
 
 ## How it works
 
@@ -63,7 +63,7 @@ If any step fails because of the release, it is rejected with the reason, its fi
 | [MKVToolNix](https://mkvtoolnix.download/) (`mkvmerge`) | Sterilizes downloads |
 | [TMDB API key](https://developer.themoviedb.org/) | Metadata, artwork, episode lists (free) |
 | [Anthropic API key](https://console.anthropic.com/) *(optional)* | The wrong-title filter |
-| [Bun](https://bun.sh) 1.3+ | Only needed to build from source |
+| [Bun](https://bun.sh) 1.4+ | Only needed to build from source |
 
 Torrents are downloaded by Findr itself ([WebTorrent](https://webtorrent.io), built in), so Prowlarr is the only service to run. It can run in Docker: [`docker/`](docker/README.md) has a Compose file (plus optional FlareSolverr) and a step-by-step setup guide.
 

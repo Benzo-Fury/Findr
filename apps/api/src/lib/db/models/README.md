@@ -4,5 +4,6 @@ Models are the only way the codebase talks to the database. Every table has a mo
 - They return model instances: one object per row, with typed camelCase fields and methods for the changes that row can undergo (`download.setStatus(...)`, `candidate.reject(reason)`).
 - Instances serialise themselves into the shared API types from `@findr/types` (`toSummary()`, `toRecord()`), so routes never shape rows by hand.
 - Multi-model writes go through `Model.transaction(() => ...)`.
+- Two tables are key/value stores rather than rows of records: `SettingsStore` (user-tunable settings, validated against `@findr/types/settings`) and `AppState` (internal state kept between restarts, such as the torrent client's DHT nodes). Both hold one JSON document per key.
 
 Schema changes are migrations in `../migrations.ts`, applied by `../Migrator.ts` on startup.
