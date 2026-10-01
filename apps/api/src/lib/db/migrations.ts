@@ -115,4 +115,15 @@ export const migrations: Migration[] = [
       )`,
     ],
   },
+  {
+    name: "app state",
+    statements: [
+      // Internal state the app keeps between restarts (not user settings), one JSON document per key
+      `CREATE TABLE app_state (
+        key        TEXT PRIMARY KEY NOT NULL,
+        value      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+    ],
+  },
 ];

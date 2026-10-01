@@ -1,7 +1,7 @@
 /**
  * The contract between the pipeline and a torrent client. The pipeline never
- * talks to qBittorrent directly — it drives this interface, so the backend
- * can be swapped without touching the attempt loop.
+ * talks to the client directly — it drives this interface, so the backend
+ * can be swapped (or faked in tests) without touching the attempt loop.
  *
  * The contract is built around inspecting before downloading: a torrent is
  * added so that it fetches its file list and then waits, the pipeline decides
@@ -19,7 +19,7 @@ export type TorrentInput =
 export interface AddOptions {
   /** Absolute directory the payload is saved under. */
   directory: string;
-  /** Unique label used to find this torrent again, including after a restart. */
+  /** Unique label for this attempt's torrent, used to find it again. */
   tag: string;
 }
 
@@ -45,7 +45,8 @@ export interface TorrentStatus {
   /** 0–1 over the selected files. */
   progress: number;
   speedBytesPerSecond: number;
-  seeds: number;
+  /** Peers currently connected. */
+  peers: number;
   /** Set when `state` is `error`. */
   error?: string;
 }
@@ -71,6 +72,6 @@ export interface Downloader {
   /** Removes the torrent and deletes its data from disk. Safe to call on a missing torrent. */
   remove(handle: string): Promise<void>;
 
-  /** Handles of every torrent this app added, keyed by tag — used to sweep up after a crash. */
+  /** Handles of every torrent this app added that the client still holds, keyed by tag — swept at startup. */
   managed(): Promise<Map<string, string>>;
 }

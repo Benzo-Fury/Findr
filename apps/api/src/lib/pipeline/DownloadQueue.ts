@@ -18,7 +18,7 @@ import { Episode } from "../db/models/Episode";
 import { SettingsStore } from "../db/models/SettingsStore";
 import { Title } from "../db/models/Title";
 import type { Downloader } from "../downloader/Downloader";
-import { QBittorrentDownloader } from "../downloader/QBittorrentDownloader";
+import { WebTorrentDownloader } from "../downloader/WebTorrentDownloader";
 import SelfManagedSingleton from "../other/SelfManagedSingleton";
 import { AttemptRunner } from "./AttemptRunner";
 import { DownloadRunner } from "./DownloadRunner";
@@ -38,7 +38,7 @@ export class QueueError extends Error {
 // ---------- Queue ---------- //
 
 export default class DownloadQueue extends SelfManagedSingleton {
-  private downloader: Downloader = new QBittorrentDownloader();
+  private downloader: Downloader = new WebTorrentDownloader();
   private attempts = new AttemptRunner(this.downloader);
 
   /** Download ids waiting for a slot, oldest first. */

@@ -171,7 +171,7 @@ class FakeDownloader implements Downloader {
       totalBytes: total,
       progress,
       speedBytesPerSecond: 0,
-      seeds: 1,
+      peers: 1,
     };
   }
 

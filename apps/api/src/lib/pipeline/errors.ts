@@ -4,8 +4,8 @@
  *
  * - `AttemptFailure` — this release is bad (stalled, dangerous files, broken
  *   container). Reject it and move on to the next candidate.
- * - `FatalDownloadError` — the environment is broken (qBittorrent unreachable,
- *   library paths unset). Trying another release would fail the same way, so
+ * - `FatalDownloadError` — the environment is broken (the torrent client
+ *   cannot listen, library paths unset). Trying another release would fail the same way, so
  *   stop without blaming the candidate.
  * - `CancelledError` — a user cancelled. Clean up and stop quietly.
  */

@@ -12,6 +12,7 @@ bun run dev:web          # Vite only
 
 # Build & production
 bun run build            # Web → API bundle → compiled binary, all into dist/
+bun run build --target linux-x64   # cross-compile dist/findr-linux-x64 (repeatable)
 bun run start            # Run dist/index.js (serves API + web on PORT)
 ./dist/findr             # Or run the standalone executable
 
@@ -25,14 +26,14 @@ cd apps/web && bunx tsc -b
 
 The Sterilizer and pipeline tests need `mkvmerge` and `ffmpeg` on PATH and are skipped without them.
 
-External services (Prowlarr, qBittorrent, optional FlareSolverr) run from `docker/`: `compose.example.yml` and `.env.example` are committed; `compose.yml`, `.env` and `config/` are personal and gitignored. qBittorrent mounts the downloads folder at its host path because Findr passes host paths to it. Setup steps are in `docker/README.md`.
+Prowlarr (and optional FlareSolverr) run from `docker/`: `compose.example.yml` and `.env.example` are committed; `compose.yml`, `.env` and `config/` are personal and gitignored. Setup steps are in `docker/README.md`. Torrents need no external service — Findr embeds WebTorrent.
 
 ## What Findr does
 
 A self-hosted downloader for movies and TV seasons. A request is a TMDB id (plus a season for shows); Findr then:
 
 1. **Searches** Prowlarr, **parses** every release title, **scores** it against hard filters and weights, and optionally **screens** the best with Claude for wrong-title matches. All results, rejected ones included, are stored as candidates.
-2. **Attempts** the best pending candidate: qBittorrent fetches the file list only, the list is **inspected** (executables, archive-only, incomplete packs are rejected), the chosen files **download** under a watchdog, **mkvmerge** strips everything but video and audio, and the result is **saved** atomically into the library.
+2. **Attempts** the best pending candidate: the built-in WebTorrent client fetches the file list only, the list is **inspected** (executables, archive-only, incomplete packs are rejected), the chosen files **download** under a watchdog, **mkvmerge** strips everything but video and audio, and the result is **saved** atomically into the library.
 3. On a bad release it **rejects** that candidate with the reason, cleans up, and tries the next — up to `queue.maxAttempts`. Seasons try a complete pack first, then fall back to one unit per aired episode; mixed outcomes end as `partial`.
 
 ## Architecture
@@ -50,7 +51,7 @@ Bun monorepo: `apps/api` (Hono on Bun), `apps/web` (React 19 + react-router-dom 
 - **Route options** — `authenticated` (default **true**), `admin` (admins only), `rateLimit` (default 600/min; public routes use `PUBLIC_RATE_LIMIT` or their own). `Server.constructRoutes` builds each chain: rate limit → auth → admin → query/body validation → middleware → handler.
 - **Auth** — BetterAuth (email + password, `admin` plugin) on the shared SQLite connection. Sign-up is disabled; the first admin is seeded from `FINDR_ADMIN_*`; admins create further accounts through the admin plugin.
 - **Database** — raw `bun:sqlite` (`lib/db/client.ts`). Schema changes are append-only entries in `lib/db/migrations.ts`, applied by `Migrator` using `PRAGMA user_version`. BetterAuth migrates its own tables.
-- **Models** (`lib/db/models/`) — the only code that writes SQL. Static finders return class instances with typed camelCase fields and mutation methods; instances serialise to `@findr/types` records (`toSummary()`, `toRecord()`, `toDetail()`). Tables: `titles`, `downloads`, `episodes`, `candidates`, `attempts`, `settings`.
+- **Models** (`lib/db/models/`) — the only code that writes SQL. Static finders return class instances with typed camelCase fields and mutation methods; instances serialise to `@findr/types` records (`toSummary()`, `toRecord()`, `toDetail()`). Tables: `titles`, `downloads`, `episodes`, `candidates`, `attempts`, `settings`, `app_state` (internal state such as DHT nodes).
 - **Configuration** — deployment config and secrets come from the environment, validated in `lib/env/Env.ts`. User-tunable settings live in the database (`SettingsStore`, schema in `@findr/types/settings`) and are edited on the web Settings page. There is no JSON config file.
 - **Pipeline** (`lib/pipeline/`)
   - `DownloadQueue` — singleton owning enqueue/cancel/retry/delete, concurrency, and startup `recover()` (closes interrupted attempts, rejects their candidates, deletes their scratch dirs, sweeps leftover torrents, resumes unfinished downloads).
@@ -58,7 +59,7 @@ Bun monorepo: `apps/api` (Hono on Bun), `apps/web` (React 19 + react-router-dom 
   - `CandidateSearch` — Prowlarr → `ReleaseParser` → `ReleaseScorer` → `RelevanceFilter` → persisted candidates.
   - `AttemptRunner` — one candidate: `TorrentSession` → `Sterilizer` → `LibrarySaver`, always cleaning up.
   - `errors.ts` — `AttemptFailure` (reject this release, try the next), `FatalDownloadError` (environment broken; don't blame the release), `CancelledError`.
-- **Downloader** (`lib/downloader/`) — `Downloader` interface with `QBittorrentDownloader`; `FileInspector` (safety and file selection), `Watchdog` (metadata/stall/speed), `TorrentSession`, `AttemptWorkspace` (`<downloads>/<downloadId>/<candidateId>/`).
+- **Downloader** (`lib/downloader/`) — `Downloader` interface with `WebTorrentDownloader` (in-process client, uTP off, block requests gated until files are chosen, DHT nodes kept in `app_state`); `FileInspector` (safety and file selection), `Watchdog` (metadata/stall/speed), `TorrentSession`, `AttemptWorkspace` (`<downloads>/<downloadId>/<candidateId>/`).
 - **Media** (`lib/media/`) — `Sterilizer` (mkvmerge, video + audio only) and `LibrarySaver` (naming templates, atomic temp-name-then-rename placement).
 - **Prowlarr** (`lib/prowlarr/Prowlarr.ts`) — search, plus link handling: API keys are stripped into `prowlarr:` references before storage and re-attached only when fetching from `PROWLARR_URL`.
 - **TMDB** (`lib/tmdb/`) — cached client behind the `/api/tmdb/*` proxy routes, plus `titleFacts` / `seasonEpisodes` for the pipeline.
@@ -69,7 +70,9 @@ Bun monorepo: `apps/api` (Hono on Bun), `apps/web` (React 19 + react-router-dom 
 
 1. **Cartographer** (`scripts/cartographer.ts`) — writes `src/_route.map.ts`, statically importing every route so the bundler sees them.
 2. **Asset map** (`scripts/assetmap.ts`) — writes `src/_asset.map.ts`, importing every web file with `with { type: "file" }` so it ships with the build.
-3. `Bun.build` → `dist/index.js` (+ `dist/web/` assets) and `bun build --compile` → `dist/findr`.
+3. `Bun.build` → `dist/index.js` (+ `dist/web/` assets), then `Bun.build` with `compile` → `dist/findr` (or `dist/findr-<target>` per `--target`, e.g. `bun run build --target linux-arm64`).
+
+WebTorrent's optional native addons (`webrtc-polyfill`, `utp-native`, `fs-native-extensions`) are replaced with pure-JS stubs from `scripts/native-stubs.ts` — by a `Bun.build` plugin in the build, and by a runtime plugin (`scripts/preload.ts`, wired in `bunfig.toml`) in `bun run` and `bun test`. Keep the build free of native code so it cross-compiles; never enable uTP, whose native module crashes Bun.
 
 Both generated files are gitignored. In production the server imports them; in development it globs `routes/` and proxies to Vite instead. Anything new that must ship — routes, assets — has to reach the bundle through static imports; no runtime filesystem discovery in production code paths.
 

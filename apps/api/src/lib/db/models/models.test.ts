@@ -2,6 +2,8 @@ import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { migrateAuth } from "../../auth/client";
 import { ReleaseParser } from "../../releases/ReleaseParser";
 import { database } from "../client";
+import { migrations } from "../migrations";
+import { AppState } from "./AppState";
 import { Attempt } from "./Attempt";
 import { Candidate, type NewCandidate } from "./Candidate";
 import { Download } from "./Download";
@@ -49,7 +51,19 @@ function candidate(downloadId: string, overrides: Partial<NewCandidate> = {}): N
 describe("migrations", () => {
   test("record the applied schema version", () => {
     const row = database.query<{ user_version: number }, []>("PRAGMA user_version").get();
-    expect(row?.user_version).toBe(1);
+    expect(row?.user_version).toBe(migrations.length);
+  });
+});
+
+describe("AppState", () => {
+  test("stores JSON documents by key and reads unset keys as null", () => {
+    expect(AppState.get("test.nodes")).toBeNull();
+
+    AppState.set("test.nodes", [{ host: "203.0.113.5", port: 6881 }]);
+    expect(AppState.get("test.nodes")).toEqual([{ host: "203.0.113.5", port: 6881 }]);
+
+    AppState.set("test.nodes", []);
+    expect(AppState.get("test.nodes")).toEqual([]);
   });
 });
 

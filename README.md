@@ -6,7 +6,7 @@
 
 ## What is this?
 
-Findr is a self-hosted web app that turns "I want this movie" or "I want season 2 of this show" into a clean file in your media library. It searches your indexers through Prowlarr, ranks every release it finds, downloads the best one through qBittorrent, strips it down to just its video and audio, and files it where Jellyfin or Plex expect it. When a release turns out to be bad — stalled, too slow, carrying an executable — Findr throws it away and tries the next one on its own.
+Findr is a self-hosted web app that turns "I want this movie" or "I want season 2 of this show" into a clean file in your media library. It searches your indexers through Prowlarr, ranks every release it finds, downloads the best one with its built-in torrent client, strips it down to just its video and audio, and files it where Jellyfin or Plex expect it. When a release turns out to be bad — stalled, too slow, carrying an executable — Findr throws it away and tries the next one on its own.
 
 > [!WARNING]
 > Downloading copyrighted material without permission may be **illegal** where you live. Read the [disclaimer](#disclaimer) before using Findr.
@@ -49,7 +49,7 @@ graph LR
 
 1. **Search** — Prowlarr is queried by IMDb id (TVDB for shows), falling back to a text search. Duplicate listings of the same torrent collapse into one.
 2. **Rank** — every release is parsed and scored. Releases failing a hard filter are kept with their rejection reason so you can see why they were skipped. If enabled, the best 20 are screened for wrong titles.
-3. **Download** — the best candidate is added to qBittorrent so that it fetches only its file list. Findr inspects the list, rejects anything unsafe or incomplete, selects just the needed video files, and downloads them while the watchdog watches.
+3. **Download** — the best candidate is added to Findr's built-in torrent client so that it fetches only its file list. Findr inspects the list, rejects anything unsafe or incomplete, selects just the needed video files, and downloads them while the watchdog watches.
 4. **Sterilize** — each file is remuxed to a fresh Matroska file with only video and audio tracks.
 5. **Save** — the file is moved into your library under your naming templates, via a hidden temp file and an atomic rename.
 
@@ -60,19 +60,18 @@ If any step fails because of the release, it is rejected with the reason, its fi
 | Dependency | Purpose |
 |---|---|
 | [Prowlarr](https://prowlarr.com/) | Searches your configured indexers |
-| [qBittorrent](https://www.qbittorrent.org/) 4.5+ (5.x recommended) with the Web UI enabled | Downloads torrents. Must see the same file paths as Findr. |
 | [MKVToolNix](https://mkvtoolnix.download/) (`mkvmerge`) | Sterilizes downloads |
 | [TMDB API key](https://developer.themoviedb.org/) | Metadata, artwork, episode lists (free) |
 | [Anthropic API key](https://console.anthropic.com/) *(optional)* | The wrong-title filter |
 | [Bun](https://bun.sh) 1.3+ | Only needed to build from source |
 
-Prowlarr and qBittorrent can run in Docker: [`docker/`](docker/README.md) has a Compose file for both (plus optional FlareSolverr) and a step-by-step setup guide.
+Torrents are downloaded by Findr itself ([WebTorrent](https://webtorrent.io), built in), so Prowlarr is the only service to run. It can run in Docker: [`docker/`](docker/README.md) has a Compose file (plus optional FlareSolverr) and a step-by-step setup guide.
 
 ## Installation
 
 ### From a binary
 
-`bun run build` produces `dist/findr`, a single executable with the web UI embedded. It runs on the platform it was built on.
+`bun run build` produces `dist/findr`, a single executable with the web UI embedded, for the machine you build on. To build for another machine, pass its target — see [Building](#building).
 
 ```bash
 mkdir -p ~/findr && cp dist/findr ~/findr/ && cd ~/findr
@@ -105,20 +104,15 @@ FINDR_ADMIN_PASSWORD=<a strong password>
 TMDB_API_KEY=<your TMDB key>
 PROWLARR_URL=http://localhost:9696
 PROWLARR_API_KEY=<your Prowlarr key>
-QBT_URL=http://localhost:8080
-QBT_USERNAME=<qBittorrent username>
-QBT_PASSWORD=<qBittorrent password>
 ```
 
 Then sign in as the admin, open **Settings**, and set the three library paths (downloads scratch space, movies, TV). Naming templates, release preferences, the queue, the download watchdog and the wrong-title filter are all on that page too.
 
 Every variable and setting is documented in **[docs/Config.md](docs/Config.md)**.
 
-### qBittorrent
+### Torrent client
 
-In qBittorrent → Preferences → Web UI: enable the Web UI and set a username and password matching `QBT_USERNAME` / `QBT_PASSWORD`. Findr tags everything it adds with `findr` and removes its torrents when each attempt ends; it does not seed.
-
-If qBittorrent runs in a container, mount the downloads folder at the same absolute path inside it as on the host, since Findr passes host paths. The [Docker setup](docker/README.md) does this for you.
+Findr downloads with a built-in BitTorrent client, so there is nothing to install. It listens on `TORRENT_PORT` (default `6881`, TCP for peers and UDP for the DHT); forward that port on your router for better speeds, and allow incoming connections if your OS firewall asks. Peers connect over TCP — uTP is not supported. Each torrent is removed when its attempt ends; Findr does not seed.
 
 ## Usage
 
@@ -142,6 +136,14 @@ This builds the web app, generates the route and asset maps, and outputs:
 | `dist/findr` | A standalone executable with the web UI embedded | `./dist/findr` |
 
 The route map (`apps/api/scripts/cartographer.ts`) and asset map (`apps/api/scripts/assetmap.ts`) turn the routes folder and the built web app into static imports, which is what lets both outputs work without any files beside them.
+
+To cross-compile, pass one or more targets; each produces `dist/findr-<target>`:
+
+```bash
+bun run build --target linux-x64 --target linux-arm64 --target windows-x64
+```
+
+Targets: `linux-x64`, `linux-arm64` (add `-musl` for Alpine), `darwin-x64`, `darwin-arm64`, `windows-x64`. The build contains no native code — WebTorrent's optional native addons are replaced with stubs (`apps/api/scripts/native-stubs.ts`) — so every target works the same way. The only external program Findr calls at runtime is `mkvmerge`, which must be installed on the machine that runs it.
 
 ## Development
 
@@ -175,7 +177,7 @@ apps/
       lib/
         db/             SQLite client, migrations, models (all SQL lives here)
         pipeline/       queue, download runner, search, attempts, relevance filter
-        downloader/     Downloader interface, qBittorrent, inspection, watchdog
+        downloader/     Downloader interface, built-in WebTorrent client, inspection, watchdog
         media/          Sterilizer (mkvmerge), LibrarySaver
         releases/       release title parser and scorer
         prowlarr/  tmdb/  auth/  env/  routing/  server/
@@ -189,7 +191,7 @@ packages/
   config/               scoring weights (@findr/config/scoring)
 docs/
   Config.md             every environment variable and setting
-docker/                 Compose file and setup guide for Prowlarr, qBittorrent, FlareSolverr
+docker/                 Compose file and setup guide for Prowlarr and FlareSolverr
 ```
 
 ## Attribution

@@ -7,14 +7,15 @@
     "start": "NODE_ENV=production bun run ../../dist/index.js"
   },
   "dependencies": {
-    "@ctrl/qbittorrent": "^9.11.2",
     "@findr/config": "workspace:*",
     "@findr/types": "workspace:*",
     "better-auth": "^1.6.27",
     "hono": "^4.13.1",
+    "webtorrent": "^3.0.21",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/webtorrent": "^3.0.0"
   }
 }

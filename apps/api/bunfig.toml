@@ -1,2 +1,5 @@
+# Stub WebTorrent's native addons in `bun run` too, matching the build
+preload = ["./scripts/preload.ts"]
+
 [test]
-preload = ["./src/test/setup.ts"]
+preload = ["./scripts/preload.ts", "./src/test/setup.ts"]

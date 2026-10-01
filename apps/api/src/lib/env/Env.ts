@@ -50,9 +50,12 @@ const EnvSchema = z.object({
   PROWLARR_URL: optional,
   PROWLARR_API_KEY: optional,
 
-  QBT_URL: z.string().default("http://localhost:8080"),
-  QBT_USERNAME: optional,
-  QBT_PASSWORD: optional,
+  /**
+   * Port the built-in torrent client listens on, for peer connections (TCP)
+   * and the DHT (UDP). Forward it on your router for better speeds; `0`
+   * picks a random free port on each start.
+   */
+  TORRENT_PORT: z.coerce.number().int().min(0).max(65535).default(6881),
 
   /** Enables the LLM relevance filter when present. */
   ANTHROPIC_API_KEY: optional,

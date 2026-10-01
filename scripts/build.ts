@@ -7,7 +7,8 @@
  * executable with everything embedded).
  *
  * Invokes each app's own build so the logic stays local to each app. Run via
- * `bun run build` from the repo root.
+ * `bun run build` from the repo root; arguments are passed to the API build,
+ * so `bun run build --target linux-x64` cross-compiles `dist/findr-linux-x64`.
  */
 
 import { $ } from "bun"
@@ -21,7 +22,7 @@ await rm(`${root}/dist`, { recursive: true, force: true })
 
 // Web first — the API build embeds its output
 await $`cd ${root}/apps/web && bunx tsc -b && bunx vite build`
-await $`bun run ${root}/apps/api/scripts/build.ts`
+await $`bun run ${root}/apps/api/scripts/build.ts ${Bun.argv.slice(2)}`
 
 const elapsed = ((performance.now() - start) / 1000).toFixed(2)
 console.log(`Build complete in ${elapsed}s.`)

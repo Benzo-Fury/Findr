@@ -113,7 +113,7 @@ class FakeDownloader implements Downloader {
   private next = 0;
 
   public async add(input: TorrentInput, options: AddOptions): Promise<string> {
-    if (this.unavailable) throw new FatalDownloadError("qBittorrent is unavailable");
+    if (this.unavailable) throw new FatalDownloadError("The torrent client is unavailable");
     const hash = input.kind === "magnet" ? (input.uri.split("btih:")[1] ?? "") : "file";
     const handle = `h${this.next++}`;
     this.live.set(handle, { hash, directory: options.directory, tag: options.tag, started: false });
@@ -143,8 +143,8 @@ class FakeDownloader implements Downloader {
   public async status(handle: string): Promise<TorrentStatus | null> {
     if (!this.live.has(handle)) return null;
     return this.hang
-      ? { state: "downloading", downloadedBytes: Date.now(), totalBytes: GB, progress: 0.5, speedBytesPerSecond: 1, seeds: 1 }
-      : { state: "complete", downloadedBytes: GB, totalBytes: GB, progress: 1, speedBytesPerSecond: 0, seeds: 1 };
+      ? { state: "downloading", downloadedBytes: Date.now(), totalBytes: GB, progress: 0.5, speedBytesPerSecond: 1, peers: 1 }
+      : { state: "complete", downloadedBytes: GB, totalBytes: GB, progress: 1, speedBytesPerSecond: 0, peers: 1 };
   }
 
   public async stop(): Promise<void> {}
@@ -264,7 +264,7 @@ describe.skipIf(!hasTools)("download pipeline", () => {
     const download = await runDownload(downloader, 603, "movie", null);
 
     expect(download.status).toBe("failed");
-    expect(download.toSummary().statusMessage).toBe("qBittorrent is unavailable");
+    expect(download.toSummary().statusMessage).toBe("The torrent client is unavailable");
     expect(candidateStatuses(download.id)["The.Matrix.1999.1080p.WEB-DL.x265-FLUX"]).toBe("pending");
     expect(Attempt.forDownload(download.id)[0]?.toRecord().outcome).toBe("interrupted");
   });
