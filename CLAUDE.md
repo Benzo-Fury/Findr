@@ -26,6 +26,8 @@ cd apps/web && bunx tsc -b
 
 The Sterilizer and pipeline tests need `mkvmerge` and `ffmpeg` on PATH and are skipped without them.
 
+**Default login:** a database with no users is seeded with one admin, `admin` / `admin` (stored as `admin@findr.local`, flagged `mustReset`). It must replace its email and password on first sign-in before anything else works, so a dev database you have already set up will not accept `admin` / `admin`. To reset one, stop the API, delete the rows from `user`, `account`, `session` and `verification` in `data/findr.db` (the repo-root `data/`), and restart the API — hot reload does not re-run `seedRoot`. There is no env-seeded admin.
+
 Prowlarr (and optional FlareSolverr) run from `docker/`: `compose.example.yml` and `.env.example` are committed; `compose.yml`, `.env` and `config/` are personal and gitignored. Setup steps are in `docker/README.md`. Torrents need no external service — Findr embeds WebTorrent.
 
 ## What Findr does
@@ -42,17 +44,18 @@ Bun monorepo: `apps/api` (Hono on Bun), `apps/web` (React 19 + react-router-dom 
 
 ### Packages
 
-- `@findr/types` — Zod schemas and inferred types shared by API and web. Import by subpath (`@findr/types/downloads`, `/settings`, `/release`, `/media`); new modules get their own file, not a re-export from the index.
-- `@findr/config` — code-level constants (`@findr/config/scoring`: scoring weights and rank tables).
+- `@findr/types` — Zod schemas and inferred types shared by API and web. Import by subpath (`@findr/types/downloads`, `/settings`, `/account`, `/release`, `/media`); new modules get their own file, not a re-export from the index.
+- `@findr/config` — code-level constants (`@findr/config/scoring`: the rank tables the scorer scales; the weights themselves are the `scoring` settings section).
 
 ### API (`apps/api/src`)
 
 - **Routing** — each file in `routes/` exports one `factory()` Route; the URL is derived from its path under `/api/` (`downloads/[id]/cancel.ts` → `/api/downloads/:id/cancel`, `downloads/index.ts` → `/api/downloads`). Methods are bare handlers or `MethodConfig` (`{ handler, body?, query? }`); read validated input with `bodyOf(c, Schema)` / `queryOf(c, Schema)` from `lib/routing/input.ts`.
-- **Route options** — `authenticated` (default **true**), `admin` (admins only), `rateLimit` (default 600/min; public routes use `PUBLIC_RATE_LIMIT` or their own). `Server.constructRoutes` builds each chain: rate limit → auth → admin → query/body validation → middleware → handler.
-- **Auth** — BetterAuth (email + password, `admin` plugin) on the shared SQLite connection. Sign-up is disabled; the first admin is seeded from `FINDR_ADMIN_*`; admins create further accounts through the admin plugin.
+- **Route options** — `authenticated` (default **true**), `admin` (admins only), `allowPendingReset` (lets in an account that still has to replace its initial credentials), `rateLimit` (default 600/min; public routes use `PUBLIC_RATE_LIMIT` or their own). `Server.constructRoutes` runs `requireLocal` on every request, then builds each chain: rate limit → auth → pending-reset block → admin → query/body validation → middleware → handler.
+- **Auth** — BetterAuth (email + password, `admin` plugin) on the shared SQLite connection. Sign-up is disabled. A fresh install seeds one admin (`seedRoot`) stored as `admin@findr.local` with password `admin`; a BetterAuth before-hook maps the bare `admin` login onto that address. It carries the `mustReset` user field, and until `POST /api/account/credentials` replaces its email and password, every other route and BetterAuth endpoint refuses it with `reset_required`. Admins create further accounts through the admin plugin.
+- **Remote access** — `requireLocal` refuses anything not from loopback unless the `access.allowRemote` setting is on (only reachable after the reset). `ClientAddress` decides: the socket must be loopback, and forwarding headers from a local proxy count as remote unless `TRUST_PROXY` is set and the forwarded client is loopback.
 - **Database** — raw `bun:sqlite` (`lib/db/client.ts`). Schema changes are append-only entries in `lib/db/migrations.ts`, applied by `Migrator` using `PRAGMA user_version`. BetterAuth migrates its own tables.
 - **Models** (`lib/db/models/`) — the only code that writes SQL. Static finders return class instances with typed camelCase fields and mutation methods; instances serialise to `@findr/types` records (`toSummary()`, `toRecord()`, `toDetail()`). Tables: `titles`, `downloads`, `episodes`, `candidates`, `attempts`, `settings`, `app_state` (internal state such as DHT nodes).
-- **Configuration** — deployment config and secrets come from the environment, validated in `lib/env/Env.ts`. User-tunable settings live in the database (`SettingsStore`, schema in `@findr/types/settings`) and are edited on the web Settings page. There is no JSON config file.
+- **Configuration** — deployment config (port, database path, base URL, auth secret, mkvmerge path, `TRUST_PROXY`) comes from the environment, validated in `lib/env/Env.ts`. Everything else lives in the database (`SettingsStore`, schema in `@findr/types/settings`) and is edited on the web Settings page: paths, naming, preferences, scoring weights, queue, watchdog, wrong-title filter, service URLs and API keys, torrent port and remote access. Hot paths read one section with `SettingsStore.section()`. There is no JSON config file.
 - **Pipeline** (`lib/pipeline/`)
   - `DownloadQueue` — singleton owning enqueue/cancel/retry/delete, concurrency, and startup `recover()` (closes interrupted attempts, rejects their candidates, deletes their scratch dirs, sweeps leftover torrents, resumes unfinished downloads).
   - `DownloadRunner` — one download: movie unit, or season pack then per-episode units; the attempt loop.
@@ -61,7 +64,7 @@ Bun monorepo: `apps/api` (Hono on Bun), `apps/web` (React 19 + react-router-dom 
   - `errors.ts` — `AttemptFailure` (reject this release, try the next), `FatalDownloadError` (environment broken; don't blame the release), `CancelledError`.
 - **Downloader** (`lib/downloader/`) — `Downloader` interface with `WebTorrentDownloader` (in-process client, uTP off, block requests gated until files are chosen, DHT nodes kept in `app_state`); `FileInspector` (safety and file selection), `Watchdog` (metadata/stall/speed), `TorrentSession`, `AttemptWorkspace` (`<downloads>/<downloadId>/<candidateId>/`).
 - **Media** (`lib/media/`) — `Sterilizer` (mkvmerge, video + audio only) and `LibrarySaver` (naming templates, atomic temp-name-then-rename placement).
-- **Prowlarr** (`lib/prowlarr/Prowlarr.ts`) — search, plus link handling: API keys are stripped into `prowlarr:` references before storage and re-attached only when fetching from `PROWLARR_URL`.
+- **Prowlarr** (`lib/prowlarr/Prowlarr.ts`) — search, plus link handling: API keys are stripped into `prowlarr:` references before storage and re-attached only when fetching from the configured Prowlarr URL.
 - **TMDB** (`lib/tmdb/`) — cached client behind the `/api/tmdb/*` proxy routes, plus `titleFacts` / `seasonEpisodes` for the pipeline.
 
 ### Build & compile
@@ -89,7 +92,7 @@ Pages in `pages/` (Library, Discover, Downloads, Settings), routed in `App.tsx`.
 - **Models own SQL** — nothing outside `lib/db/models/` builds queries.
 - **Validation** — Zod schemas in `@findr/types`, enforced at the API boundary by `validateBody` / `validateQuery`.
 - **Pagination** — list endpoints take `page` / `pageSize` and cap page size server-side (`MAX_PAGE_SIZE`), returning `Paginated<T>`.
-- **Secrets** — never stored in the database or sent to the client; candidate records exclude download links entirely.
+- **Secrets** — API keys are stored in the `services` settings section but never sent to the client: the settings response blanks every field in `SECRET_FIELDS` and reports only whether each is set. Candidate records exclude download links entirely.
 - **Library writes** — only through `LibrarySaver`, which never exposes a partial file.
 - **Errors** — API errors are `{ error: "<snake_case_code>" }`; the web maps codes to messages in `lib/api.ts`.
 - **Commits** — conventional commit messages.

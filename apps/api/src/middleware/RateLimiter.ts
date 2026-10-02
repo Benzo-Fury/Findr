@@ -7,9 +7,8 @@
  * per process, which suits a single self-hosted server.
  */
 
-import type { Context, MiddlewareHandler } from "hono"
-import { getConnInfo } from "hono/bun"
-import { env } from "../lib/env/Env"
+import type { MiddlewareHandler } from "hono"
+import { ClientAddress } from "../lib/server/ClientAddress"
 
 /** A route's allowance: `max` requests per `window` seconds. */
 export interface RateLimit {
@@ -37,7 +36,7 @@ export class RateLimiter {
   /** Middleware enforcing `limit` on one route, identified by its path pattern. */
   public forRoute(route: string, limit: RateLimit): MiddlewareHandler {
     return async (c, next) => {
-      const key = `${route}|${this.clientKey(c)}`
+      const key = `${route}|${ClientAddress.key(c)}`
       const now = Date.now()
 
       // Start a new window, or count against the current one
@@ -58,21 +57,6 @@ export class RateLimiter {
       }
 
       await next()
-    }
-  }
-
-  /** The client's address, honouring a trusted proxy's forwarding header. */
-  private clientKey(c: Context): string {
-    if (env.TRUST_PROXY) {
-      const forwarded = c.req.header("x-forwarded-for")?.split(",")[0]?.trim()
-      if (forwarded) return forwarded
-    }
-
-    try {
-      return getConnInfo(c).remote.address ?? "unknown"
-    } catch {
-      // Requests not served by Bun.serve (tests calling fetch directly) have no socket
-      return "local"
     }
   }
 

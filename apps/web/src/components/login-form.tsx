@@ -5,12 +5,13 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { signIn } from "@/lib/auth"
-import { MediaGrid } from "@/components/media-grid"
+import { AuthShell } from "@/components/auth-shell"
 
 /**
  * Sign-in is the only way into the app. Sign-up is disabled on the server;
  * accounts are created by an admin on the settings page, so there is no
- * registration form and nothing here links to one.
+ * registration form and nothing here links to one. The email field is plain
+ * text so a fresh install's `admin` login can be typed into it.
  */
 
 interface LoginFormProps extends React.ComponentProps<"form"> {
@@ -57,7 +58,8 @@ export function LoginForm({ className, onSuccess, ...props }: LoginFormProps) {
           <Label htmlFor="email">Email</Label>
           <Input
             id="email"
-            type="email"
+            type="text"
+            autoComplete="username"
             placeholder="m@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -88,19 +90,8 @@ export function LoginForm({ className, onSuccess, ...props }: LoginFormProps) {
 
 export function LoginPage({ onSuccess }: { onSuccess?: () => void }) {
   return (
-    <div className="relative min-h-svh overflow-hidden bg-black">
-      <MediaGrid />
-      <div className="relative z-30 flex min-h-svh items-center justify-center p-4">
-        <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-background/90 p-8 shadow-2xl backdrop-blur-md">
-          <div className="mb-8 flex items-center justify-center gap-2">
-            <img src="/findr-logo.svg" alt="Findr" className="size-7" />
-            <span className="text-lg font-bold" style={{ color: "oklch(0.77 0.165 70)" }}>
-              Findr
-            </span>
-          </div>
-          <LoginForm onSuccess={onSuccess} />
-        </div>
-      </div>
-    </div>
+    <AuthShell>
+      <LoginForm onSuccess={onSuccess} />
+    </AuthShell>
   )
 }

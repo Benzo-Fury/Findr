@@ -3,23 +3,15 @@
  * how good it is. Hard filters run first and reject outright with a reason;
  * only releases that survive them get a weighted score.
  *
- * The weights and lookup tables live in `@findr/config/scoring`; the user's
- * own limits (resolutions, size ceiling, seeders, blacklist) arrive as
- * `Preferences` from the settings store.
+ * The rank tables live in `@findr/config/scoring`. Everything the user tunes
+ * arrives from the settings store: their limits (resolutions, size ceiling,
+ * seeders, blacklist) as `Preferences`, and how much each signal counts as
+ * `ScoringSettings`.
  */
 
-import {
-  bloated4KSizeGB,
-  codecRank,
-  defaultResolutionRank,
-  idealSizeGB,
-  releaseTypeRank,
-  reputableGroups,
-  scoringWeights,
-  seederCap,
-} from "@findr/config/scoring";
+import { codecRank, defaultResolutionRank, releaseTypeRank, reputableGroups } from "@findr/config/scoring";
 import type { ParsedRelease } from "@findr/types/release";
-import type { Preferences } from "@findr/types/settings";
+import type { Preferences, ScoringSettings } from "@findr/types/settings";
 
 // ---------- Types ---------- //
 
@@ -51,12 +43,13 @@ const YEAR_TOLERANCE = 1;
 
 // ---------- Scorer ---------- //
 
-/** Scores releases for one target under one set of preferences. */
+/** Scores releases for one target under one set of preferences and weights. */
 export class ReleaseScorer {
-  /** Captures the target and preferences every evaluation in this batch shares. */
+  /** Captures the target, preferences and weights every evaluation in this batch shares. */
   constructor(
     private readonly target: ScoreTarget,
     private readonly preferences: Preferences,
+    private readonly weights: ScoringSettings,
     private readonly now: Date = new Date(),
   ) {}
 
@@ -146,11 +139,11 @@ export class ReleaseScorer {
       this.sizeScore(release.sizeMB) +
       this.groupScore(parsed) +
       this.ageScore(release.publishedAt) +
-      (parsed.isRepack ? scoringWeights.repack : 0);
+      (parsed.isRepack ? this.weights.repack : 0);
 
     // Penalise 4K encodes too large for limited storage
-    if (parsed.resolution === "2160p" && this.perUnitGB(release.sizeMB) > bloated4KSizeGB) {
-      total += scoringWeights.penaltyBloated4K;
+    if (parsed.resolution === "2160p" && this.perUnitGB(release.sizeMB) > this.weights.bloated4KSizeGB) {
+      total -= this.weights.bloated4KPenalty;
     }
 
     return Math.round(total * 100) / 100;
@@ -167,28 +160,29 @@ export class ReleaseScorer {
     if (resolutions.length > 0) {
       const index = resolutions.indexOf(parsed.resolution);
       if (index === -1) return 0;
-      return ((resolutions.length - index) / resolutions.length) * scoringWeights.resolution;
+      return ((resolutions.length - index) / resolutions.length) * this.weights.resolution;
     }
 
-    return ((defaultResolutionRank[parsed.resolution] ?? 0) / 3) * scoringWeights.resolution;
+    return ((defaultResolutionRank[parsed.resolution] ?? 0) / 3) * this.weights.resolution;
   }
 
   /** Prefers modern, space-efficient codecs. */
   private codecScore(parsed: ParsedRelease): number {
     if (!parsed.videoCodec) return 0;
-    return ((codecRank[parsed.videoCodec] ?? 0) / 3) * scoringWeights.codec;
+    return ((codecRank[parsed.videoCodec] ?? 0) / 3) * this.weights.codec;
   }
 
   /** Logarithmic in seeders, so the gap between 5 and 50 matters more than 500 and 1000. */
   private seederScore(seeders: number): number {
+    const { seederCap } = this.weights;
     const capped = Math.min(seeders, seederCap);
-    return (Math.log10(capped + 1) / Math.log10(seederCap + 1)) * scoringWeights.seeders;
+    return (Math.log10(capped + 1) / Math.log10(seederCap + 1)) * this.weights.seeders;
   }
 
   /** Prefers clean web and Blu-ray sources over rips. */
   private releaseTypeScore(parsed: ParsedRelease): number {
     if (!parsed.releaseType) return 0;
-    return ((releaseTypeRank[parsed.releaseType] ?? 0) / 7) * scoringWeights.releaseType;
+    return ((releaseTypeRank[parsed.releaseType] ?? 0) / 7) * this.weights.releaseType;
   }
 
   /**
@@ -201,30 +195,30 @@ export class ReleaseScorer {
 
     // Compare per movie or per episode so packs are judged like single files
     const gb = this.perUnitGB(sizeMB);
-    const ideal = this.target.kind === "movie" ? idealSizeGB.movie : idealSizeGB.episode;
+    const ideal = this.target.kind === "movie" ? this.weights.idealMovieSizeGB : this.weights.idealEpisodeSizeGB;
 
     // Hard penalties at the extremes
-    if (gb < ideal * 0.125) return -scoringWeights.fileSize * 0.8;
-    if (gb > ideal * 7.5) return -scoringWeights.fileSize * 0.6;
-    if (gb > ideal * 3.75) return -scoringWeights.fileSize * 0.3;
+    if (gb < ideal * 0.125) return -this.weights.fileSize * 0.8;
+    if (gb > ideal * 7.5) return -this.weights.fileSize * 0.6;
+    if (gb > ideal * 3.75) return -this.weights.fileSize * 0.3;
 
     // Gaussian falloff either side of the ideal
     const deviation = (gb - ideal) / ideal;
-    return Math.exp(-0.5 * deviation * deviation) * scoringWeights.fileSize;
+    return Math.exp(-0.5 * deviation * deviation) * this.weights.fileSize;
   }
 
   /** Full weight for known-good groups, a little for any named group. */
   private groupScore(parsed: ParsedRelease): number {
     if (!parsed.group) return 0;
-    if (reputableGroups.has(parsed.group.toUpperCase())) return scoringWeights.releaseGroup;
-    return scoringWeights.releaseGroup * 0.3;
+    if (reputableGroups.has(parsed.group.toUpperCase())) return this.weights.releaseGroup;
+    return this.weights.releaseGroup * 0.3;
   }
 
   /** Newer uploads get a small edge, fading to nothing over a year. */
   private ageScore(publishedAt: Date | null): number {
     if (!publishedAt) return 0;
     const ageDays = (this.now.getTime() - publishedAt.getTime()) / 86_400_000;
-    return Math.max(0, 1 - ageDays / 365) * scoringWeights.uploadDate;
+    return Math.max(0, 1 - ageDays / 365) * this.weights.uploadDate;
   }
 
   // ---------- Helpers ---------- //

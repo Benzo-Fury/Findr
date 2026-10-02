@@ -2,10 +2,11 @@
  * Application-level configuration read from the process environment.
  *
  * Only settings that belong to the deployment rather than the user live here:
- * the port, the database location, service URLs, and every secret. Anything a
- * user tunes while running Findr (library paths, naming, preferences, the
- * download watchdog) lives in the database settings store instead, so it can
- * be changed from the web UI without a restart or a rebuild.
+ * the port, the database location, the auth secret, and the mkvmerge binary.
+ * Everything an admin tunes while running Findr — library paths, naming,
+ * preferences, the watchdog, service URLs and API keys, the torrent port,
+ * remote access — lives in the database settings store instead, so it can be
+ * changed from the web UI without editing files on the server.
  *
  * Bun loads `.env` from the working directory automatically, in development
  * and in a compiled executable alike.
@@ -21,44 +22,22 @@ const flag = z
   .default("false")
   .transform((value) => value === "true" || value === "1");
 
-/** Treats an empty string the same as an unset variable. */
-const optional = z
-  .string()
-  .optional()
-  .transform((value) => (value ? value : undefined));
-
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3030),
 
   /** SQLite file. Relative paths resolve against the repo root, or the working directory when compiled. */
-  DATABASE_PATH: z.string().default("findr.db"),
+  DATABASE_PATH: z.string().default("data/findr.db"),
 
   /** Public origin of the server, used by BetterAuth for redirects and cookies. */
   BASE_URL: z.url(),
   BETTER_AUTH_SECRET: z.string().min(1),
 
-  /** Seeds the first admin account when the database has no users. */
-  FINDR_ADMIN_EMAIL: optional,
-  FINDR_ADMIN_PASSWORD: optional,
-
-  /** Honour `X-Forwarded-For` when rate limiting. Only enable behind a trusted reverse proxy. */
-  TRUST_PROXY: flag,
-
-  TMDB_API_KEY: optional,
-
-  PROWLARR_URL: optional,
-  PROWLARR_API_KEY: optional,
-
   /**
-   * Port the built-in torrent client listens on, for peer connections (TCP)
-   * and the DHT (UDP). Forward it on your router for better speeds; `0`
-   * picks a random free port on each start.
+   * Honour `X-Forwarded-For` for rate limiting and the remote access check.
+   * Only enable behind a trusted reverse proxy.
    */
-  TORRENT_PORT: z.coerce.number().int().min(0).max(65535).default(6881),
-
-  /** Enables the LLM relevance filter when present. */
-  ANTHROPIC_API_KEY: optional,
+  TRUST_PROXY: flag,
 
   /**
    * The mkvmerge binary. Deliberately an env var rather than a UI setting: an

@@ -10,7 +10,6 @@
  */
 
 import type { LlmFilterSettings } from "@findr/types/settings";
-import { env } from "../env/Env";
 
 // ---------- Types ---------- //
 
@@ -74,11 +73,15 @@ Keep a release whenever you are unsure. Do not judge quality, resolution, codec,
 // ---------- Filter ---------- //
 
 export class RelevanceFilter {
-  constructor(private readonly settings: LlmFilterSettings) {}
+  /** Takes the filter's settings and the Anthropic key from the services settings; an empty key disables it. */
+  constructor(
+    private readonly settings: LlmFilterSettings,
+    private readonly apiKey: string,
+  ) {}
 
-  /** Whether the filter will run at all: enabled in settings and a key on the server. */
+  /** Whether the filter will run at all: enabled in settings and an API key set. */
   public get active(): boolean {
-    return this.settings.enabled && Boolean(env.ANTHROPIC_API_KEY);
+    return this.settings.enabled && this.apiKey !== "";
   }
 
   /**
@@ -129,7 +132,7 @@ export class RelevanceFilter {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-api-key": env.ANTHROPIC_API_KEY ?? "",
+        "x-api-key": this.apiKey,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({

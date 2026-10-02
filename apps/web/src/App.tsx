@@ -1,17 +1,20 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { LoginPage } from "@/components/login-form"
+import { CredentialsPage } from "@/components/credentials-form"
 import { AppLayout } from "@/components/app-layout"
 import { LibraryPage } from "@/pages/library"
 import { DiscoverPage } from "@/pages/discover"
 import { DownloadsPage } from "@/pages/downloads"
 import { SettingsPage } from "@/pages/settings"
-import { isAdmin, useSession } from "@/lib/auth"
+import { isAdmin, mustReset, useSession } from "@/lib/auth"
 
 /**
  * Routing, split by whether there is a session.
  *
  * Signed out, the only reachable page is the login screen — accounts are
  * created out of band, so there is no registration route to fall through to.
+ * The initial admin, still on `admin` / `admin`, sees only the screen that
+ * replaces those credentials; the server refuses it everything else.
  * The app is served from the root of the API, so no router basename is needed.
  */
 function App() {
@@ -34,6 +37,10 @@ function App() {
         </Routes>
       </BrowserRouter>
     )
+  }
+
+  if (mustReset(session)) {
+    return <CredentialsPage />
   }
 
   return (

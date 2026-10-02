@@ -15,6 +15,7 @@ import type {
   Paginated,
   TitleSummary,
 } from "@findr/types/downloads"
+import type { CredentialsReset } from "@findr/types/account"
 import type { SettingsPatch, SettingsResponse } from "@findr/types/settings"
 import type {
   DiscoverFeed,
@@ -40,6 +41,11 @@ const ERROR_MESSAGES: Record<string, string> = {
   forbidden: "Only admins can do that.",
   rate_limited: "Too many requests. Wait a moment and try again.",
   validation_failed: "Some of those values are not valid.",
+  reset_required: "Set your own email and password first.",
+  remote_access_disabled: "Remote access is disabled. Enable it on the Settings page from the server itself.",
+  email_unchanged: "Choose your own email address.",
+  email_taken: "Another account already uses that email.",
+  reset_not_required: "This account already has its own credentials.",
 }
 
 /** Raised for any non-2xx response, carrying the API's error code when present. */
@@ -210,6 +216,15 @@ export function fetchSettings(): Promise<SettingsResponse> {
 /** Changes any subset of settings and returns the result. Admins only. */
 export function updateSettings(patch: SettingsPatch): Promise<SettingsResponse> {
   return request("/api/settings", json(patch, "PATCH"))
+}
+
+/* -------------------------------------------------------------------------- */
+/* Account                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/** Replaces the initial `admin` / `admin` credentials. The session stays signed in. */
+export function resetCredentials(body: CredentialsReset): Promise<void> {
+  return send("/api/account/credentials", json(body))
 }
 
 /* -------------------------------------------------------------------------- */

@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { PreferencesSchema } from "@findr/types/settings";
+import { PreferencesSchema, ScoringSettingsSchema } from "@findr/types/settings";
 import { ReleaseParser } from "./ReleaseParser";
 import { ReleaseScorer, type ScoreResult, type ScoreTarget } from "./ReleaseScorer";
 
 const parser = new ReleaseParser();
 const preferences = PreferencesSchema.parse({});
+const weights = ScoringSettingsSchema.parse({});
 const now = new Date("2026-01-01T00:00:00Z");
 
 /** Parses a title and scores it against a target with sensible swarm defaults. */
@@ -13,7 +14,7 @@ function evaluate(
   target: ScoreTarget,
   overrides: { sizeMB?: number; seeders?: number } = {},
 ): ScoreResult {
-  const scorer = new ReleaseScorer(target, preferences, now);
+  const scorer = new ReleaseScorer(target, preferences, weights, now);
   return scorer.evaluate({
     parsed: parser.parse(title),
     sizeMB: overrides.sizeMB ?? 4096,

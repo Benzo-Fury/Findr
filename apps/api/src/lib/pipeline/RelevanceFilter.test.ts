@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { LlmFilterSettingsSchema } from "@findr/types/settings";
-import { env } from "../env/Env";
 import { RelevanceFilter } from "./RelevanceFilter";
 
+const KEY = "test-key";
 const realFetch = globalThis.fetch;
 const settings = LlmFilterSettingsSchema.parse({ timeoutSeconds: 1 });
 const context = { mediaType: "movie" as const, name: "Alien", year: 1979, overview: "A crew.", season: null };
@@ -32,19 +32,17 @@ function answer(drop: Array<{ id: string; reason: string }>, stopReason = "end_t
 
 afterEach(() => {
   globalThis.fetch = realFetch;
-  env.ANTHROPIC_API_KEY = undefined;
 });
 
 describe("RelevanceFilter", () => {
   test("is inactive without an API key, and passes everything through", async () => {
     const bodies = mockApi(() => answer([{ id: "r1", reason: "x" }]));
-    const drops = await new RelevanceFilter(settings).screen(context, candidates);
+    const drops = await new RelevanceFilter(settings, "").screen(context, candidates);
     expect(drops.size).toBe(0);
     expect(bodies).toHaveLength(0);
   });
 
   test("maps the model's short ids back to candidate ids and ignores invented ones", async () => {
-    env.ANTHROPIC_API_KEY = "test-key";
     const bodies = mockApi(() =>
       answer([
         { id: "r2", reason: "Sequel" },
@@ -53,7 +51,7 @@ describe("RelevanceFilter", () => {
       ]),
     );
 
-    const drops = await new RelevanceFilter(settings).screen(context, candidates);
+    const drops = await new RelevanceFilter(settings, KEY).screen(context, candidates);
 
     expect([...drops.entries()]).toEqual([
       ["b", "Sequel"],
@@ -63,8 +61,7 @@ describe("RelevanceFilter", () => {
   });
 
   test("fails open on API errors, refusals, and answers that drop everything", async () => {
-    env.ANTHROPIC_API_KEY = "test-key";
-    const filter = new RelevanceFilter(settings);
+    const filter = new RelevanceFilter(settings, KEY);
 
     mockApi(() => new Response("overloaded", { status: 529 }));
     expect((await filter.screen(context, candidates)).size).toBe(0);
@@ -77,9 +74,8 @@ describe("RelevanceFilter", () => {
   });
 
   test("sends at most maxCandidates releases", async () => {
-    env.ANTHROPIC_API_KEY = "test-key";
     const bodies = mockApi(() => answer([]));
-    await new RelevanceFilter({ ...settings, maxCandidates: 2 }).screen(context, candidates);
+    await new RelevanceFilter({ ...settings, maxCandidates: 2 }, KEY).screen(context, candidates);
 
     const message = (bodies[0]?.messages as Array<{ content: string }>)[0]?.content ?? "";
     expect(message).toContain("r2");

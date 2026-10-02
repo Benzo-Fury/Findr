@@ -48,6 +48,11 @@ export type Route = {
   authenticated?: boolean
   /** Restricts every method to admins. Implies `authenticated`. */
   admin?: boolean
+  /**
+   * Lets in an account that still has to replace its initial credentials.
+   * Every other authenticated route refuses it with `reset_required`.
+   */
+  allowPendingReset?: boolean
   rateLimit?: RateLimit
   middleware?: MiddlewareHandler[]
 } & {

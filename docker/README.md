@@ -53,14 +53,12 @@ If you started FlareSolverr and an indexer needs it:
 
 ### 4. Point Findr at it
 
-In `apps/api/.env` (or the `.env` beside the `findr` binary):
+Start Findr and sign in. On **Settings → Services**, set:
 
-```env
-PROWLARR_URL=http://localhost:9696
-PROWLARR_API_KEY=<same as docker/.env>
-```
+- **Prowlarr URL** — `http://localhost:9696`
+- **Prowlarr API key** — the same value as `PROWLARR_API_KEY` in `docker/.env`
 
-Start Findr, sign in as the admin, and set the library paths on **Settings → Paths**.
+Then set the library paths on **Settings → Library paths**.
 
 ## Everyday use
 
@@ -75,5 +73,5 @@ To pin versions, set `PROWLARR_TAG` and `FLARESOLVERR_TAG` in `.env` to specific
 ## Notes
 
 - **Prowlarr's web UI is bound to 127.0.0.1** so only this machine can reach it. If Findr runs on another host, set `BIND_ADDRESS=0.0.0.0` and put it behind a firewall or VPN.
-- **Prowlarr's download links** point at the address Findr used to search (`PROWLARR_URL`). Findr fetches `.torrent` files itself, so nothing else needs to reach Prowlarr.
-- **Torrent traffic** comes from Findr, not from this stack. Its port is `TORRENT_PORT` in Findr's `.env` (default 6881); forward it on your router for better speeds.
+- **Prowlarr's download links** point at the address Findr used to search (the Prowlarr URL in its settings). Findr fetches `.torrent` files itself, so nothing else needs to reach Prowlarr.
+- **Torrent traffic** comes from Findr, not from this stack. Its port is set under **Settings → Torrent client** in Findr (default 6881); forward it on your router for better speeds.

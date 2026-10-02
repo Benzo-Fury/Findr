@@ -21,7 +21,7 @@
 import WebTorrent, { type Torrent } from "webtorrent";
 import { z } from "zod";
 import { AppState } from "../db/models/AppState";
-import { env } from "../env/Env";
+import { SettingsStore } from "../db/models/SettingsStore";
 import { AttemptFailure, FatalDownloadError } from "../pipeline/errors";
 import type { AddOptions, Downloader, TorrentFile, TorrentInput, TorrentStatus } from "./Downloader";
 
@@ -29,8 +29,11 @@ import type { AddOptions, Downloader, TorrentFile, TorrentInput, TorrentStatus }
 
 /** How the client finds peers. Tests turn discovery off and connect peers directly. */
 export interface WebTorrentOptions {
-  /** TCP port for peers and UDP port for the DHT; 0 picks a free one. */
-  port: number;
+  /**
+   * TCP port for peers and UDP port for the DHT; 0 picks a free one. Defaults
+   * to the torrent settings, read each time the client starts.
+   */
+  port?: number;
   /** DHT, local service discovery, trackers and router port mapping. */
   discovery: boolean;
 }
@@ -74,13 +77,15 @@ const DESTROY_TIMEOUT_MS = 15_000;
 export class WebTorrentDownloader implements Downloader {
   private readonly options: WebTorrentOptions;
   private client: WebTorrent | null = null;
+  /** The port the current client was started on, for error messages. */
+  private port = 0;
   /** Set when the client fails as a whole (e.g. its port is taken); reported once, then the client is rebuilt. */
   private clientError: string | null = null;
   private readonly entries = new Map<string, Entry>();
   private dhtSaveTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: Partial<WebTorrentOptions> = {}) {
-    this.options = { port: env.TORRENT_PORT, discovery: true, ...options };
+    this.options = { discovery: true, ...options };
   }
 
   public async add(input: TorrentInput, options: AddOptions): Promise<string> {
@@ -199,7 +204,10 @@ export class WebTorrentDownloader implements Downloader {
     this.throwIfClientFailed();
     if (this.client && !this.client.destroyed) return this.client;
 
-    const { port, discovery } = this.options;
+    // The port setting applies whenever a client starts, so a change needs a restart
+    const port = this.options.port ?? SettingsStore.section("torrent").port;
+    const { discovery } = this.options;
+    this.port = port;
     const client = new WebTorrent({
       utp: false,
       torrentPort: port,
@@ -245,7 +253,7 @@ export class WebTorrentDownloader implements Downloader {
     if (this.client && !this.client.destroyed) this.client.destroy();
     this.client = null;
 
-    throw new FatalDownloadError(`The torrent client is unavailable (port ${this.options.port}): ${message}`);
+    throw new FatalDownloadError(`The torrent client is unavailable (port ${this.port}): ${message}`);
   }
 
   /**

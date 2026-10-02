@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { SettingsStore } from "../db/models/SettingsStore";
 import Prowlarr from "./Prowlarr";
 
 const KEY = "test-prowlarr-key";
@@ -17,6 +18,10 @@ function mockFetch(respond: (url: URL) => Response): URL[] {
   );
   return requested;
 }
+
+beforeEach(() => {
+  SettingsStore.update({ services: { prowlarrUrl: "http://prowlarr.test:9696", prowlarrApiKey: KEY } });
+});
 
 afterEach(() => {
   globalThis.fetch = realFetch;

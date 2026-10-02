@@ -17,7 +17,7 @@
 
 import type { MediaType } from "@findr/types/media";
 import type { TorrentInput } from "../downloader/Downloader";
-import { env } from "../env/Env";
+import { SettingsStore } from "../db/models/SettingsStore";
 import SelfManagedSingleton from "../other/SelfManagedSingleton";
 import { AttemptFailure, FatalDownloadError } from "../pipeline/errors";
 
@@ -290,13 +290,12 @@ export default class Prowlarr extends SelfManagedSingleton {
     return new URL(this.credentials().baseUrl);
   }
 
-  /** Reads and validates the Prowlarr connection details from the env. */
+  /** Reads and validates the Prowlarr connection details from the services settings. */
   private credentials(): { baseUrl: string; apiKey: string } {
-    const baseUrl = env.PROWLARR_URL;
-    const apiKey = env.PROWLARR_API_KEY;
+    const { prowlarrUrl: baseUrl, prowlarrApiKey: apiKey } = SettingsStore.section("services");
 
-    if (!baseUrl) throw new ProwlarrError("PROWLARR_URL is not configured");
-    if (!apiKey) throw new ProwlarrError("PROWLARR_API_KEY is not configured");
+    if (!baseUrl) throw new ProwlarrError("The Prowlarr URL is not configured");
+    if (!apiKey) throw new ProwlarrError("The Prowlarr API key is not configured");
 
     return { baseUrl, apiKey };
   }

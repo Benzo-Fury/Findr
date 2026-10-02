@@ -4,10 +4,10 @@ Findr has two kinds of configuration, stored in two places:
 
 | Kind | Where | Changed by | Examples |
 |---|---|---|---|
-| **Deployment** — how and where the server runs, and every secret | Environment variables (`.env`) | Whoever runs the server; needs a restart | Port, database file, API keys, service URLs |
-| **Settings** — how Findr searches, downloads and saves | The database, edited on the **Settings** page | Admins, in the browser; applies to the next download | Library paths, naming, release preferences, watchdog |
+| **Deployment** — how and where the server runs | Environment variables (`.env`) | Whoever runs the server; needs a restart | Port, database file, auth secret, mkvmerge path |
+| **Settings** — everything else | The database, edited on the **Settings** page | Admins, in the browser; most apply to the next download | Service URLs and API keys, library paths, naming, release preferences, scoring, watchdog, remote access |
 
-There is no config file. Secrets never go in the database, and nothing the browser can edit can point Findr at an executable.
+There is no config file. API keys are stored in the database but never sent back to the browser, and nothing the browser can edit can point Findr at an executable.
 
 ---
 
@@ -23,38 +23,38 @@ Startup fails with a list of problems if anything required is missing or malform
 |---|---|---|---|
 | `NODE_ENV` | No | `development` | `production` in builds. In development the API proxies the web app to Vite and trusts `http://localhost:5173` for auth. |
 | `PORT` | No | `3030` | Port for the API and web app. |
-| `DATABASE_PATH` | No | `findr.db` | SQLite file. Relative paths resolve from the repo root in development, and from the working directory for the compiled binary. |
+| `DATABASE_PATH` | No | `data/findr.db` | SQLite file (the folder is created on first run). Relative paths resolve from the repo root in development, and from the working directory for the compiled binary. |
 | `BASE_URL` | **Yes** | — | Public URL of the server, e.g. `http://localhost:3030`. Used by BetterAuth for cookies and redirects. |
 | `BETTER_AUTH_SECRET` | **Yes** | — | Session signing secret. Generate with `openssl rand -hex 32`. |
-| `TRUST_PROXY` | No | `false` | Use the first `X-Forwarded-For` address for rate limiting. Only enable behind a reverse proxy you control. |
-
-### First admin
-
-Sign-up is disabled. On startup, if the database has no users, Findr creates an admin from these. Once any account exists they are ignored and can be removed. Further accounts are created on the Settings page.
-
-| Variable | Required | Description |
-|---|---|---|
-| `FINDR_ADMIN_EMAIL` | On first run | Email for the first admin account. |
-| `FINDR_ADMIN_PASSWORD` | On first run | Password for the first admin account. |
-
-### Services
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `TMDB_API_KEY` | **Yes** | — | [TMDB](https://developer.themoviedb.org/) API key, for browsing, metadata, episode lists and naming. |
-| `PROWLARR_URL` | **Yes** | — | Base URL of your [Prowlarr](https://prowlarr.com/) instance, e.g. `http://localhost:9696`. |
-| `PROWLARR_API_KEY` | **Yes** | — | Prowlarr API key (Settings → General; the Docker setup pins it from `docker/.env`). Never stored in the database or sent to the browser: Prowlarr's download links are saved with the key removed, and it is re-attached only when Findr fetches from this URL. |
-| `TORRENT_PORT` | No | `6881` | Port of the built-in torrent client: TCP for peers, UDP for the DHT. Forward it on your router for better speeds; `0` picks a random free port on each start. |
+| `TRUST_PROXY` | No | `false` | Believe the first `X-Forwarded-For` address, for rate limiting and for the remote access check. Only enable behind a reverse proxy you control. |
 | `MKVMERGE_PATH` | No | `mkvmerge` | mkvmerge binary, from [MKVToolNix](https://mkvtoolnix.download/). An env var on purpose — an executable path should not be editable from a browser. |
-| `ANTHROPIC_API_KEY` | No | — | Enables the wrong-title filter (see below). Without it the filter is skipped. |
+
+---
+
+## First sign-in
+
+Sign-up is disabled. When the database has no accounts, Findr creates one admin that signs in as **`admin`** / **`admin`** (it is stored as `admin@findr.local`; typing either works). That account must set its own email and password before it can do anything else — every other page and API call is refused until it does — and doing so signs out any other session that used the old credentials. New passwords must be at least 8 characters.
+
+Because remote access is off by default (see [Access](#access--access)), the first sign-in can only happen from the machine Findr runs on. Further accounts are created on the Settings page.
 
 ---
 
 ## Settings
 
-Admins edit these on the **Settings** page; they are stored in the database and read at the start of each unit of work, so changes apply to the next download without a restart. Every setting has a default, so a fresh install works once the paths are set.
+Admins edit these on the **Settings** page; they are stored in the database and read at the start of each unit of work, so changes apply to the next download without a restart (the torrent port is the exception). Every setting has a default, so a fresh install works once the services and paths are set.
 
-The same data is available at `GET /api/settings` and `PATCH /api/settings` (admins only; a patch may contain any subset of fields and is validated as a whole before anything is saved).
+The same data is available at `GET /api/settings` and `PATCH /api/settings` (admins only; a patch may contain any subset of fields and is validated as a whole before anything is saved). API keys are never returned: both answer with them blanked, plus a `configured` map saying which are set.
+
+### Services — `services`
+
+| Field | Description |
+|---|---|
+| `prowlarrUrl` | Base URL of your [Prowlarr](https://prowlarr.com/) instance, e.g. `http://localhost:9696`. Required. |
+| `prowlarrApiKey` | Prowlarr API key (Prowlarr → Settings → General; the Docker setup pins it from `docker/.env`). Required. Prowlarr's download links are saved with the key removed, and it is re-attached only when Findr fetches from this URL. |
+| `tmdbApiKey` | [TMDB](https://developer.themoviedb.org/) API key, for browsing, metadata, episode lists and naming. Required. |
+| `anthropicApiKey` | Enables the wrong-title filter (see below). Optional; without it the filter is skipped. |
+
+The three keys are secrets: stored in the database, never sent to the browser. On the page a key field shows only whether a key is saved; typing replaces it and **Remove** clears it. Through the API, an empty string clears a key.
 
 ### Library paths — `paths`
 
@@ -91,7 +91,25 @@ A file holding several episodes is named with a range, e.g. `S01E01-E02`.
 | `minSeeders` | `5` | Releases with fewer seeders are rejected. |
 | `blacklistedReleaseTypes` | `CAM, TS, SCR` | Release types never downloaded. |
 
-Scoring weights themselves (how much resolution, codec, size, seeders and so on count) are in [`packages/config/src/scoring.ts`](../packages/config/src/scoring.ts).
+### Scoring weights — `scoring`
+
+How much each quality signal counts when ranking releases that passed the hard filters. Each weight is the most that signal can add. The rank tables they scale — which codecs, release types and groups are preferred — are in [`packages/config/src/scoring.ts`](../packages/config/src/scoring.ts).
+
+| Field | Default | Description |
+|---|---|---|
+| `resolution` | `30` | Scaled by position in your resolution list. |
+| `fileSize` | `25` | Peaks at the ideal size; very small or very large files score negatively. |
+| `seeders` | `25` | Logarithmic, up to `seederCap`. |
+| `codec` | `20` | AV1 over x265 over x264. |
+| `releaseType` | `20` | Web and Blu-ray sources over rips. |
+| `releaseGroup` | `5` | Full weight for known-good groups, a little for any named group. |
+| `uploadDate` | `3` | Newer uploads, fading to nothing over a year. |
+| `repack` | `2` | Added to repacks and propers. |
+| `idealMovieSizeGB` | `4` | Size per movie that scores best. |
+| `idealEpisodeSizeGB` | `1.2` | Size per episode that scores best. |
+| `seederCap` | `1000` | Seeders beyond this add nothing. |
+| `bloated4KPenalty` | `15` | Subtracted from 2160p releases above `bloated4KSizeGB`. |
+| `bloated4KSizeGB` | `20` | Per movie or episode. |
 
 ### Queue — `queue`
 
@@ -114,7 +132,7 @@ A torrent that trips any of these is abandoned, its files deleted, and the next 
 
 ### Wrong-title filter — `llmFilter`
 
-An optional pass that asks Claude which of the best-scoring releases are clearly for a different title — a remake, sequel, spin-off or similarly named film — and drops them before anything downloads. It only runs when `ANTHROPIC_API_KEY` is set. It **fails open**: on any error, refusal or timeout every release is kept, so it can never block a download.
+An optional pass that asks Claude which of the best-scoring releases are clearly for a different title — a remake, sequel, spin-off or similarly named film — and drops them before anything downloads. It only runs when an Anthropic API key is set under `services`. It **fails open**: on any error, refusal or timeout every release is kept, so it can never block a download.
 
 | Field | Default | Description |
 |---|---|---|
@@ -122,6 +140,22 @@ An optional pass that asks Claude which of the best-scoring releases are clearly
 | `model` | `claude-haiku-4-5` | Claude model used. |
 | `maxCandidates` | `20` | How many of the top-scoring releases are screened. |
 | `timeoutSeconds` | `20` | Request timeout. |
+
+### Torrent client — `torrent`
+
+| Field | Default | Description |
+|---|---|---|
+| `port` | `6881` | Port of the built-in torrent client: TCP for peers, UDP for the DHT. Forward it on your router for better speeds; `0` picks a random free port. Read when the client starts, so a change applies after Findr restarts. |
+
+### Access — `access`
+
+| Field | Default | Description |
+|---|---|---|
+| `allowRemote` | `false` | Answer requests from other machines. While off, Findr serves only requests from the server itself (loopback), the web app included. |
+
+The setting can only be turned on from the Settings page, which the initial `admin` account cannot reach until it has set its own credentials, so a fresh install is never exposed with its default login.
+
+Behind a reverse proxy on the same machine, every request reaches Findr from loopback. Findr treats such forwarded requests as remote unless `TRUST_PROXY` is set, in which case it judges the client named in `X-Forwarded-For`. So with a local proxy, either turn on `allowRemote` or set `TRUST_PROXY`; never set `TRUST_PROXY` without a proxy in front, or any client could claim to be local.
 
 ---
 

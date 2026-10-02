@@ -13,10 +13,8 @@ build/
 # Bun
 bun.lockb
 
-# SQLite (lives at the repo root; -wal/-shm are WAL sidecar files)
-*.db
-*.db-wal
-*.db-shm
+# Runtime state (SQLite database and its -wal/-shm sidecars)
+data/
 
 # Logs
 *.log

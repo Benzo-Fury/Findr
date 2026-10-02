@@ -39,15 +39,22 @@ export class SettingsStore extends Model {
     // Validate each section on its own so one bad section cannot sink the rest
     const sections: Record<string, unknown> = {};
     for (const key of Object.keys(SettingsSchema.shape) as SettingsSection[]) {
-      const candidate = SettingsSchema.shape[key].safeParse(stored[key] ?? {});
-      if (candidate.success) {
-        sections[key] = candidate.data;
-      } else {
-        console.warn(`[Settings] Stored "${key}" settings are invalid; using defaults`);
-      }
+      sections[key] = this.parseSection(key, stored[key]);
     }
 
     return SettingsSchema.parse(sections);
+  }
+
+  /**
+   * One section, with defaults filled in. Reads a single row, for callers on
+   * hot paths — the access check runs on every request, and the service
+   * clients on every call — that need nothing else.
+   */
+  public static section<K extends SettingsSection>(key: K): Settings[K] {
+    const row = this.db
+      .query<SettingsRow, { key: string }>("SELECT key, value FROM settings WHERE key = $key")
+      .get({ key });
+    return this.parseSection(key, row ? (JSON.parse(row.value) as unknown) : undefined);
   }
 
   /**
@@ -66,6 +73,10 @@ export class SettingsStore extends Model {
       queue: { ...current.queue, ...patch.queue },
       watchdog: { ...current.watchdog, ...patch.watchdog },
       llmFilter: { ...current.llmFilter, ...patch.llmFilter },
+      scoring: { ...current.scoring, ...patch.scoring },
+      services: { ...current.services, ...patch.services },
+      torrent: { ...current.torrent, ...patch.torrent },
+      access: { ...current.access, ...patch.access },
     };
     const next = SettingsSchema.parse(merged);
 
@@ -81,6 +92,16 @@ export class SettingsStore extends Model {
     });
 
     return next;
+  }
+
+  /** Validates one stored section, falling back to its defaults when it is invalid. */
+  private static parseSection<K extends SettingsSection>(key: K, stored: unknown): Settings[K] {
+    const schema = SettingsSchema.shape[key];
+    const candidate = schema.safeParse(stored ?? {});
+    if (candidate.success) return candidate.data as Settings[K];
+
+    console.warn(`[Settings] Stored "${key}" settings are invalid; using defaults`);
+    return schema.parse({}) as Settings[K];
   }
 
   /** Every stored section, parsed from JSON but not yet validated. */

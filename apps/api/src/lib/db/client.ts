@@ -3,12 +3,12 @@
  * query through, and migrates the schema on startup.
  *
  * The database file location comes from the `DATABASE_PATH` environment
- * variable, falling back to `findr.db` at the repository root. Passing
+ * variable, falling back to `data/findr.db` under the repository root. Passing
  * `:memory:` yields an ephemeral database, which is useful in tests.
  */
 
 import { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { env } from "../env/Env";
 import { migrations } from "./migrations";
@@ -36,7 +36,7 @@ export class DatabaseClient {
 
   /**
    * Opens (creating it if needed) the database file and prepares it for use.
-   * The path defaults to `DATABASE_PATH`, then to `findr.db`. Relative paths
+   * The path defaults to `DATABASE_PATH`, then to `data/findr.db`. Relative paths
    * and the default both resolve against the repository root rather than the
    * working directory, so the same file is used whether the API is started
    * from the repo root, from `apps/api`, or from the production bundle.
@@ -49,6 +49,9 @@ export class DatabaseClient {
       this.ephemeral || isAbsolute(path)
         ? path
         : join(DatabaseClient.repositoryRoot(), path);
+
+    // Make sure the containing folder exists; SQLite creates the file only
+    if (!this.ephemeral) mkdirSync(dirname(location), { recursive: true });
 
     // Open the database file, creating it on first run. `strict` lets queries
     // bind named parameters as `{ id }` rather than `{ $id }`, and raises on a

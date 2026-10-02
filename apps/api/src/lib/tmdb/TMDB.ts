@@ -15,7 +15,7 @@ import type {
   TMDBMediaType,
 } from "@findr/types";
 import SelfManagedSingleton from "../other/SelfManagedSingleton";
-import { env } from "../env/Env";
+import { SettingsStore } from "../db/models/SettingsStore";
 import {
   FEED_ROWS,
   LIST_SOURCES,
@@ -287,8 +287,8 @@ export default class TMDB extends SelfManagedSingleton {
     path: string,
     params: Record<string, string> = {},
   ): Promise<T> {
-    const key = env.TMDB_API_KEY;
-    if (!key) throw new TMDBError("TMDB_API_KEY is not configured");
+    const key = SettingsStore.section("services").tmdbApiKey;
+    if (!key) throw new TMDBError("The TMDB API key is not configured");
 
     const url = new URL(`${BASE_URL}${path}`);
     url.search = new URLSearchParams({ ...params, api_key: key }).toString();

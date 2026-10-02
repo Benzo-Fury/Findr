@@ -14,6 +14,8 @@ import { env } from "../env/Env"
 import { RateLimiter } from "../../middleware/RateLimiter"
 import { requireAdmin } from "../../middleware/requireAdmin"
 import { requireAuth } from "../../middleware/requireAuth"
+import { requireLocal } from "../../middleware/requireLocal"
+import { blockPendingReset } from "../../middleware/blockPendingReset"
 import { validateBody } from "../../middleware/validateBody"
 import { validateQuery } from "../../middleware/validateQuery"
 import { derivePath } from "../routing/derivePath"
@@ -53,6 +55,9 @@ export class Server extends Hono {
     const routes = await this.discoverRoutes()
     const limiter = new RateLimiter()
 
+    // Other machines are turned away before anything else unless remote access is on
+    this.use("*", requireLocal)
+
     for (const [path, route] of Object.entries(routes)) {
       for (const method of METHODS) {
         const key = method.toUpperCase() as HttpMethod
@@ -65,9 +70,11 @@ export class Server extends Hono {
         const querySchema = isConfig ? entry.query : undefined
 
         // Throttle first, then authenticate, authorise and validate
+        const authenticated = route.authenticated || route.admin
         const chain = [
           ...(route.rateLimit ? [limiter.forRoute(`${key} ${path}`, route.rateLimit)] : []),
-          ...(route.authenticated || route.admin ? [requireAuth] : []),
+          ...(authenticated ? [requireAuth] : []),
+          ...(authenticated && !route.allowPendingReset ? [blockPendingReset] : []),
           ...(route.admin ? [requireAdmin] : []),
           ...(querySchema ? [validateQuery(querySchema)] : []),
           ...(bodySchema ? [validateBody(bodySchema)] : []),

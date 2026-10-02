@@ -63,7 +63,7 @@ export class CandidateSearch {
     );
 
     // Parse and score each release against the unit's target
-    const scorer = new ReleaseScorer(request.target, request.settings.preferences);
+    const scorer = new ReleaseScorer(request.target, request.settings.preferences, request.settings.scoring);
     const evaluated = fresh.map((release) => {
       const parsed = this.parser.parse(release.title);
       const verdict = scorer.evaluate({
@@ -79,7 +79,7 @@ export class CandidateSearch {
     const eligible = evaluated
       .filter((entry) => entry.verdict.accepted)
       .sort((a, b) => this.scoreOf(b.verdict) - this.scoreOf(a.verdict));
-    const drops = await new RelevanceFilter(request.settings.llmFilter).screen(
+    const drops = await new RelevanceFilter(request.settings.llmFilter, request.settings.services.anthropicApiKey).screen(
       request.relevance,
       eligible.map((entry, index) => ({ id: String(index), title: entry.release.title })),
     );

@@ -184,6 +184,7 @@ beforeEach(async () => {
   SettingsStore.update({
     paths: { downloads: join(root, "downloads"), movies: join(root, "movies"), series: join(root, "tv") },
     watchdog: { pollIntervalSeconds: 1 },
+    services: { tmdbApiKey: "test-tmdb-key", prowlarrUrl: "http://prowlarr.test:9696", prowlarrApiKey: "test-prowlarr-key" },
   });
   mockNetwork();
 });

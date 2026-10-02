@@ -1,36 +1,10 @@
 /**
- * Scoring weights and lookup tables used by the release scorer.
+ * Lookup tables used by the release scorer. Each ranks the values of one
+ * release attribute; the scorer scales a rank by that attribute's weight,
+ * which admins tune on the settings page (`scoring` in `@findr/types/settings`).
  * Tuned for limited-storage hardware — compact, high-quality files are
  * strongly preferred over raw quality or large remuxes.
  */
-
-export const scoringWeights = {
-  resolution: 30,
-  fileSize: 25,
-  seeders: 25,
-  codec: 20,
-  releaseType: 20,
-  releaseGroup: 5,
-  uploadDate: 3,
-  /** Corrected re-releases fix a known defect in the original, so nudge them up. */
-  repack: 2,
-  penaltyBloated4K: -15,
-} as const;
-
-/**
- * The size, per movie or per episode, that scores best. Scores fall away on a
- * bell curve either side, so both starved encodes and bloated ones lose out.
- */
-export const idealSizeGB = {
-  movie: 4,
-  episode: 1.2,
-} as const;
-
-/** Seeder count beyond which more seeders stop adding score. */
-export const seederCap = 1000;
-
-/** 2160p releases bigger than this, per movie or episode, take the bloat penalty. */
-export const bloated4KSizeGB = 20;
 
 export const defaultResolutionRank: Record<string, number> = {
   "1080p": 3,

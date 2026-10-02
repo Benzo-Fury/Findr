@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Check, Loader2, Trash2 } from "lucide-react"
 import { ReleaseTypeSchema, ResolutionSchema } from "@findr/types/media"
-import type { Settings, SettingsResponse, SettingsSection } from "@findr/types/settings"
+import { SECRET_FIELDS, type SecretField, type Settings, type SettingsPatch, type SettingsResponse, type SettingsSection } from "@findr/types/settings"
 import { fetchSettings, updateSettings } from "@/lib/api"
 import { authClient, useSession } from "@/lib/auth"
 import { cn } from "@/lib/utils"
@@ -16,6 +16,9 @@ import { Skeleton } from "@/components/ui/skeleton"
  * saves, stored on the server and applied to the next download without a
  * restart — plus account management, since there is no public sign-up.
  * Each section saves on its own.
+ *
+ * API keys are write-only here: the server never sends them back, only
+ * whether each is set. Typing a key replaces it; leaving it blank keeps it.
  */
 
 export function SettingsPage() {
@@ -41,12 +44,12 @@ export function SettingsPage() {
   }
 
   /** Saves one section and adopts what the server stored. */
-  async function save(section: SettingsSection) {
+  async function save(section: SettingsSection, patch?: SettingsPatch) {
     if (!draft) return
     setSaving(section)
     setError(null)
     try {
-      const response = await updateSettings(pick(draft, section))
+      const response = await updateSettings(patch ?? (section === "services" ? servicesPatch(draft) : pick(draft, section)))
       setServer(response)
       setDraft(response.settings)
       setSaved(section)
@@ -67,6 +70,11 @@ export function SettingsPage() {
     )
   }
 
+  /** Removes a stored API key. */
+  function clearSecret(field: SecretField) {
+    save("services", { services: { [field]: "" } })
+  }
+
   /** Shared props for each section's save footer. */
   const footer = (section: SettingsSection) => ({
     section,
@@ -78,6 +86,13 @@ export function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 lg:py-8">
+      <Section title="Services" description="The services Findr searches and looks titles up with. Keys are stored on the server and never shown again." footer={footer("services")}>
+        <TextField label="Prowlarr URL" value={draft.services.prowlarrUrl} placeholder="http://localhost:9696" onChange={(value) => edit("services", "prowlarrUrl", value)} />
+        <SecretField label="Prowlarr API key" value={draft.services.prowlarrApiKey} configured={server.configured.prowlarrApiKey} onChange={(value) => edit("services", "prowlarrApiKey", value)} onClear={() => clearSecret("prowlarrApiKey")} />
+        <SecretField label="TMDB API key" value={draft.services.tmdbApiKey} configured={server.configured.tmdbApiKey} onChange={(value) => edit("services", "tmdbApiKey", value)} onClear={() => clearSecret("tmdbApiKey")} />
+        <SecretField label="Anthropic API key (optional, for the wrong-title filter)" value={draft.services.anthropicApiKey} configured={server.configured.anthropicApiKey} onChange={(value) => edit("services", "anthropicApiKey", value)} onClear={() => clearSecret("anthropicApiKey")} />
+      </Section>
+
       <Section title="Library paths" description="Absolute paths on the server. Downloads are staged in the first and moved into the others when finished." footer={footer("paths")}>
         <TextField label="Downloads (scratch space)" value={draft.paths.downloads} placeholder="/srv/findr/downloads" onChange={(value) => edit("paths", "downloads", value)} />
         <TextField label="Movies library" value={draft.paths.movies} placeholder="/srv/media/movies" onChange={(value) => edit("paths", "movies", value)} />
@@ -110,6 +125,24 @@ export function SettingsPage() {
         <NumberField label="Minimum seeders" value={draft.preferences.minSeeders} onChange={(value) => edit("preferences", "minSeeders", value)} />
       </Section>
 
+      <Section title="Scoring weights" description="How much each quality signal counts when ranking releases that passed the filters. Each weight is the most that signal can add." footer={footer("scoring")}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <NumberField label="Resolution" value={draft.scoring.resolution} onChange={(value) => edit("scoring", "resolution", value)} />
+          <NumberField label="File size" value={draft.scoring.fileSize} onChange={(value) => edit("scoring", "fileSize", value)} />
+          <NumberField label="Seeders" value={draft.scoring.seeders} onChange={(value) => edit("scoring", "seeders", value)} />
+          <NumberField label="Codec" value={draft.scoring.codec} onChange={(value) => edit("scoring", "codec", value)} />
+          <NumberField label="Release type" value={draft.scoring.releaseType} onChange={(value) => edit("scoring", "releaseType", value)} />
+          <NumberField label="Release group" value={draft.scoring.releaseGroup} onChange={(value) => edit("scoring", "releaseGroup", value)} />
+          <NumberField label="Upload recency" value={draft.scoring.uploadDate} onChange={(value) => edit("scoring", "uploadDate", value)} />
+          <NumberField label="Repack bonus" value={draft.scoring.repack} onChange={(value) => edit("scoring", "repack", value)} />
+          <NumberField label="Ideal size per movie (GB)" value={draft.scoring.idealMovieSizeGB} onChange={(value) => edit("scoring", "idealMovieSizeGB", value)} />
+          <NumberField label="Ideal size per episode (GB)" value={draft.scoring.idealEpisodeSizeGB} onChange={(value) => edit("scoring", "idealEpisodeSizeGB", value)} />
+          <NumberField label="Seeders beyond which score stops rising" value={draft.scoring.seederCap} onChange={(value) => edit("scoring", "seederCap", value)} />
+          <NumberField label="Oversized 4K penalty" value={draft.scoring.bloated4KPenalty} onChange={(value) => edit("scoring", "bloated4KPenalty", value)} />
+          <NumberField label="4K counts as oversized above (GB per movie or episode)" value={draft.scoring.bloated4KSizeGB} onChange={(value) => edit("scoring", "bloated4KSizeGB", value)} />
+        </div>
+      </Section>
+
       <Section title="Queue" description="How many downloads run at once, and how many releases each tries before giving up." footer={footer("queue")}>
         <NumberField label="Downloads running at once" value={draft.queue.maxConcurrent} onChange={(value) => edit("queue", "maxConcurrent", value)} />
         <NumberField label="Failed attempts before giving up (per movie, pack or episode)" value={draft.queue.maxAttempts} onChange={(value) => edit("queue", "maxAttempts", value)} />
@@ -126,7 +159,7 @@ export function SettingsPage() {
       <Section
         title="Wrong-title filter"
         description="Uses Claude to drop releases that are clearly for a different title before anything downloads. Falls back to no filtering on any error."
-        badge={server.llmAvailable ? undefined : "ANTHROPIC_API_KEY not set on the server"}
+        badge={server.configured.anthropicApiKey ? undefined : "No Anthropic API key set under Services"}
         footer={footer("llmFilter")}
       >
         <Toggle label="Enabled" checked={draft.llmFilter.enabled} onChange={(value) => edit("llmFilter", "enabled", value)} />
@@ -135,9 +168,26 @@ export function SettingsPage() {
         <NumberField label="Timeout (seconds)" value={draft.llmFilter.timeoutSeconds} onChange={(value) => edit("llmFilter", "timeoutSeconds", value)} />
       </Section>
 
+      <Section title="Torrent client" description="The built-in BitTorrent client. Forward the port on your router for better speeds. Changes apply after Findr restarts." footer={footer("torrent")}>
+        <NumberField label="Port (TCP for peers, UDP for the DHT; 0 picks a random port)" value={draft.torrent.port} onChange={(value) => edit("torrent", "port", value)} />
+      </Section>
+
+      <Section title="Access" description="Findr only answers requests from this machine unless remote access is on. Behind a reverse proxy on the same machine, also set TRUST_PROXY on the server." footer={footer("access")}>
+        <Toggle label="Allow access from other machines" checked={draft.access.allowRemote} onChange={(value) => edit("access", "allowRemote", value)} />
+      </Section>
+
       <UsersSection />
     </div>
   )
+}
+
+/** The services section as a patch: the URL, plus only the keys that were typed, so blank keys stay as they are. */
+function servicesPatch(settings: Settings): SettingsPatch {
+  const services: NonNullable<SettingsPatch["services"]> = { prowlarrUrl: settings.services.prowlarrUrl }
+  for (const field of SECRET_FIELDS) {
+    if (settings.services[field] !== "") services[field] = settings.services[field]
+  }
+  return { services }
 }
 
 /** One section of settings as a patch, typed to that section. */
@@ -208,6 +258,33 @@ function TextField({ label, value, placeholder, type = "text", onChange }: TextF
     <div className="grid gap-1.5">
       <Label htmlFor={id}>{label}</Label>
       <Input id={id} type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+    </div>
+  )
+}
+
+interface SecretFieldProps {
+  label: string
+  value: string
+  /** Whether the server already holds a value for this key. */
+  configured: boolean
+  onChange: (value: string) => void
+  onClear: () => void
+}
+
+/** A write-only key: shows whether one is stored, takes a replacement, and can remove it. */
+function SecretField({ label, value, configured, onChange, onClear }: SecretFieldProps) {
+  const id = React.useId()
+  return (
+    <div className="grid gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <div className="flex items-center gap-2">
+        <Input id={id} type="password" autoComplete="off" value={value} placeholder={configured ? "Saved; type to replace" : "Not set"} onChange={(e) => onChange(e.target.value)} />
+        {configured && (
+          <Button type="button" variant="ghost" size="sm" onClick={onClear}>
+            Remove
+          </Button>
+        )}
+      </div>
     </div>
   )
 }

@@ -32,7 +32,7 @@ Findr is a self-hosted web app that turns "I want this movie" or "I want season 
 - 📺 **Seasons done properly** — takes a complete season pack when one exists, otherwise fetches each aired episode on its own and reports exactly which ones made it.
 - 💾 **Library-safe** — files land atomically under your naming templates, so your media server never sees a half-copied file.
 - 🔁 **Resilient** — a persistent queue resumes after restarts and cleans up anything a crash left behind.
-- 👥 **Private by default** — no public sign-up; admins create accounts. Rate-limited API.
+- 👥 **Private by default** — reachable only from the server itself until you allow remote access; no public sign-up, admins create accounts. Rate-limited API.
 - 📦 **One binary, one service** — a single executable with the web UI and a BitTorrent client built in, for Linux, macOS or Windows. Prowlarr is the only service it needs.
 
 ## How it works
@@ -79,7 +79,7 @@ cp /path/to/Findr/apps/api/.env.example .env   # then edit it
 ./findr
 ```
 
-The binary reads `.env` from the directory you run it in and creates `findr.db` there unless `DATABASE_PATH` says otherwise.
+The binary reads `.env` from the directory you run it in and creates `data/findr.db` there unless `DATABASE_PATH` says otherwise.
 
 ### From source
 
@@ -94,25 +94,43 @@ bun run start
 
 ## Configuration
 
-Deployment settings and secrets go in `.env`; everything else is edited in the app. The minimum `.env`:
+Only deployment settings go in `.env`; everything else, API keys included, is edited in the app. The minimum `.env`:
 
 ```env
 BASE_URL=http://localhost:3030
 BETTER_AUTH_SECRET=<openssl rand -hex 32>
-FINDR_ADMIN_EMAIL=you@example.com
-FINDR_ADMIN_PASSWORD=<a strong password>
-TMDB_API_KEY=<your TMDB key>
-PROWLARR_URL=http://localhost:9696
-PROWLARR_API_KEY=<your Prowlarr key>
 ```
 
-Then sign in as the admin, open **Settings**, and set the three library paths (downloads scratch space, movies, TV). Naming templates, release preferences, the queue, the download watchdog and the wrong-title filter are all on that page too.
+Then, from the machine Findr runs on:
+
+1. Sign in and set your own credentials — see [First sign-in](#first-sign-in).
+2. Open **Settings → Services** and enter your Prowlarr URL and API key and your TMDB API key (plus an Anthropic key if you want the wrong-title filter).
+3. Set the three library paths (downloads scratch space, movies, TV).
+4. To use Findr from other devices, turn on **Settings → Access → Allow access from other machines**. Until then it answers only requests from the server itself.
+
+Naming templates, release preferences, scoring weights, the queue, the download watchdog, the torrent port and the wrong-title filter are all on that page too.
 
 Every variable and setting is documented in **[docs/Config.md](docs/Config.md)**.
 
+### First sign-in
+
+A fresh install has no sign-up page. On first start, when the database has no accounts, Findr creates a single admin:
+
+| Username | Password |
+| --- | --- |
+| `admin` | `admin` |
+
+1. Open Findr **from the machine it runs on** (`http://localhost:3030`). Until you finish this step it refuses every request that doesn't come from the server itself.
+2. Sign in as `admin` / `admin`. You are taken straight to a form asking for your own email and a new password (at least 8 characters).
+3. Submit it. The default login stops working, any other session still using it is signed out, and the rest of the app unlocks.
+
+Nothing else is reachable until you do this, and remote access can only be switched on afterwards, so a new install is never exposed with its default login. Further accounts are created by admins under **Settings**.
+
+Locked out? Stop Findr, delete the rows from the `user`, `account`, `session` and `verification` tables of `data/findr.db` (or delete the file to start over completely), and start it again: the `admin` / `admin` account is re-created.
+
 ### Torrent client
 
-Findr downloads with a built-in BitTorrent client, so there is nothing to install. It listens on `TORRENT_PORT` (default `6881`, TCP for peers and UDP for the DHT); forward that port on your router for better speeds, and allow incoming connections if your OS firewall asks. Peers connect over TCP — uTP is not supported. Each torrent is removed when its attempt ends; Findr does not seed.
+Findr downloads with a built-in BitTorrent client, so there is nothing to install. It listens on the port set under **Settings → Torrent client** (default `6881`, TCP for peers and UDP for the DHT; a change applies after a restart); forward that port on your router for better speeds, and allow incoming connections if your OS firewall asks. Peers connect over TCP — uTP is not supported. Each torrent is removed when its attempt ends; Findr does not seed.
 
 ## Usage
 
@@ -151,6 +169,8 @@ Targets: `linux-x64`, `linux-arm64` (add `-musl` for Alpine), `darwin-x64`, `dar
 bun install
 bun run dev          # API on :3030 (hot reload) + Vite on :5173; open http://localhost:3030
 ```
+
+A new development database starts with the default `admin` / `admin` login, which must be replaced on first sign-in — see [First sign-in](#first-sign-in).
 
 Tests use Bun's test runner and an in-memory database; the sterilizer and end-to-end pipeline tests also need `mkvmerge` and `ffmpeg`:
 
