@@ -1,10 +1,10 @@
 import { cn } from "@/lib/utils"
 
-export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      className={cn("animate-pulse rounded-lg bg-muted", className)}
-      {...props}
-    />
-  )
+interface SkeletonProps {
+  className?: string
+}
+
+/** A shimmering placeholder sized like what it stands in for, so nothing shifts on load. */
+export function Skeleton({ className }: SkeletonProps) {
+  return <div aria-hidden className={cn("skeleton rounded-art", className)} />
 }

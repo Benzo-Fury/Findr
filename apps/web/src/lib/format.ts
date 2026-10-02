@@ -31,3 +31,35 @@ export function episodeCode(season: number, episode?: number | null): string {
 export function formatPercent(fraction: number): string {
   return `${Math.round(fraction * 100)}%`
 }
+
+/** Renders a runtime in minutes as `48m` or `2h 7m`. */
+export function formatRuntime(minutes: number): string {
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest ? `${hours}h ${rest}m` : `${hours}h`
+}
+
+/** `1 title` or `3 titles`. */
+export function plural(count: number, one: string, many = `${one}s`): string {
+  return `${count.toLocaleString()} ${count === 1 ? one : many}`
+}
+
+/**
+ * The calendar bucket an activity falls into, for grouping a history:
+ * Today, Yesterday, This week, then month names.
+ */
+export function dayGroup(epochMs: number, now = Date.now()): string {
+  const startOfToday = new Date(now)
+  startOfToday.setHours(0, 0, 0, 0)
+  const dayMs = 24 * 60 * 60 * 1000
+  const today = startOfToday.getTime()
+
+  if (epochMs >= today) return "Today"
+  if (epochMs >= today - dayMs) return "Yesterday"
+  if (epochMs >= today - 6 * dayMs) return "This week"
+
+  const date = new Date(epochMs)
+  const sameYear = date.getFullYear() === startOfToday.getFullYear()
+  return date.toLocaleDateString(undefined, sameYear ? { month: "long" } : { month: "long", year: "numeric" })
+}

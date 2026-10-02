@@ -174,11 +174,6 @@ function toPosterPage(raw: RawPosterPage): PosterPage {
 /* Titles                                                                     */
 /* -------------------------------------------------------------------------- */
 
-/** A page of requested titles, most recently active first, each with its downloads. */
-export function fetchTitles(page = 1, pageSize = 100): Promise<Paginated<TitleSummary>> {
-  return request(`/api/titles?${query({ page, pageSize })}`)
-}
-
 /**
  * Every requested title, however many pages that takes. The first page tells
  * how many there are; the rest are fetched a few at a time.
@@ -200,16 +195,6 @@ export async function fetchAllTitles(init?: RequestInit): Promise<TitleSummary[]
   }
 
   return [...first.items, ...rest.flat()]
-}
-
-/** The requested title for a TMDB identity, or null when it has never been requested. */
-export async function lookupTitle(
-  tmdbId: number,
-  mediaType: MediaType,
-  init?: RequestInit,
-): Promise<TitleSummary | null> {
-  const page = await request<Paginated<TitleSummary>>(`/api/titles?${query({ tmdbId, mediaType })}`, init)
-  return page.items[0] ?? null
 }
 
 /** Forgets a title and its download history. Library files are kept. */

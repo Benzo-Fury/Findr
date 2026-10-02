@@ -54,13 +54,6 @@ export interface DiscoverFeed {
   rows: DiscoverRow[]
 }
 
-/** What a download or library entry needs from TMDB to be recognisable. */
-export interface TMDBMeta {
-  title: string
-  year: string
-  posterPath: string | null
-}
-
 /**
  * A library title's TMDB facts in a form small enough to hold for the whole
  * library at once: enough to render it, search it, and filter it by genre.

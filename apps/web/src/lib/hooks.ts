@@ -1,94 +1,10 @@
 /**
- * Shared data-loading hooks: paging through a TMDB list, driving that paging
- * from a scroll sentinel, resolving TMDB ids to titles and artwork, and
- * polling while something is in progress.
+ * Shared data-loading hooks: paging through any poster source, driving that
+ * paging from a scroll sentinel, and polling while something is in progress.
  */
 
 import * as React from "react"
-import type { MediaType, PosterItem, TMDBMeta } from "./types"
-import { fetchList, fetchTMDBDetails, type ListSource } from "./api"
-
-/**
- * Pages through one of the API's named TMDB lists.
- *
- * Passing `initialItems` seeds the first page from data the caller already
- * has — the discover feed's rows, for instance — so the grid renders without
- * repeating a request the page has already made.
- */
-export function useTMDBList(
-  source: ListSource,
-  mediaType: string,
-  initialItems?: PosterItem[],
-) {
-  const [items, setItems] = React.useState<PosterItem[]>([])
-  const [loading, setLoading] = React.useState(true)
-  const [loadingMore, setLoadingMore] = React.useState(false)
-  const [hasMore, setHasMore] = React.useState(true)
-  const pageRef = React.useRef(1)
-  const loadingMoreRef = React.useRef(false)
-  const hasMoreRef = React.useRef(true)
-
-  React.useEffect(() => {
-    setHasMore(true)
-    setLoadingMore(false)
-    hasMoreRef.current = true
-    loadingMoreRef.current = false
-    pageRef.current = 1
-
-    if (initialItems) {
-      setItems(initialItems)
-      setLoading(false)
-      return
-    }
-
-    setItems([])
-    setLoading(true)
-
-    fetchList(source, 1, mediaType)
-      .then((data) => {
-        setItems(data.results)
-        const more = data.page < data.totalPages
-        setHasMore(more)
-        hasMoreRef.current = more
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
-  }, [source, mediaType, initialItems])
-
-  const loadMore = React.useCallback(() => {
-    if (loadingMoreRef.current || !hasMoreRef.current) return
-    loadingMoreRef.current = true
-    setLoadingMore(true)
-
-    const nextPage = pageRef.current + 1
-
-    fetchList(source, nextPage, mediaType)
-      .then((data) => {
-        pageRef.current = nextPage
-
-        // Merged movie/TV pages can repeat a title across page boundaries
-        setItems((prev) => {
-          const seen = new Set(prev.map((item) => `${item.mediaType}-${item.id}`))
-          const unique = data.results.filter(
-            (item) => !seen.has(`${item.mediaType}-${item.id}`),
-          )
-          return [...prev, ...unique]
-        })
-
-        const more = data.page < data.totalPages
-        setHasMore(more)
-        hasMoreRef.current = more
-        loadingMoreRef.current = false
-        setLoadingMore(false)
-      })
-      .catch(() => {
-        loadingMoreRef.current = false
-        setLoadingMore(false)
-      })
-  }, [source, mediaType])
-
-  return { items, loading, loadingMore, hasMore, loadMore }
-}
+import type { PosterItem, PosterPage } from "./types"
 
 /**
  * Calls `loadMore` whenever the returned ref's element scrolls into view.
@@ -141,49 +57,6 @@ export function useInfiniteScroll(
   return attachObserver
 }
 
-/** Cache key for a TMDB identity; movie and show ids overlap. */
-export function tmdbKey(mediaType: MediaType, tmdbId: number): string {
-  return `${mediaType}-${tmdbId}`
-}
-
-/**
- * Resolves TMDB ids to titles and artwork.
- *
- * Downloads and titles store only TMDB identity, so anything listing them
- * needs this to render something a person recognises. Results are memoised
- * per title and in-flight lookups are de-duplicated. Look results up with
- * `tmdbKey`.
- */
-export function useTMDBMeta() {
-  const [meta, setMeta] = React.useState<Record<string, TMDBMeta>>({})
-  const requested = React.useRef(new Set<string>())
-
-  const fetchMeta = React.useCallback((mediaType: MediaType, tmdbId: number) => {
-    const key = tmdbKey(mediaType, tmdbId)
-    if (requested.current.has(key)) return
-    requested.current.add(key)
-
-    fetchTMDBDetails(mediaType, tmdbId)
-      .then((data) => {
-        const date = String(data.release_date ?? data.first_air_date ?? "")
-        setMeta((prev) => ({
-          ...prev,
-          [key]: {
-            title: String(data.title ?? data.name ?? ""),
-            year: date.slice(0, 4),
-            posterPath: typeof data.poster_path === "string" ? data.poster_path : null,
-          },
-        }))
-      })
-      .catch(() => {
-        // Let a later render try again
-        requested.current.delete(key)
-      })
-  }, [])
-
-  return { meta, fetchMeta }
-}
-
 /**
  * Calls `load` every `intervalMs` while `active` is true. The latest `load` is
  * always used, so callers need not memoise it.
@@ -197,4 +70,78 @@ export function usePolling(load: () => void, active: boolean, intervalMs: number
     const timer = setInterval(() => latest.current(), intervalMs)
     return () => clearInterval(timer)
   }, [active, intervalMs])
+}
+
+/**
+ * Pages through any paged poster source, restarting whenever `key` changes.
+ * Repeats across pages are dropped (merged movie and TV pages can overlap).
+ * Each loaded page is remembered as a batch, so a grid can reveal it as one.
+ */
+export function usePagedPosters(key: string, load: (page: number, signal: AbortSignal) => Promise<PosterPage>) {
+  const [items, setItems] = React.useState<PosterItem[]>([])
+  const [loading, setLoading] = React.useState(true)
+  const [loadingMore, setLoadingMore] = React.useState(false)
+  const [error, setError] = React.useState(false)
+  const [hasMore, setHasMore] = React.useState(false)
+  const pageRef = React.useRef(1)
+  const busy = React.useRef(false)
+  const loadRef = React.useRef(load)
+  loadRef.current = load
+  const controller = React.useRef<AbortController | null>(null)
+
+  // A new key starts over from the first page
+  React.useEffect(() => {
+    controller.current?.abort()
+    const current = new AbortController()
+    controller.current = current
+    pageRef.current = 1
+    busy.current = true
+    setItems([])
+    setLoading(true)
+    setError(false)
+
+    loadRef
+      .current(1, current.signal)
+      .then((page) => {
+        setItems(page.results)
+        setHasMore(page.page < page.totalPages)
+      })
+      .catch(() => {
+        if (!current.signal.aborted) setError(true)
+      })
+      .finally(() => {
+        if (current.signal.aborted) return
+        busy.current = false
+        setLoading(false)
+      })
+
+    return () => current.abort()
+  }, [key])
+
+  const loadMore = React.useCallback(() => {
+    if (busy.current || !controller.current) return
+    const signal = controller.current.signal
+    busy.current = true
+    setLoadingMore(true)
+    const next = pageRef.current + 1
+
+    loadRef
+      .current(next, signal)
+      .then((page) => {
+        pageRef.current = next
+        setItems((previous) => {
+          const seen = new Set(previous.map((item) => `${item.mediaType}-${item.id}`))
+          return [...previous, ...page.results.filter((item) => !seen.has(`${item.mediaType}-${item.id}`))]
+        })
+        setHasMore(page.page < page.totalPages)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (signal.aborted) return
+        busy.current = false
+        setLoadingMore(false)
+      })
+  }, [])
+
+  return { items, loading, loadingMore, error, hasMore, loadMore }
 }

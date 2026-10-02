@@ -81,7 +81,9 @@ Both generated files are gitignored. In production the server imports them; in d
 
 ### Web (`apps/web/src`)
 
-Pages in `pages/` (Library, Discover, Downloads, Settings), routed in `App.tsx`. `lib/api.ts` is the only place URLs are written; request/response types come from `@findr/types`. Status labels and badge variants live in `lib/download-status.ts`; formatting helpers in `lib/format.ts`; shared hooks (TMDB metadata, polling, infinite scroll) in `lib/hooks.ts`.
+Pages in `pages/` (Library, Discover, Downloads, Settings, plus sign-in and first-run credentials), routed in `App.tsx`; every signed-in page sits in `components/shell/app-shell.tsx` (top bar, phone tab bar, ⌘K search palette, and the title sheet any page opens through `?t=movie:603`). `lib/api.ts` is the only place URLs are written; request/response types come from `@findr/types`. `lib/library.tsx` (`LibraryProvider`) holds the whole library in memory and polls active downloads; `lib/title-cards.ts` resolves titles to TMDB cards in batches and keeps them in browser storage. Status labels, icons and tones live in `lib/download-status.ts`; formatting in `lib/format.ts`; text matching in `lib/search.ts`; motion presets in `lib/motion.ts`; paging and polling hooks in `lib/hooks.ts`.
+
+UI: light theme only. Design tokens (colours, type, radii, shadows, easings) are defined once in `index.css` `@theme`; the brand amber `signal` is the single accent and is never used as text on paper (use `signal-ink`). Fonts: Bricolage Grotesque (display, self-hosted with all axes in `src/assets/fonts/`), Geist, Geist Mono. Shape rule: controls are pills, artwork is `rounded-art`, panels and sheets are `rounded-panel`. Icons are Phosphor (`*Icon` exports) only. Primitives live in `components/ui/` (Base UI for dialogs, menus and switches; Motion for animation, wrapped in `MotionConfig reducedMotion="user"`); feature components in `components/{shell,title,media,discover,downloads,settings}/`. Settings are declared once in `components/settings/registry.ts`, which drives rendering, search and validation.
 
 ## Conventions
 
