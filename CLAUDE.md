@@ -65,7 +65,7 @@ Bun monorepo: `apps/api` (Hono on Bun), `apps/web` (React 19 + react-router-dom 
 - **Downloader** (`lib/downloader/`) — `Downloader` interface with `WebTorrentDownloader` (in-process client, uTP off, block requests gated until files are chosen, DHT nodes kept in `app_state`); `FileInspector` (safety and file selection), `Watchdog` (metadata/stall/speed), `TorrentSession`, `AttemptWorkspace` (`<downloads>/<downloadId>/<candidateId>/`).
 - **Media** (`lib/media/`) — `Sterilizer` (mkvmerge, video + audio only) and `LibrarySaver` (naming templates, atomic temp-name-then-rename placement).
 - **Prowlarr** (`lib/prowlarr/Prowlarr.ts`) — search, plus link handling: API keys are stripped into `prowlarr:` references before storage and re-attached only when fetching from the configured Prowlarr URL.
-- **TMDB** (`lib/tmdb/`) — cached client behind the `/api/tmdb/*` proxy routes, plus `titleFacts` / `seasonEpisodes` for the pipeline.
+- **TMDB** (`lib/tmdb/`) — cached client behind the `/api/tmdb/*` proxy routes (curated lists and the discover feed, search, details, `genres`, genre `browse`, and batched `cards` that let the web app resolve a whole library cheaply), plus `titleFacts` / `seasonEpisodes` for the pipeline.
 
 ### Build & compile
 
