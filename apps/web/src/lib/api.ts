@@ -17,12 +17,17 @@ import type {
 } from "@findr/types/downloads"
 import type { CredentialsReset } from "@findr/types/account"
 import type { SettingsPatch, SettingsResponse } from "@findr/types/settings"
+import type { GenresResponse, TitleCard as RawTitleCard, TitleCardsResponse } from "@findr/types/tmdb"
+import { MAX_PAGE_SIZE } from "@findr/types/downloads"
 import type {
+  BrowseSort,
   DiscoverFeed,
   DiscoverRow,
+  Genre,
   MediaType,
   PosterItem,
   PosterPage,
+  TitleCard,
 } from "./types"
 
 /* -------------------------------------------------------------------------- */
@@ -113,6 +118,9 @@ interface RawPosterItem {
   poster_path: string | null
   vote_average: number
   year?: string
+  backdrop_path?: string | null
+  genre_ids?: number[]
+  overview?: string
 }
 
 interface RawPosterPage {
@@ -131,6 +139,24 @@ function toPosterItem(raw: RawPosterItem): PosterItem {
     posterPath: raw.poster_path,
     voteAverage: raw.vote_average,
     year: raw.year,
+    backdropPath: raw.backdrop_path,
+    genreIds: raw.genre_ids,
+    overview: raw.overview,
+  }
+}
+
+/** Converts one API title card into its camelCase view model. */
+function toTitleCard(raw: RawTitleCard): TitleCard {
+  return {
+    id: raw.id,
+    mediaType: raw.media_type,
+    title: raw.title,
+    year: raw.year,
+    posterPath: raw.poster_path,
+    backdropPath: raw.backdrop_path,
+    genres: raw.genres,
+    voteAverage: raw.vote_average,
+    seasons: raw.number_of_seasons,
   }
 }
 
@@ -151,6 +177,29 @@ function toPosterPage(raw: RawPosterPage): PosterPage {
 /** A page of requested titles, most recently active first, each with its downloads. */
 export function fetchTitles(page = 1, pageSize = 100): Promise<Paginated<TitleSummary>> {
   return request(`/api/titles?${query({ page, pageSize })}`)
+}
+
+/**
+ * Every requested title, however many pages that takes. The first page tells
+ * how many there are; the rest are fetched a few at a time.
+ */
+export async function fetchAllTitles(init?: RequestInit): Promise<TitleSummary[]> {
+  const first = await request<Paginated<TitleSummary>>(
+    `/api/titles?${query({ page: 1, pageSize: MAX_PAGE_SIZE })}`,
+    init,
+  )
+  const pageCount = Math.ceil(first.total / MAX_PAGE_SIZE)
+  const rest: TitleSummary[][] = []
+
+  // Four pages in flight at a time keeps a large library quick without flooding the API
+  for (let page = 2; page <= pageCount; page += 4) {
+    const batch = Array.from({ length: Math.min(4, pageCount - page + 1) }, (_, offset) =>
+      request<Paginated<TitleSummary>>(`/api/titles?${query({ page: page + offset, pageSize: MAX_PAGE_SIZE })}`, init),
+    )
+    for (const result of await Promise.all(batch)) rest.push(result.items)
+  }
+
+  return [...first.items, ...rest.flat()]
 }
 
 /** The requested title for a TMDB identity, or null when it has never been requested. */
@@ -174,9 +223,10 @@ export function deleteTitle(id: string): Promise<void> {
 
 /** A page of downloads, newest activity first. */
 export function fetchDownloads(
-  options: Partial<Pick<ListDownloadsQuery, "page" | "pageSize" | "state">> = {},
+  options: Partial<Pick<ListDownloadsQuery, "page" | "pageSize" | "state" | "status">> = {},
+  init?: RequestInit,
 ): Promise<Paginated<DownloadSummary>> {
-  return request(`/api/downloads?${query(options)}`)
+  return request(`/api/downloads?${query(options)}`, init)
 }
 
 /** Everything about one download: episodes, candidates and attempts. */
@@ -273,9 +323,10 @@ export async function fetchDiscoverFeed(): Promise<DiscoverFeed> {
 }
 
 /** Multi-search across movies and shows. */
-export function searchTMDB(query: string): Promise<PosterPage> {
+export function searchTMDB(query: string, init?: RequestInit): Promise<PosterPage> {
   return request<RawPosterPage>(
     `/api/tmdb/search?q=${encodeURIComponent(query)}`,
+    init,
   ).then(toPosterPage)
 }
 
@@ -289,6 +340,46 @@ export function fetchTMDBDetails(
   init?: RequestInit,
 ): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>(`/api/tmdb/details/${mediaType}/${id}`, init)
+}
+
+/** Most title cards one request may ask for; the API enforces the same ceiling. */
+export const TITLE_CARD_BATCH = 50
+
+/** Title cards for up to `TITLE_CARD_BATCH` TMDB identities. Unresolvable ones are left out. */
+export async function fetchTitleCards(
+  keys: { mediaType: MediaType; id: number }[],
+  init?: RequestInit,
+): Promise<TitleCard[]> {
+  const ids = keys.map((key) => `${key.mediaType}:${key.id}`).join(",")
+  const raw = await request<TitleCardsResponse>(`/api/tmdb/cards?${query({ ids })}`, init)
+  return raw.cards.map(toTitleCard)
+}
+
+/** Every genre, merged by name across movies and shows. */
+export async function fetchGenres(): Promise<Genre[]> {
+  const raw = await request<GenresResponse>("/api/tmdb/genres")
+  return raw.genres
+}
+
+/** What a genre browse asks for. A side's genre id is omitted when it has none. */
+export interface BrowseOptions {
+  mediaType: MediaType | "all"
+  movieGenre?: number
+  tvGenre?: number
+  sort: BrowseSort
+  page: number
+}
+
+/** One page of titles in a genre. */
+export function browseTMDB(options: BrowseOptions, init?: RequestInit): Promise<PosterPage> {
+  const params = query({
+    type: options.mediaType,
+    movieGenre: options.movieGenre,
+    tvGenre: options.tvGenre,
+    sort: options.sort,
+    page: options.page,
+  })
+  return request<RawPosterPage>(`/api/tmdb/browse?${params}`, init).then(toPosterPage)
 }
 
 /** Trending posters for the login backdrop. The one endpoint open to guests. */

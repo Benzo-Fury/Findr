@@ -14,6 +14,7 @@ import type {
   PosterPage,
   TMDBMediaType,
 } from "@findr/types";
+import type { BrowseQuery, BrowseSort, GenreEntry, TitleCard } from "@findr/types/tmdb";
 import SelfManagedSingleton from "../other/SelfManagedSingleton";
 import { SettingsStore } from "../db/models/SettingsStore";
 import {
@@ -35,6 +36,9 @@ interface RawItem {
   vote_average?: number;
   release_date?: string;
   first_air_date?: string;
+  backdrop_path?: string | null;
+  genre_ids?: number[];
+  overview?: string;
 }
 
 /** Envelope TMDB wraps every paginated list in. */
@@ -53,6 +57,24 @@ interface RawTitleDetails {
   first_air_date?: string;
   overview?: string;
   external_ids?: { imdb_id?: string | null; tvdb_id?: number | null };
+}
+
+/** The fields of TMDB's movie and TV detail payloads a title card reads. */
+interface RawCardDetails {
+  title?: string;
+  name?: string;
+  release_date?: string;
+  first_air_date?: string;
+  poster_path?: string | null;
+  backdrop_path?: string | null;
+  genres?: Array<{ name: string }>;
+  vote_average?: number;
+  number_of_seasons?: number;
+}
+
+/** TMDB's genre list for one media kind. */
+interface RawGenreList {
+  genres?: Array<{ id: number; name: string }>;
 }
 
 /** The fields of TMDB's season payload the download pipeline reads. */
@@ -95,6 +117,12 @@ const BASE_URL = "https://api.themoviedb.org/3";
 
 /** How long the featured and discover-feed payloads stay warm. */
 const CACHE_TTL_MS = 10 * 60 * 1000;
+
+/** How long title cards and genre lists stay warm; both change rarely. */
+const LONG_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Detail requests in flight at once while resolving a batch of title cards. */
+const CARD_CONCURRENCY = 8;
 
 /** TMDB refuses pages beyond 500. */
 const MAX_PAGE = 500;
@@ -208,6 +236,131 @@ export default class TMDB extends SelfManagedSingleton {
     }
   }
 
+  /**
+   * One page of titles in a genre, for the discover page's genre view.
+   *
+   * With `type=all`, each media kind that has a genre id (or both, when no
+   * genre is given) is fetched for the same page and the two rankings are
+   * interleaved, so neither kind crowds the other out of the page.
+   */
+  public async browse(query: BrowseQuery): Promise<PosterPage> {
+    const page = this.clampPage(query.page);
+    const genreFor: Record<TMDBMediaType, number | undefined> = {
+      movie: query.movieGenre,
+      tv: query.tvGenre,
+    };
+    const anyGenre = query.movieGenre !== undefined || query.tvGenre !== undefined;
+
+    // A kind is skipped under "all" when the genre only exists on the other side
+    const wanted = (query.type === "all" ? (["movie", "tv"] as const) : [query.type]).filter(
+      (mediaType) => !anyGenre || genreFor[mediaType] !== undefined,
+    );
+
+    const pages = await Promise.all(
+      wanted.map(async (mediaType) => {
+        const params: Record<string, string> = {
+          ...this.browseParams(mediaType, query.sort),
+          page: String(page),
+          include_adult: "false",
+        };
+        const genre = genreFor[mediaType];
+        if (genre !== undefined) params.with_genres = String(genre);
+
+        const data = await this.request<RawPage>(`/discover/${mediaType}`, params);
+        return { items: this.toPosterItems(data.results, { mediaType }), data };
+      }),
+    );
+
+    return {
+      page,
+      total_pages: Math.max(1, ...pages.map(({ data }) => Math.min(data.total_pages ?? 1, MAX_PAGE))),
+      total_results: pages.reduce((sum, { data }) => sum + (data.total_results ?? 0), 0),
+      results: this.interleave(pages.map(({ items }) => items)),
+    };
+  }
+
+  /** Every genre TMDB knows, merged by name across movies and shows. */
+  public async genres(): Promise<GenreEntry[]> {
+    return this.cached(
+      "genres",
+      async () => {
+        const [movie, tv] = await Promise.all([
+          this.request<RawGenreList>("/genre/movie/list"),
+          this.request<RawGenreList>("/genre/tv/list"),
+        ]);
+
+        // Merge the two numbering schemes under one name
+        const byName = new Map<string, GenreEntry>();
+        for (const genre of movie.genres ?? []) {
+          byName.set(genre.name, { name: genre.name, movie: genre.id, tv: null });
+        }
+        for (const genre of tv.genres ?? []) {
+          const entry = byName.get(genre.name) ?? { name: genre.name, movie: null, tv: null };
+          byName.set(genre.name, { ...entry, tv: genre.id });
+        }
+
+        return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+      },
+      LONG_CACHE_TTL_MS,
+    );
+  }
+
+  /**
+   * Title cards for a batch of TMDB identities. Each card is cached on its
+   * own, so a library that grows by one title costs one lookup. Titles TMDB
+   * cannot resolve are left out rather than failing the batch.
+   */
+  public async cards(keys: Array<{ mediaType: TMDBMediaType; id: number }>): Promise<TitleCard[]> {
+    const cards = await this.pool(keys, CARD_CONCURRENCY, ({ mediaType, id }) =>
+      this.cached(`card:${mediaType}:${id}`, () => this.loadCard(mediaType, id), LONG_CACHE_TTL_MS).catch(
+        (error) => {
+          console.error(`[TMDB] Card ${mediaType}/${id} failed:`, error);
+          return null;
+        },
+      ),
+    );
+
+    return cards.filter((card): card is TitleCard => card !== null);
+  }
+
+  /** Reads one title's details and trims them to a card. */
+  private async loadCard(mediaType: TMDBMediaType, id: number): Promise<TitleCard> {
+    const data = await this.request<RawCardDetails>(`/${mediaType}/${id}`);
+    const date = (mediaType === "movie" ? data.release_date : data.first_air_date) ?? "";
+
+    return {
+      id,
+      media_type: mediaType,
+      title: (mediaType === "movie" ? data.title : data.name) ?? "",
+      year: date.slice(0, 4),
+      poster_path: data.poster_path ?? null,
+      backdrop_path: data.backdrop_path ?? null,
+      genres: (data.genres ?? []).map((genre) => genre.name),
+      vote_average: data.vote_average ?? 0,
+      number_of_seasons: mediaType === "tv" ? data.number_of_seasons ?? null : null,
+    };
+  }
+
+  /** Discover parameters that produce each browse ordering for one media kind. */
+  private browseParams(mediaType: TMDBMediaType, sort: BrowseSort): Record<string, string> {
+    const dateField = mediaType === "movie" ? "primary_release_date" : "first_air_date";
+
+    switch (sort) {
+      case "popular":
+        return { sort_by: "popularity.desc" };
+      case "rated":
+        // Enough votes that a handful of perfect scores cannot top the list
+        return { sort_by: "vote_average.desc", "vote_count.gte": mediaType === "movie" ? "300" : "150" };
+      case "recent":
+        // Already out, and noticed by enough people to be a real release
+        return {
+          sort_by: `${dateField}.desc`,
+          [`${dateField}.lte`]: new Date().toISOString().slice(0, 10),
+          "vote_count.gte": "20",
+        };
+    }
+  }
+
   /* ---------------------------------------------------------------------- */
   /* Lookups                                                                  */
   /* ---------------------------------------------------------------------- */
@@ -305,13 +458,51 @@ export default class TMDB extends SelfManagedSingleton {
   }
 
   /** Returns the cached value for a key, loading and storing it when stale. */
-  private async cached<T>(key: string, load: () => Promise<T>): Promise<T> {
+  private async cached<T>(key: string, load: () => Promise<T>, ttlMs = CACHE_TTL_MS): Promise<T> {
     const hit = this.cache.get(key);
     if (hit && hit.expiresAt > Date.now()) return hit.value as T;
 
     const value = await load();
-    this.cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, value });
+    this.cache.set(key, { expiresAt: Date.now() + ttlMs, value });
     return value;
+  }
+
+  /** Maps every input through `work` with at most `limit` calls in flight, keeping order. */
+  private async pool<I, O>(inputs: I[], limit: number, work: (input: I) => Promise<O>): Promise<O[]> {
+    const results = new Array<O>(inputs.length);
+    let next = 0;
+
+    // Each runner claims the next unclaimed input until none remain
+    const runner = async () => {
+      while (next < inputs.length) {
+        const index = next++;
+        results[index] = await work(inputs[index] as I);
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(limit, inputs.length) }, runner));
+    return results;
+  }
+
+  /** Alternates items from several ranked lists, dropping repeats. */
+  private interleave(lists: PosterItem[][]): PosterItem[] {
+    const merged: PosterItem[] = [];
+    const seen = new Set<string>();
+    const longest = Math.max(0, ...lists.map((list) => list.length));
+
+    for (let index = 0; index < longest; index++) {
+      for (const list of lists) {
+        const item = list[index];
+        if (!item) continue;
+
+        const key = `${item.media_type}:${item.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(item);
+      }
+    }
+
+    return merged;
   }
 
   /** Maps TMDB list entries to poster items, dropping anything unrenderable. */
@@ -335,6 +526,9 @@ export default class TMDB extends SelfManagedSingleton {
         poster_path: raw.poster_path,
         vote_average: raw.vote_average ?? 0,
         ...(date ? { year: date.slice(0, 4) } : {}),
+        backdrop_path: raw.backdrop_path ?? null,
+        ...(raw.genre_ids ? { genre_ids: raw.genre_ids } : {}),
+        ...(raw.overview ? { overview: raw.overview } : {}),
       });
 
       return acc;

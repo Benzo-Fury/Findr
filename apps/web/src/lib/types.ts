@@ -27,6 +27,11 @@ export interface PosterItem {
   posterPath: string | null
   voteAverage: number
   year?: string
+  /** Wide artwork, when the list included it. */
+  backdropPath?: string | null
+  /** TMDB genre ids, when the list included them. */
+  genreIds?: number[]
+  overview?: string
 }
 
 /** One page of poster items, mirroring TMDB's pagination envelope. */
@@ -55,3 +60,31 @@ export interface TMDBMeta {
   year: string
   posterPath: string | null
 }
+
+/**
+ * A library title's TMDB facts in a form small enough to hold for the whole
+ * library at once: enough to render it, search it, and filter it by genre.
+ */
+export interface TitleCard {
+  id: number
+  mediaType: MediaType
+  title: string
+  /** Empty when TMDB has no date. */
+  year: string
+  posterPath: string | null
+  backdropPath: string | null
+  genres: string[]
+  voteAverage: number
+  /** Shows only; null for movies. */
+  seasons: number | null
+}
+
+/** One genre, with its separate movie and TV ids where TMDB has them. */
+export interface Genre {
+  name: string
+  movie: number | null
+  tv: number | null
+}
+
+/** Orderings a genre browse can use. */
+export type BrowseSort = "popular" | "rated" | "recent"
