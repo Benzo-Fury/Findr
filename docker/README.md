@@ -70,6 +70,43 @@ docker compose down                           # stop (state in config/ is kept)
 
 To pin versions, set `PROWLARR_TAG` and `FLARESOLVERR_TAG` in `.env` to specific tags.
 
+## Running Findr in Docker
+
+Every release also publishes a container image for `linux/amd64` and `linux/arm64`: `ghcr.io/benzo-fury/findr`, tagged with the version (`1.4.0`), the minor line (`1.4`) and `latest`. It holds the release's executable plus mkvmerge, ffmpeg and `ip`, so there is nothing else to install. Add it to your `compose.yml`:
+
+```yaml
+  findr:
+    image: ghcr.io/benzo-fury/findr:latest    # or pin a version, e.g. :1.4
+    container_name: findr
+    user: "1000:1000"                         # the host user that owns the library folders
+    environment:
+      - TZ=Etc/UTC
+    volumes:
+      - ./config/findr:/data                  # database, session secret, optional .env
+      - /srv/media:/srv/media                 # library and scratch folders, at the same paths
+    ports:
+      - 127.0.0.1:34571:34571                 # web app
+      - 6881:6881                             # torrent port (TCP and UDP)
+      - 6881:6881/udp
+    restart: unless-stopped
+```
+
+- **Paths** - mount the library and downloads folders at the paths you enter under **Settings → Library paths**; mounting them at the same path inside and out keeps that simple. Point **Prowlarr URL** at `http://prowlarr:9696` when both are in this stack.
+- **First sign-in** - the initial `admin` / `admin` login, and replacing it, are only accepted from the machine Findr runs on. Through a published port a request comes from Docker's network, not loopback, so do this one step from inside the container, choosing your own email and password:
+
+  ```bash
+  docker exec findr sh -c '
+    H="-H Origin:http://localhost:34571 -H Content-Type:application/json"
+    curl -sf -c /tmp/jar $H http://localhost:34571/api/auth/sign-in/email -d "{\"email\":\"admin\",\"password\":\"admin\"}" > /dev/null &&
+    curl -sf -b /tmp/jar $H http://localhost:34571/api/account/credentials -d "{\"email\":\"you@example.com\",\"password\":\"a long password\"}" &&
+    curl -sf -b /tmp/jar $H -X PATCH http://localhost:34571/api/settings -d "{\"access\":{\"allowRemote\":true}}" > /dev/null &&
+    echo "Credentials set, remote access on"; rm -f /tmp/jar'
+  ```
+
+  This also turns on **Settings → Access → Allow remote access**, without which Findr refuses every request from outside the container. Then sign in from the browser with your new credentials; behind a reverse proxy, set **Public URL** too.
+- **Updates** - Findr knows it runs in a container (the image sets `FINDR_CONTAINER=true`), so it only announces new releases. Update with `docker compose pull findr && docker compose up -d findr`, ideally while no downloads are running. Everything that matters lives in `/data`, so it carries over.
+- **On a VPN** - give it `network_mode: "service:gluetun"` instead of `ports:`, as in [docs/VPN.md](../docs/VPN.md#linux-a-network-namespace-or-docker-with-a-vpn-container), and set the killswitch's interface to the VPN container's (`tun0` or `wg0`).
+
 ## Notes
 
 - **Prowlarr's web UI is bound to 127.0.0.1** so only this machine can reach it. If Findr runs on another host, set `BIND_ADDRESS=0.0.0.0` and put it behind a firewall or VPN.

@@ -66,7 +66,7 @@ If any step fails because of the release, it is rejected with the reason, its fi
 | [Anthropic API key](https://console.anthropic.com/) *(optional)* | The wrong-title filter |
 | [Bun](https://bun.sh) 1.4+ | Only needed to build from source |
 
-Torrents are downloaded by Findr itself ([WebTorrent](https://webtorrent.io), built in), so Prowlarr is the only service to run. It can run in Docker: [`docker/`](docker/README.md) has a Compose file (plus optional FlareSolverr) and a step-by-step setup guide.
+Torrents are downloaded by Findr itself ([WebTorrent](https://webtorrent.io), built in), so Prowlarr is the only service to run. It can run in Docker: [`docker/`](docker/README.md) has a Compose file (plus optional FlareSolverr) and a step-by-step setup guide. Findr itself is published as a container image too, `ghcr.io/benzo-fury/findr`, with every release ([running it in Docker](docker/README.md#running-findr-in-docker)).
 
 ## Installation
 

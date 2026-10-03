@@ -1,0 +1,4 @@
+# The image only needs the prebuilt Linux executables; keep everything else
+# (sources, node_modules, local data) out of the build context
+*
+!dist/findr-linux-*
