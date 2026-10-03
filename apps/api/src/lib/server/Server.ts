@@ -98,6 +98,11 @@ export class Server extends Hono {
    * non-API requests to the Vite dev server so HMR works seamlessly.
    */
   private async mountWebApp() {
+    // An API path no route claimed is a 404, never the web app. In dev the
+    // proxy would otherwise hand it to Vite, whose `/api` proxy sends it
+    // straight back here, looping until the request times out.
+    this.all("/api/*", (c) => c.json({ error: "not_found" }, 404))
+
     if (process.env.NODE_ENV === "production") {
       const { assets } = await import("../../_asset.map")
       const web = new WebAssets(assets)
