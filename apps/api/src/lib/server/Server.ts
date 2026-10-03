@@ -10,7 +10,6 @@
 import { Hono } from "hono"
 import { METHODS } from "hono/router"
 import type { Route, HttpMethod } from "../../types/Route"
-import { env } from "../env/Env"
 import { RateLimiter } from "../../middleware/RateLimiter"
 import { requireAdmin } from "../../middleware/requireAdmin"
 import { requireAuth } from "../../middleware/requireAuth"
@@ -19,6 +18,7 @@ import { blockPendingReset } from "../../middleware/blockPendingReset"
 import { validateBody } from "../../middleware/validateBody"
 import { validateQuery } from "../../middleware/validateQuery"
 import { derivePath } from "../routing/derivePath"
+import { ServerAddress } from "./ServerAddress"
 import { WebAssets } from "./WebAssets"
 
 /**
@@ -35,12 +35,13 @@ import { WebAssets } from "./WebAssets"
  */
 export class Server extends Hono {
   /**
-   * Binds the server to the `PORT` environment variable via `Bun.serve`.
-   * Must be called after `constructRoutes` has registered all endpoints.
+   * Binds the server via `Bun.serve` to the port from the settings (or the
+   * `PORT` override). Must be called after `constructRoutes` has registered
+   * all endpoints.
    */
   start() {
-    Bun.serve({ fetch: this.fetch, port: env.PORT })
-    console.log(`[Server] Listening on port ${env.PORT}`)
+    Bun.serve({ fetch: this.fetch, port: ServerAddress.port })
+    console.log(`[Server] Listening on ${ServerAddress.localUrl}`)
   }
 
   /**

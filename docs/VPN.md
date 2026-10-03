@@ -108,7 +108,7 @@ for ipt in iptables ip6tables; do
   $ipt -A OUTPUT -m owner --uid-owner findr -o lo -j ACCEPT
   $ipt -A OUTPUT -m owner --uid-owner findr -o wg0 -j ACCEPT
   # Replies to people using the web UI over your LAN (Findr's port)
-  $ipt -A OUTPUT -m owner --uid-owner findr -p tcp --sport 3030 -j ACCEPT
+  $ipt -A OUTPUT -m owner --uid-owner findr -p tcp --sport 34571 -j ACCEPT
   $ipt -A OUTPUT -m owner --uid-owner findr -j REJECT
 done
 ```

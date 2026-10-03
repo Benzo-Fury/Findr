@@ -19,7 +19,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://localhost:3030",
+      // The API's default port; follow Settings → Access if it is changed
+      "/api": "http://localhost:34571",
     },
   },
   resolve: {

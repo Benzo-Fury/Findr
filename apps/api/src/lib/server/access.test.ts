@@ -11,8 +11,9 @@ import { database } from "../db/client"
 import { SettingsStore } from "../db/models/SettingsStore"
 import { env } from "../env/Env"
 import { Server } from "./Server"
+import { ServerAddress } from "./ServerAddress"
 
-const ORIGIN = "http://localhost:3030"
+const ORIGIN = ServerAddress.localUrl
 const server = new Server()
 
 /** A stand-in for the Bun server, reporting every request as coming from `address`. */
@@ -150,5 +151,20 @@ describe("remote access", () => {
   test("opens once enabled in the settings", async () => {
     SettingsStore.update({ access: { allowRemote: true } })
     expect((await call("/api/health", { address: "192.168.1.20" })).status).toBe(200)
+  })
+})
+
+describe("sign-in origin", () => {
+  test("is refused from a page on another site, even one pointed at this machine", async () => {
+    const host = `evil.example:${ServerAddress.port}`
+    const res = await call("/api/auth/sign-in/email", { body: { email: "admin", password: "admin" }, headers: { origin: `http://${host}`, host } })
+    expect(res.status).toBe(403)
+  })
+
+  test("is accepted from Findr's own page at a network IP", async () => {
+    SettingsStore.update({ access: { allowRemote: true } })
+    const host = `192.168.1.5:${ServerAddress.port}`
+    const res = await call("/api/auth/sign-in/email", { body: { email: "admin", password: "admin" }, address: "192.168.1.20", headers: { origin: `http://${host}`, host } })
+    expect(res.status).toBe(200)
   })
 })

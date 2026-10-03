@@ -2,11 +2,13 @@
  * Application-level configuration read from the process environment.
  *
  * Only settings that belong to the deployment rather than the user live here:
- * the port, the database location, the auth secret, and the mkvmerge binary.
+ * the database location, proxy trust, the mkvmerge binary, and a port
+ * override. None is required, so Findr starts with no `.env` at all.
  * Everything an admin tunes while running Findr — library paths, naming,
- * preferences, the watchdog, service URLs and API keys, the torrent port,
- * remote access — lives in the database settings store instead, so it can be
- * changed from the web UI without editing files on the server.
+ * preferences, the watchdog, service URLs and API keys, the ports, remote
+ * access — lives in the database settings store instead, so it can be
+ * changed from the web UI without editing files on the server. The auth
+ * secret is generated on first run and kept beside the database (`AuthSecret`).
  *
  * Bun loads `.env` from the working directory automatically, in development
  * and in a compiled executable alike.
@@ -24,14 +26,15 @@ const flag = z
 
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
-  PORT: z.coerce.number().int().positive().default(3030),
+
+  /**
+   * Overrides the port set under Settings → Access. Unset normally; it is the
+   * way back in when the configured port is taken and the server cannot start.
+   */
+  PORT: z.preprocess((value) => (value === "" ? undefined : value), z.coerce.number().int().min(1).max(65535).optional()),
 
   /** SQLite file. Relative paths resolve against the repo root, or the working directory when compiled. */
   DATABASE_PATH: z.string().default("data/findr.db"),
-
-  /** Public origin of the server, used by BetterAuth for redirects and cookies. */
-  BASE_URL: z.url(),
-  BETTER_AUTH_SECRET: z.string().min(1),
 
   /**
    * Honour `X-Forwarded-For` for rate limiting and the remote access check.

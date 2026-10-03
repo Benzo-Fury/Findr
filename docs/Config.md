@@ -4,7 +4,7 @@ Findr has two kinds of configuration, stored in two places:
 
 | Kind | Where | Changed by | Examples |
 |---|---|---|---|
-| **Deployment** - how and where the server runs | Environment variables (`.env`) | Whoever runs the server; needs a restart | Port, database file, auth secret, mkvmerge path |
+| **Deployment** - how and where the server runs | Environment variables (`.env`), all optional | Whoever runs the server; needs a restart | Database file, mkvmerge path, proxy trust, port override |
 | **Settings** - everything else | The database, edited on the **Settings** page | Admins, in the browser; most apply to the next download | Service URLs and API keys, library paths, naming, release preferences, scoring, watchdog, VPN killswitch, remote access |
 
 There is no config file. API keys are stored in the database but never sent back to the browser, and nothing the browser can edit can point Findr at an executable.
@@ -15,19 +15,25 @@ There is no config file. API keys are stored in the database but never sent back
 
 Bun reads `.env` from the working directory automatically - in development that is `apps/api/.env`; for the compiled `findr` binary it is the directory you run it from. A starting point is in [`apps/api/.env.example`](../apps/api/.env.example).
 
-Startup fails with a list of problems if anything required is missing or malformed.
+None is required, so Findr starts without a `.env`. Startup fails with a list of problems if a variable is malformed.
 
 ### Server
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `NODE_ENV` | No | `development` | `production` in builds. In development the API proxies the web app to Vite and trusts `http://localhost:5173` for auth. |
-| `PORT` | No | `3030` | Port for the API and web app. |
+| `PORT` | No | - | Overrides the port set under [Access](#access--access). Leave it unset; it is the way back in when the configured port is taken. |
 | `DATABASE_PATH` | No | `data/findr.db` | SQLite file (the folder is created on first run). Relative paths resolve from the repo root in development, and from the working directory for the compiled binary. |
-| `BASE_URL` | **Yes** | - | Public URL of the server, e.g. `http://localhost:3030`. Used by BetterAuth for cookies and redirects. |
-| `BETTER_AUTH_SECRET` | **Yes** | - | Session signing secret. Generate with `openssl rand -hex 32`. |
 | `TRUST_PROXY` | No | `false` | Believe the first `X-Forwarded-For` address, for rate limiting and for the remote access check. Only enable behind a reverse proxy you control. |
 | `MKVMERGE_PATH` | No | `mkvmerge` | mkvmerge binary, from [MKVToolNix](https://mkvtoolnix.download/). An env var on purpose - an executable path should not be editable from a browser. |
+
+---
+
+## Session secret
+
+Findr signs session cookies with a random secret it generates on first run and keeps in `auth.secret`, in the same folder as the database (`data/` by default), readable only by the user Findr runs as. There is nothing to set. Back it up with the database; if it is lost or deleted, a new one is generated and everyone is signed out, but no data is lost.
+
+It is kept out of the database on purpose: the database stores session tokens, and the secret is what stops a token copied out of a leaked database or backup from being used as a cookie.
 
 ---
 
@@ -162,9 +168,13 @@ How each check works, what it can't cover, and how to add a killswitch outside F
 
 | Field | Default | Description |
 |---|---|---|
+| `port` | `34571` | Port for the web app and API. Read at startup, so a change applies after a restart. The `PORT` environment variable overrides it. |
+| `publicUrl` | - | The URL people open Findr at, when that is a hostname rather than `localhost` or an IP - a reverse proxy's URL, or a name like `nas.local`. Read at startup. |
 | `allowRemote` | `false` | Answer requests from other machines. While off, Findr serves only requests from the server itself (loopback), the web app included. |
 
 The setting can only be turned on from the Settings page, which the initial `admin` account cannot reach until it has set its own credentials, so a fresh install is never exposed with its default login.
+
+Sign-ins are accepted only from pages served at `http://localhost:<port>`, at `publicUrl`, or at an IP address (how other machines on your network reach Findr). A page at any other hostname is refused even if that name points at the server, which stops a website from rebinding its own domain to your machine and signing in as the initial `admin`. So set `publicUrl` whenever you open Findr by name. An `https` public URL also makes the session cookie `Secure`.
 
 Behind a reverse proxy on the same machine, every request reaches Findr from loopback. Findr treats such forwarded requests as remote unless `TRUST_PROXY` is set, in which case it judges the client named in `X-Forwarded-For`. So with a local proxy, either turn on `allowRemote` or set `TRUST_PROXY`; never set `TRUST_PROXY` without a proxy in front, or any client could claim to be local.
 

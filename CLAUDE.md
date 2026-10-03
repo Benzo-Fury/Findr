@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Development
-bun run dev              # API (port 3030, restarts on change) and Vite (port 5173) together
+bun run dev              # API (port 34571, restarts on change) and Vite (port 5173) together
 bun run dev:api          # API only; proxies non-API requests to Vite
 bun run dev:web          # Vite only
 
@@ -55,7 +55,7 @@ Bun monorepo: `apps/api` (Hono on Bun), `apps/web` (React 19 + react-router-dom 
 - **Remote access** — `requireLocal` refuses anything not from loopback unless the `access.allowRemote` setting is on (only reachable after the reset). `ClientAddress` decides: the socket must be loopback, and forwarding headers from a local proxy count as remote unless `TRUST_PROXY` is set and the forwarded client is loopback.
 - **Database** — raw `bun:sqlite` (`lib/db/client.ts`). Schema changes are append-only entries in `lib/db/migrations.ts`, applied by `Migrator` using `PRAGMA user_version`. BetterAuth migrates its own tables.
 - **Models** (`lib/db/models/`) — the only code that writes SQL. Static finders return class instances with typed camelCase fields and mutation methods; instances serialise to `@findr/types` records (`toSummary()`, `toRecord()`, `toDetail()`). Tables: `titles`, `downloads`, `episodes`, `candidates`, `attempts`, `settings`, `app_state` (internal state such as DHT nodes).
-- **Configuration** — deployment config (port, database path, base URL, auth secret, mkvmerge path, `TRUST_PROXY`) comes from the environment, validated in `lib/env/Env.ts`. Everything else lives in the database (`SettingsStore`, schema in `@findr/types/settings`) and is edited on the web Settings page: paths, naming, preferences, scoring weights, queue, watchdog, wrong-title filter, service URLs and API keys, torrent port and remote access. Hot paths read one section with `SettingsStore.section()`. There is no JSON config file.
+- **Configuration** — no `.env` is required. Optional deployment overrides (database path, mkvmerge path, `TRUST_PROXY`, a `PORT` escape hatch) come from the environment, validated in `lib/env/Env.ts`. The BetterAuth secret is generated on first run into `auth.secret` beside the database (`lib/auth/AuthSecret.ts`, owner-only file, deliberately not in the database that holds the session tokens). The port (default 34571) and an optional public URL are `access` settings read once at startup by `lib/server/ServerAddress.ts`, which derives BetterAuth's base URL and trusted origins (localhost, the public URL, and same-origin requests to a bare IP — never an arbitrary hostname, which would open DNS rebinding). Everything else lives in the database (`SettingsStore`, schema in `@findr/types/settings`) and is edited on the web Settings page: paths, naming, preferences, scoring weights, queue, watchdog, wrong-title filter, service URLs and API keys, ports and remote access. Hot paths read one section with `SettingsStore.section()`. There is no JSON config file.
 - **Pipeline** (`lib/pipeline/`)
   - `DownloadQueue` — singleton owning enqueue/cancel/retry/delete, concurrency, and startup `recover()` (closes interrupted attempts, rejects their candidates, deletes their scratch dirs, sweeps leftover torrents, resumes unfinished downloads).
   - `DownloadRunner` — one download: movie unit, or season pack then per-episode units; the attempt loop.

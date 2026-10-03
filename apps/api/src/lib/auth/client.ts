@@ -14,8 +14,9 @@ import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@findr/types/account"
 import { betterAuth } from "better-auth"
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api"
 import { admin } from "better-auth/plugins"
-import { database } from "../db/client"
-import { env } from "../env/Env"
+import { client, database } from "../db/client"
+import { ServerAddress } from "../server/ServerAddress"
+import { AuthSecret } from "./AuthSecret"
 
 // ---------- Initial admin ---------- //
 
@@ -94,11 +95,11 @@ export const auth = betterAuth({
   },
   hooks: { before: credentialsGuard },
   plugins: [admin()],
-  baseURL: env.BASE_URL,
-  secret: env.BETTER_AUTH_SECRET,
-  trustedOrigins: env.NODE_ENV === "development"
-    ? ["http://localhost:5173"]
-    : [],
+  baseURL: ServerAddress.baseUrl,
+  secret: AuthSecret.load(client.directory),
+  trustedOrigins: (request) => ServerAddress.trustedOrigins(request),
+  // BetterAuth skips its origin check under test; keep it on so tests see what production does
+  advanced: { disableOriginCheck: false },
 })
 
 /** A signed-in session, as `requireAuth` stores it on the request context. */

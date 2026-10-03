@@ -10,8 +10,9 @@ import { ReleaseTypeSchema, ResolutionSchema } from "./media";
  * the database but never sent back to the browser: the settings response
  * blanks them and reports only whether each one is set.
  *
- * Deployment concerns — the HTTP port, the database file, the auth secret,
- * binary paths — are not here; they come from the server's environment.
+ * Deployment concerns — the database file, binary paths, proxy trust — are
+ * not here; they come from the server's environment. The auth secret is
+ * neither: the server generates it and keeps it beside the database.
  */
 
 /** Absolute POSIX or Windows path, or empty while not yet configured. */
@@ -141,8 +142,23 @@ export const TorrentSettingsSchema = z.object({
   port: z.number().int().min(0).max(65535).default(6881),
 });
 
-/** Who may reach the server at all. */
+/** The port Findr serves the web app and API on unless the settings say otherwise. */
+export const DEFAULT_PORT = 34571;
+
+/** Who may reach the server at all, and where. */
 export const AccessSettingsSchema = z.object({
+  /**
+   * The HTTP port for the web app and API. Read when the server starts, so a
+   * change applies after a restart. The `PORT` environment variable overrides it.
+   */
+  port: z.number().int().min(1).max(65535).default(DEFAULT_PORT),
+  /**
+   * The address people open Findr at when it is not `localhost` or an IP —
+   * a hostname or a reverse proxy's URL. Empty means `http://localhost:<port>`.
+   * Sign-ins are only accepted from pages served at these addresses. Read
+   * when the server starts.
+   */
+  publicUrl: serviceUrl.default(""),
   /**
    * Accept requests from other machines. Off by default, so a fresh install
    * with its initial credentials is reachable only from the server itself.

@@ -35,6 +35,13 @@ export class DatabaseClient {
   private readonly ephemeral: boolean;
 
   /**
+   * The folder holding the database file, where other server-private state
+   * such as the auth secret is kept beside it. Null for an in-memory
+   * database, which has nowhere to keep anything.
+   */
+  public readonly directory: string | null;
+
+  /**
    * Opens (creating it if needed) the database file and prepares it for use.
    * The path defaults to `DATABASE_PATH`, then to `data/findr.db`. Relative paths
    * and the default both resolve against the repository root rather than the
@@ -51,7 +58,8 @@ export class DatabaseClient {
         : join(DatabaseClient.repositoryRoot(), path);
 
     // Make sure the containing folder exists; SQLite creates the file only
-    if (!this.ephemeral) mkdirSync(dirname(location), { recursive: true });
+    this.directory = this.ephemeral ? null : dirname(location);
+    if (this.directory) mkdirSync(this.directory, { recursive: true });
 
     // Open the database file, creating it on first run. `strict` lets queries
     // bind named parameters as `{ id }` rather than `{ $id }`, and raises on a

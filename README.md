@@ -76,11 +76,10 @@ Torrents are downloaded by Findr itself ([WebTorrent](https://webtorrent.io), bu
 
 ```bash
 mkdir -p ~/findr && cp dist/findr ~/findr/ && cd ~/findr
-cp /path/to/Findr/apps/api/.env.example .env   # then edit it
 ./findr
 ```
 
-The binary reads `.env` from the directory you run it in and creates `data/findr.db` there unless `DATABASE_PATH` says otherwise.
+No setup is needed: it serves on `http://localhost:34571` and keeps its state in `data/` in the directory you run it from - the database (`findr.db`) and the session signing secret it generates on first run (`auth.secret`). An optional `.env` there can move the database or override the port; see [Configuration](#configuration).
 
 ### From source
 
@@ -88,21 +87,15 @@ The binary reads `.env` from the directory you run it in and creates `data/findr
 git clone https://github.com/Benzo-Fury/Findr.git
 cd Findr
 bun install
-cp apps/api/.env.example apps/api/.env   # then edit it
 bun run build
 bun run start
 ```
 
 ## Configuration
 
-Only deployment settings go in `.env`; everything else, API keys included, is edited in the app. The minimum `.env`:
+Findr needs no `.env`. Everything, API keys and the port included, is edited in the app; an optional `.env` holds only deployment overrides (database location, `TRUST_PROXY`, the mkvmerge path).
 
-```env
-BASE_URL=http://localhost:3030
-BETTER_AUTH_SECRET=<openssl rand -hex 32>
-```
-
-Then, from the machine Findr runs on:
+From the machine Findr runs on:
 
 1. Sign in and set your own credentials - see [First sign-in](#first-sign-in).
 2. Open **Settings → Services** and enter your Prowlarr URL and API key and your TMDB API key (plus an Anthropic key if you want the wrong-title filter).
@@ -121,7 +114,7 @@ A fresh install has no sign-up page. On first start, when the database has no ac
 | --- | --- |
 | `admin` | `admin` |
 
-1. Open Findr **from the machine it runs on** (`http://localhost:3030`). Until you finish this step it refuses every request that doesn't come from the server itself.
+1. Open Findr **from the machine it runs on** (`http://localhost:34571`). Until you finish this step it refuses every request that doesn't come from the server itself.
 2. Sign in as `admin` / `admin`. You are taken straight to a form asking for your own email and a new password (at least 8 characters).
 3. Submit it. The default login stops working, any other session still using it is signed out, and the rest of the app unlocks.
 
@@ -172,7 +165,7 @@ Targets: `linux-x64`, `linux-arm64` (add `-musl` for Alpine), `darwin-x64`, `dar
 
 ```bash
 bun install
-bun run dev          # API on :3030 (hot reload) + Vite on :5173; open http://localhost:3030
+bun run dev          # API on :34571 (hot reload) + Vite on :5173; open http://localhost:34571
 ```
 
 A new development database starts with the default `admin` / `admin` login, which must be replaced on first sign-in - see [First sign-in](#first-sign-in).
