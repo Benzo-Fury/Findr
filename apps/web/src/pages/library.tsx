@@ -19,6 +19,7 @@ import { EASE_OUT, FADE, staggerDelay } from "@/lib/motion"
 import { useElementWidth, useIsPhone } from "@/lib/responsive"
 import { matchesAll, normalize, queryWords } from "@/lib/search"
 import { posterLayoutId, rememberPosterOrigin, useTitleRoute } from "@/lib/title-route"
+import { useUpdates } from "@/lib/updates"
 import type { MediaType } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { PosterCard } from "@/components/media/poster-card"
@@ -35,6 +36,7 @@ import { SearchField } from "@/components/ui/search-field"
 import { Segmented } from "@/components/ui/segmented"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StatusLabel } from "@/components/ui/status-label"
+import { UpdateBanner } from "@/components/updates/update-banner"
 
 /**
  * Everything Findr has fetched or tried to fetch. The whole library is held
@@ -105,6 +107,7 @@ export function LibraryPage() {
   const { entries, loading, error, active, refresh } = useLibrary()
   const { openTitle } = useTitleRoute()
   const navigate = useNavigate()
+  const updates = useUpdates()
 
   const [query, setQuery] = React.useState("")
   const [type, setType] = React.useState<TypeFilter>("all")
@@ -195,6 +198,7 @@ export function LibraryPage() {
         />
       </PageHeader>
 
+      <UpdateBanner updates={updates} dismissible className="mt-5" />
       <ActivityRibbon count={active.length} progress={active[0]?.activeAttempt?.progress} onOpen={() => navigate("/downloads")} />
 
       {/* Sticky toolbar: search, facets, sort */}

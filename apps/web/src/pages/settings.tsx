@@ -13,11 +13,13 @@ import {
 import { fetchSettings, updateSettings } from "@/lib/api"
 import { EASE_OUT, FADE, SPRING_SNAP } from "@/lib/motion"
 import { matchesAll, queryWords } from "@/lib/search"
+import { useUpdates } from "@/lib/updates"
 import { cn } from "@/lib/utils"
 import { Accounts } from "@/components/settings/accounts"
 import { FieldRow } from "@/components/settings/field-row"
 import { FIELDS, SECTIONS, WEIGHT_KEYS, type FieldDef, type SectionDef } from "@/components/settings/registry"
 import { SaveDock } from "@/components/settings/save-dock"
+import { UpdateStatusPanel } from "@/components/settings/update-status"
 import { VpnStatusPanel } from "@/components/settings/vpn-status"
 import { WeightBar } from "@/components/settings/weight-bar"
 import { Button } from "@/components/ui/button"
@@ -26,6 +28,7 @@ import { PageHeader } from "@/components/ui/page-header"
 import { SearchField } from "@/components/ui/search-field"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/components/ui/toast"
+import { UpdateBanner } from "@/components/updates/update-banner"
 
 /**
  * Everything tunable about how Findr searches, downloads and saves. Search
@@ -72,6 +75,7 @@ export function SettingsPage() {
   const [activeSection, setActiveSection] = React.useState<string>(SECTIONS[0]?.id ?? "")
   /** Bumped when VPN settings are saved, so the status panel re-reads the verdict. */
   const [vpnRevision, setVpnRevision] = React.useState(0)
+  const updates = useUpdates()
 
   const load = React.useCallback(() => {
     setLoadError(null)
@@ -186,6 +190,7 @@ export function SettingsPage() {
   return (
     <div className="mx-auto max-w-[1600px] px-4 md:px-8">
       <PageHeader title="Settings" />
+      <UpdateBanner updates={updates} className="mt-6" />
 
       {loadError ? (
         <EmptyState icon={WarningIcon} title="Settings did not load" description={loadError} action={<Button variant="ink" onClick={load}>Try again</Button>} />
@@ -267,6 +272,11 @@ export function SettingsPage() {
                           {section.id === "vpn" && words.length === 0 && (
                             <div className="pt-5">
                               <VpnStatusPanel revision={vpnRevision} />
+                            </div>
+                          )}
+                          {section.id === "updates" && words.length === 0 && (
+                            <div className="pt-5">
+                              <UpdateStatusPanel updates={updates} />
                             </div>
                           )}
                           <div className="divide-y divide-line">

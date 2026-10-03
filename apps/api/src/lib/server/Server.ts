@@ -34,14 +34,22 @@ import { WebAssets } from "./WebAssets"
  * ```
  */
 export class Server extends Hono {
+  private listener: ReturnType<typeof Bun.serve> | null = null
+
   /**
    * Binds the server via `Bun.serve` to the port from the settings (or the
    * `PORT` override). Must be called after `constructRoutes` has registered
    * all endpoints.
    */
   start() {
-    Bun.serve({ fetch: this.fetch, port: ServerAddress.port })
+    this.listener = Bun.serve({ fetch: this.fetch, port: ServerAddress.port })
     console.log(`[Server] Listening on ${ServerAddress.localUrl}`)
+  }
+
+  /** Stops listening and closes open connections, freeing the port for another process. */
+  async stop() {
+    await this.listener?.stop(true)
+    this.listener = null
   }
 
   /**

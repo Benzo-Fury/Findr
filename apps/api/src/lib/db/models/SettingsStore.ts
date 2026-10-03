@@ -78,6 +78,7 @@ export class SettingsStore extends Model {
       torrent: { ...current.torrent, ...patch.torrent },
       access: { ...current.access, ...patch.access },
       vpn: { ...current.vpn, ...patch.vpn },
+      updates: { ...current.updates, ...patch.updates },
     };
     const next = SettingsSchema.parse(merged);
 

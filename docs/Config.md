@@ -26,6 +26,8 @@ None is required, so Findr starts without a `.env`. Startup fails with a list of
 | `DATABASE_PATH` | No | `data/findr.db` | SQLite file (the folder is created on first run). Relative paths resolve from the repo root in development, and from the working directory for the compiled binary. |
 | `TRUST_PROXY` | No | `false` | Believe the first `X-Forwarded-For` address, for rate limiting and for the remote access check. Only enable behind a reverse proxy you control. |
 | `MKVMERGE_PATH` | No | `mkvmerge` | mkvmerge binary, from [MKVToolNix](https://mkvtoolnix.download/). An env var on purpose - an executable path should not be editable from a browser. |
+| `UPDATES_URL` | No | `https://api.github.com/repos/Benzo-Fury/Findr/releases/latest` | Where new versions are looked for: a GitHub API "latest release" URL. Point a fork at its own releases. See [Updates](#updates--updates). |
+| `FINDR_CONTAINER` | No | detected | Whether Findr runs in a container, which only notifies of updates. Unset means detect it from `/.dockerenv` (Docker) or `/run/.containerenv` (Podman); set `true` or `false` to decide. See [Updates](#updates--updates). |
 
 ---
 
@@ -179,6 +181,20 @@ The setting can only be turned on from the Settings page, which the initial `adm
 Sign-ins are accepted only from pages served at `http://localhost:<port>`, at `publicUrl`, or at an IP address (how other machines on your network reach Findr). A page at any other hostname is refused even if that name points at the server, which stops a website from rebinding its own domain to your machine and signing in as the initial `admin`. So set `publicUrl` whenever you open Findr by name. An `https` public URL also makes the session cookie `Secure`.
 
 Behind a reverse proxy on the same machine, every request reaches Findr from loopback. Findr treats such forwarded requests as remote unless `TRUST_PROXY` is set, in which case it judges the client named in `X-Forwarded-For`. So with a local proxy, either turn on `allowRemote` or set `TRUST_PROXY`; never set `TRUST_PROXY` without a proxy in front, or any client could claim to be local.
+
+### Updates - `updates`
+
+| Field | Default | Description |
+|---|---|---|
+| `autoInstall` | `false` | Install a new release by itself as soon as no downloads are queued or running, then restart. Standalone executables only; never in a container. |
+
+Findr asks GitHub for the latest release when it starts and every six hours, and the Library and Settings pages show a banner when it is newer than the running version. Every signed-in user sees the banner; only admins can act on it.
+
+- **Standalone executable** - admins can install from the banner. Findr downloads the release's executable for its platform (`findr-<target>`) into its own directory, checks it against the release's `SHA256SUMS.txt`, renames it over the running file and restarts into it. The database, the session secret and any `.env` live outside the executable, so settings, accounts, sessions and the library carry over. Installing is refused while downloads are queued or running, since a restart would interrupt them, and new downloads are held until the install finishes or fails. A failed install leaves the old executable in place, and is not retried automatically for that version.
+- **Source checkout** (`bun run start`) - only told about the release. Check out its tag, run `bun install` and `bun run build`, and restart.
+- **Container** (Docker, Podman) - only told about the release, even though it runs a compiled executable: a swapped executable would be lost the next time the container is recreated. Pull the new image and recreate the container, e.g. `docker compose pull && docker compose up -d`. Findr knows it is in a container from `/.dockerenv` or `/run/.containerenv`, or from `FINDR_CONTAINER`, which an image can set to declare itself.
+
+Restarting starts a detached copy of the new executable with the same arguments and working directory. Under systemd (detected by `INVOCATION_ID`) Findr instead exits with code 75 and leaves the restart to the unit, which needs `Restart=on-failure` or `Restart=always`. With another supervisor that restarts Findr whenever it exits, the detached copy and the supervisor's copy race for the port and the loser exits. The executable's directory must be writable by the user Findr runs as.
 
 ---
 

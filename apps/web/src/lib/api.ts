@@ -17,6 +17,7 @@ import type {
 } from "@findr/types/downloads"
 import type { CredentialsReset } from "@findr/types/account"
 import type { SettingsPatch, SettingsResponse } from "@findr/types/settings"
+import type { UpdateStatus } from "@findr/types/updates"
 import type { VpnStatus } from "@findr/types/vpn"
 import type { GenresResponse, TitleCard as RawTitleCard, TitleCardsResponse } from "@findr/types/tmdb"
 import { MAX_PAGE_SIZE } from "@findr/types/downloads"
@@ -52,6 +53,13 @@ const ERROR_MESSAGES: Record<string, string> = {
   email_unchanged: "Choose your own email address.",
   email_taken: "Another account already uses that email.",
   reset_not_required: "This account already has its own credentials.",
+  no_update: "Findr is already up to date.",
+  update_in_progress: "An update is already installing.",
+  source_install: "Findr is running from source. Update it with git.",
+  docker_install: "Findr is running in a container. Update it by pulling the new image.",
+  no_asset: "This release has no build for this platform.",
+  not_writable: "Findr cannot replace its own executable here.",
+  downloads_active: "Wait until no downloads are queued or running.",
 }
 
 /** Raised for any non-2xx response, carrying the API's error code when present. */
@@ -262,6 +270,25 @@ export function fetchVpnStatus(init?: RequestInit): Promise<VpnStatus> {
 /** Runs every VPN check now, looking the public IP up afresh. Admins only. */
 export function checkVpn(): Promise<VpnStatus> {
   return request("/api/vpn/check", { method: "POST" })
+}
+
+/* -------------------------------------------------------------------------- */
+/* Updates                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/** The running version, the latest release, and whether it can be installed. */
+export function fetchUpdateStatus(init?: RequestInit): Promise<UpdateStatus> {
+  return request("/api/updates", init)
+}
+
+/** Asks GitHub for the latest release now. Admins only. */
+export function checkForUpdates(): Promise<UpdateStatus> {
+  return request("/api/updates/check", { method: "POST" })
+}
+
+/** Starts installing the available update; Findr restarts when it is done. Admins only. */
+export function installUpdate(): Promise<UpdateStatus> {
+  return request("/api/updates/install", { method: "POST" })
 }
 
 /* -------------------------------------------------------------------------- */

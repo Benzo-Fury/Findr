@@ -6,6 +6,7 @@
  */
 
 import {
+  ArrowCircleUpIcon,
   FolderIcon,
   GaugeIcon,
   GlobeIcon,
@@ -64,6 +65,7 @@ export const SECTIONS: readonly SectionDef[] = [
   { id: "torrent", title: "Torrent client", description: "The built-in BitTorrent client. Forward the port on your router for better speeds.", icon: GaugeIcon, keywords: "bittorrent port network dht peers" },
   { id: "vpn", title: "VPN killswitch", description: "Torrents run only while your VPN is connected, and every torrent connection is bound to its address. The moment a check fails every connection is cut and downloads wait until the VPN is back. For a hard guarantee, also run Findr inside the VPN's network.", icon: ShieldCheckIcon, keywords: "vpn killswitch kill switch leak privacy wireguard openvpn tunnel ip" },
   { id: "access", title: "Access", description: "Where Findr is served, and who may reach it. It only answers requests from this machine unless remote access is on. Behind a reverse proxy on the same machine, also set TRUST_PROXY on the server.", icon: GlobeIcon, keywords: "remote network lan proxy security url address" },
+  { id: "updates", title: "Updates", description: "Findr looks for a new release on GitHub when it starts and every six hours. A standalone executable can install it and restart itself; settings, accounts and your library carry over.", icon: ArrowCircleUpIcon, keywords: "update upgrade version release github restart" },
   { id: "accounts", title: "Accounts", description: "Sign-up is disabled. Create an account here for anyone who should have access.", icon: UsersIcon, keywords: "users people password email admin role" },
 ]
 
@@ -142,6 +144,9 @@ export const FIELDS: readonly FieldDef[] = [
   field({ section: "access", key: "port", label: "Port", help: "Where the web app and API are served. Applies after Findr restarts.", keywords: "http web restart", control: { kind: "number", min: 1, max: 65535, step: 1 } }),
   field({ section: "access", key: "publicUrl", label: "Public URL", help: "Only needed when Findr is opened at a hostname, such as through a reverse proxy. localhost and IP addresses always work. Applies after Findr restarts.", keywords: "base url domain hostname reverse proxy https", control: { kind: "text", placeholder: "https://findr.example.com", mono: true } }),
   field({ section: "access", key: "allowRemote", label: "Allow access from other machines", help: "Off by default, so a fresh install is reachable only from the server itself.", keywords: "remote lan", control: { kind: "toggle" } }),
+
+  // Updates
+  field({ section: "updates", key: "autoInstall", label: "Install updates automatically", help: "Installs a new release once no downloads are queued or running, then restarts Findr. Standalone executables only; a container updates by pulling a new image.", keywords: "auto automatic upgrade", control: { kind: "toggle" } }),
 ]
 
 /** The scoring weights drawn in the proportion bar, in display order. */

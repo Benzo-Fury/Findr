@@ -54,6 +54,8 @@ export default class DownloadQueue extends SelfManagedSingleton {
   private waiting: string[] = [];
   /** Running downloads and the controllers that cancel them. */
   private readonly running = new Map<string, { controller: AbortController; done: Promise<void> }>();
+  /** Set while an update installs, so nothing starts that the restart would interrupt. */
+  private held = false;
 
   constructor() {
     super();
@@ -65,6 +67,22 @@ export default class DownloadQueue extends SelfManagedSingleton {
     this.downloader = downloader;
     this.attempts = new AttemptRunner(downloader);
     return this;
+  }
+
+  /** Whether any download is queued or running. */
+  public get busy(): boolean {
+    return this.running.size > 0 || this.waiting.length > 0;
+  }
+
+  /** Stops new downloads from starting. Queued ones keep their place. */
+  public hold(): void {
+    this.held = true;
+  }
+
+  /** Lets downloads start again after `hold`. */
+  public release(): void {
+    this.held = false;
+    this.drain();
   }
 
   /** Resolves once every running download has stopped. Used by tests and shutdown. */
@@ -243,9 +261,9 @@ export default class DownloadQueue extends SelfManagedSingleton {
     this.drain();
   }
 
-  /** Starts queued downloads until the concurrency limit is reached, unless the killswitch holds them back. */
+  /** Starts queued downloads until the concurrency limit is reached, unless the killswitch or an update holds them back. */
   private drain(): void {
-    if (!VpnGuard.getInstance().allowed) return;
+    if (this.held || !VpnGuard.getInstance().allowed) return;
     const limit = SettingsStore.load().queue.maxConcurrent;
 
     while (this.running.size < limit && this.waiting.length > 0) {

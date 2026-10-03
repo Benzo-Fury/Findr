@@ -202,6 +202,15 @@ export const VpnSettingsSchema = z.object({
   homeIps: addressList.default(""),
 });
 
+/** Findr's own updates, published as GitHub releases. Checked at startup and every few hours. */
+export const UpdatesSettingsSchema = z.object({
+  /**
+   * Install a new release as soon as no downloads are queued or running, then
+   * restart. Only a standalone executable can update itself.
+   */
+  autoInstall: z.boolean().default(false),
+});
+
 // ---------- Settings ---------- //
 
 /** Every section, keyed as stored. `prefault` runs each section's field defaults when absent. */
@@ -217,6 +226,7 @@ export const SettingsSchema = z.object({
   torrent: TorrentSettingsSchema.prefault({}),
   access: AccessSettingsSchema.prefault({}),
   vpn: VpnSettingsSchema.prefault({}),
+  updates: UpdatesSettingsSchema.prefault({}),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -231,6 +241,7 @@ export type ServicesSettings = Settings["services"];
 export type TorrentSettings = Settings["torrent"];
 export type AccessSettings = Settings["access"];
 export type VpnSettings = Settings["vpn"];
+export type UpdatesSettings = Settings["updates"];
 
 /**
  * One section's patch: every field optional and its default removed. A plain
@@ -265,6 +276,7 @@ export const SettingsPatchSchema = z
     torrent: patchOf(TorrentSettingsSchema),
     access: patchOf(AccessSettingsSchema),
     vpn: patchOf(VpnSettingsSchema),
+    updates: patchOf(UpdatesSettingsSchema),
   })
   .partial()
   .strict();

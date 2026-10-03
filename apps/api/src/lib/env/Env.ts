@@ -2,8 +2,8 @@
  * Application-level configuration read from the process environment.
  *
  * Only settings that belong to the deployment rather than the user live here:
- * the database location, proxy trust, the mkvmerge binary, and a port
- * override. None is required, so Findr starts with no `.env` at all.
+ * the database location, proxy trust, the mkvmerge binary, a port override,
+ * and where updates come from. None is required, so Findr starts with no `.env` at all.
  * Everything an admin tunes while running Findr — library paths, naming,
  * preferences, the watchdog, service URLs and API keys, the ports, remote
  * access — lives in the database settings store instead, so it can be
@@ -48,6 +48,19 @@ const EnvSchema = z.object({
    * session run arbitrary programs on the server.
    */
   MKVMERGE_PATH: z.string().default("mkvmerge"),
+
+  /** Where new versions are looked for: a GitHub API "latest release" URL. Lets a fork follow its own releases. */
+  UPDATES_URL: z.url().default("https://api.github.com/repos/Benzo-Fury/Findr/releases/latest"),
+
+  /**
+   * Whether Findr runs in a container, which is updated by pulling a new image
+   * rather than by Findr itself. Unset means detect it from the runtime's
+   * marker files; an image sets it to `true` to declare itself.
+   */
+  FINDR_CONTAINER: z
+    .enum(["true", "false", "1", "0", ""])
+    .optional()
+    .transform((value) => (value === undefined || value === "" ? undefined : value === "true" || value === "1")),
 });
 
 /** The validated environment, with defaults applied. */

@@ -98,7 +98,7 @@ bun run start
 
 ## Configuration
 
-Findr needs no `.env`. Everything, API keys and the port included, is edited in the app; an optional `.env` holds only deployment overrides (database location, `TRUST_PROXY`, the mkvmerge path).
+Findr needs no `.env`. Everything, API keys and the port included, is edited in the app; an optional `.env` holds only deployment overrides (database location, `TRUST_PROXY`, the mkvmerge path, the update feed, container detection).
 
 From the machine Findr runs on:
 
@@ -134,6 +134,10 @@ Findr downloads with a built-in BitTorrent client, so there is nothing to instal
 ### VPN killswitch
 
 To keep torrents on your VPN, open **Settings → VPN killswitch**, turn it on and enter your VPN's interface (`wg0`, `tun0`, or `utun*` on macOS). Every torrent connection is then bound to the VPN's address, internet routes are checked every time they change, and downloads pause whenever the VPN is down. Some traffic is outside Findr's control (DNS, Prowlarr), so for a hard guarantee also enforce a killswitch outside Findr. **[docs/VPN.md](docs/VPN.md)** explains every check, the gaps, and how to do that.
+
+### Updates
+
+Findr checks GitHub for a new release when it starts and every six hours, and shows a banner on the Library and Settings pages when one is out. A standalone executable updates itself from the banner and restarts, keeping everything in `data/`; turn on **Settings → Updates → Install updates automatically** to have it install new releases on its own whenever no downloads are queued or running. A source checkout is only told: check out the new tag, `bun install`, `bun run build`, and restart. So is a container (Docker, Podman): pull the new image and recreate it. Details, including running under systemd, are in [docs/Config.md](docs/Config.md#updates--updates).
 
 ## Usage
 
@@ -203,6 +207,7 @@ apps/
         downloader/     Downloader interface, built-in WebTorrent client, inspection, watchdog
         media/          Sterilizer (mkvmerge), LibrarySaver
         releases/       release title parser and scorer
+        updates/        Updater: checks GitHub releases, installs a new executable
         prowlarr/  tmdb/  auth/  env/  routing/  server/
   web/
     src/
