@@ -54,7 +54,24 @@ const credentialsGuard = createAuthMiddleware(async (ctx) => {
   if (session?.user.mustReset) {
     throw new APIError("FORBIDDEN", { message: "reset_required" })
   }
+
+  // An admin never changes their own role, so at least one admin always remains
+  if (session && changesOwnRole(ctx.path, ctx.body, session.user.id)) {
+    throw new APIError("BAD_REQUEST", { message: "own_role" })
+  }
 })
+
+/**
+ * Whether a request to `path` would change the role of `userId`, either
+ * through the admin plugin's `set-role` or a `role` inside `update-user`.
+ */
+function changesOwnRole(path: string, body: unknown, userId: string): boolean {
+  if (typeof body !== "object" || body === null) return false
+  const fields = body as { userId?: unknown; data?: unknown }
+  if (fields.userId !== userId) return false
+  if (path === "/admin/set-role") return true
+  return path === "/admin/update-user" && typeof fields.data === "object" && fields.data !== null && "role" in fields.data
+}
 
 // ---------- BetterAuth ---------- //
 
