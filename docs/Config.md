@@ -43,6 +43,8 @@ Sign-up is disabled. When the database has no accounts, Findr creates one admin 
 
 Because remote access is off by default (see [Access](#access--access)), the first sign-in can only happen from the machine Findr runs on. Further accounts are created on the Settings page.
 
+On a headless VPS with no local browser, reach that first sign-in by forwarding the port over SSH instead of opening Findr to the network: `ssh -L 34571:localhost:34571 user@your-vps`, then open `http://localhost:34571` in a browser on your own machine. The request arrives at Findr from the VPS's own loopback interface, so it is accepted under the default settings - no need to touch `allowRemote` or `TRUST_PROXY` just to get in the door. Once signed in, turn on `allowRemote` (and set `publicUrl` if you'll reach it by name) if you actually want remote access going forward; otherwise keep using the tunnel.
+
 ---
 
 ## Settings
