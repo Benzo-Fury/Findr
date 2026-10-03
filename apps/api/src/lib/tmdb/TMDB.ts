@@ -111,6 +111,12 @@ interface MapOptions {
   mediaType?: TMDBMediaType;
   /** Drops entries with no artwork — right for grids, wrong for search. */
   requirePoster?: boolean;
+  /**
+   * Drops titles that have not come out yet, or have no date at all. Curated
+   * lists and genre browsing hide them since there is nothing to download;
+   * search keeps them so a title can still be looked up by name.
+   */
+  releasedOnly?: boolean;
 }
 
 const BASE_URL = "https://api.themoviedb.org/3";
@@ -165,7 +171,7 @@ export default class TMDB extends SelfManagedSingleton {
         page: data.page ?? page,
         total_pages: data.total_pages ?? 1,
         total_results: data.total_results ?? 0,
-        results: this.toPosterItems(data.results, { mediaType: source.mediaType }),
+        results: this.toPosterItems(data.results, { mediaType: source.mediaType, releasedOnly: true }),
       };
     }
 
@@ -185,7 +191,7 @@ export default class TMDB extends SelfManagedSingleton {
     );
 
     const results = pages
-      .flatMap(({ mediaType, data }) => this.toPosterItems(data.results, { mediaType }))
+      .flatMap(({ mediaType, data }) => this.toPosterItems(data.results, { mediaType, releasedOnly: true }))
       .sort((a, b) => b.vote_average - a.vote_average);
 
     return {
@@ -270,7 +276,7 @@ export default class TMDB extends SelfManagedSingleton {
         if (genre !== undefined) params.with_genres = String(genre);
 
         const data = await this.request<RawPage>(`/discover/${mediaType}`, params);
-        return { items: this.toPosterItems(data.results, { mediaType }), data };
+        return { items: this.toPosterItems(data.results, { mediaType, releasedOnly: true }), data };
       }),
     );
 
@@ -510,7 +516,8 @@ export default class TMDB extends SelfManagedSingleton {
 
   /** Maps TMDB list entries to poster items, dropping anything unrenderable. */
   private toPosterItems(items: RawItem[] = [], options: MapOptions = {}): PosterItem[] {
-    const { mediaType, requirePoster = true } = options;
+    const { mediaType, requirePoster = true, releasedOnly = false } = options;
+    const today = new Date().toISOString().slice(0, 10);
 
     return items.reduce<PosterItem[]>((acc, raw) => {
       const type = mediaType ?? (raw.media_type as TMDBMediaType | undefined);
@@ -521,6 +528,7 @@ export default class TMDB extends SelfManagedSingleton {
       if (requirePoster && !raw.poster_path) return acc;
 
       const date = type === "movie" ? raw.release_date : raw.first_air_date;
+      if (releasedOnly && (!date || date > today)) return acc;
 
       acc.push({
         id: raw.id,

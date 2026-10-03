@@ -120,11 +120,17 @@ function readRecommendations(raw: Raw): PosterItem[] {
 }
 
 /**
- * Warns when a movie is still only in cinemas, or when anything came out in
+ * Warns when a title has not come out yet, when a movie is still only in cinemas, or when anything came out in
  * the last month, since good releases may not exist yet.
  */
 function readAvailability(raw: Raw, mediaType: MediaType, date: string): string | null {
   const now = Date.now()
+
+  // Nothing can exist before the first release or air date, and TMDB leaves the date out for unscheduled titles
+  if (!date || new Date(date).getTime() > now) {
+    const what = mediaType === "movie" ? "Not released yet" : "Not aired yet"
+    return `${what}. Releases will be scarce or missing entirely.`
+  }
 
   if (mediaType === "movie") {
     const countries = list<{ iso_3166_1: string; release_dates: { type: number; release_date: string }[] }>(nested(raw.release_dates, "results"))
