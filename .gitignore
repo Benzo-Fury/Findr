@@ -32,3 +32,9 @@ docker/config/
 tsconfig.tsbuildinfo
 # Local, uncommitted notes
 *.local.md
+
+# Claude Code
+.agents/
+.claude/
+brag-output/
+skills-lock.json
