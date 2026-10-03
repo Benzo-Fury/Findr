@@ -38,3 +38,6 @@ tsconfig.tsbuildinfo
 .claude/
 brag-output/
 skills-lock.json
+
+# IDE
+.vscode/
