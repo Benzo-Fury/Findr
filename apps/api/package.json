@@ -2,7 +2,7 @@
   "name": "@findr/api",
   "module": "esnext",
   "scripts": {
-    "dev": "bun run --hot src/index.ts",
+    "dev": "bun run --watch src/index.ts",
     "build": "bun run scripts/build.ts",
     "start": "NODE_ENV=production bun run ../../dist/index.js"
   },
