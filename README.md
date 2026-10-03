@@ -72,12 +72,17 @@ Torrents are downloaded by Findr itself ([WebTorrent](https://webtorrent.io), bu
 
 ### From a binary
 
-`bun run build` produces `dist/findr`, a single executable with the web UI embedded, for the machine you build on. To build for another machine, pass its target - see [Building](#building).
+Every [release](https://github.com/Benzo-Fury/Findr/releases) ships a single executable with the web UI embedded for `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64` and `windows-x64`, plus `SHA256SUMS.txt`. Download the one for your machine:
 
 ```bash
-mkdir -p ~/findr && cp dist/findr ~/findr/ && cd ~/findr
+mkdir -p ~/findr && cd ~/findr
+mv ~/Downloads/findr-linux-x64 ./findr && chmod +x findr
 ./findr
 ```
+
+On macOS, clear the download quarantine first: `xattr -d com.apple.quarantine findr`.
+
+To build one yourself, `bun run build` produces `dist/findr` for the machine you build on; pass a target to build for another - see [Building](#building).
 
 No setup is needed: it serves on `http://localhost:34571` and keeps its state in `data/` in the directory you run it from - the database (`findr.db`) and the session signing secret it generates on first run (`auth.secret`). An optional `.env` there can move the database or override the port; see [Configuration](#configuration).
 
