@@ -18,6 +18,7 @@ import { Accounts } from "@/components/settings/accounts"
 import { FieldRow } from "@/components/settings/field-row"
 import { FIELDS, SECTIONS, WEIGHT_KEYS, type FieldDef, type SectionDef } from "@/components/settings/registry"
 import { SaveDock } from "@/components/settings/save-dock"
+import { VpnStatusPanel } from "@/components/settings/vpn-status"
 import { WeightBar } from "@/components/settings/weight-bar"
 import { Button } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty-state"
@@ -69,6 +70,8 @@ export function SettingsPage() {
   const [query, setQuery] = React.useState("")
   const [focusedWeight, setFocusedWeight] = React.useState<string | null>(null)
   const [activeSection, setActiveSection] = React.useState<string>(SECTIONS[0]?.id ?? "")
+  /** Bumped when VPN settings are saved, so the status panel re-reads the verdict. */
+  const [vpnRevision, setVpnRevision] = React.useState(0)
 
   const load = React.useCallback(() => {
     setLoadError(null)
@@ -115,6 +118,7 @@ export function SettingsPage() {
       const response = await updateSettings(patch)
       setServer(response)
       setDraft(response.settings)
+      if (dirty.includes("vpn")) setVpnRevision((revision) => revision + 1)
       toast({ title: "Settings saved", description: dirty.includes("torrent") ? "The torrent port applies after Findr restarts." : undefined })
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not save")
@@ -258,6 +262,11 @@ export function SettingsPage() {
                                   value: draft.scoring[key],
                                 }))}
                               />
+                            </div>
+                          )}
+                          {section.id === "vpn" && words.length === 0 && (
+                            <div className="pt-5">
+                              <VpnStatusPanel revision={vpnRevision} />
                             </div>
                           )}
                           <div className="divide-y divide-line">

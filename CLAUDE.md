@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Development
-bun run dev              # API (port 3030, hot reload) and Vite (port 5173) together
+bun run dev              # API (port 3030, restarts on change) and Vite (port 5173) together
 bun run dev:api          # API only; proxies non-API requests to Vite
 bun run dev:web          # Vite only
 
@@ -60,9 +60,11 @@ Bun monorepo: `apps/api` (Hono on Bun), `apps/web` (React 19 + react-router-dom 
   - `DownloadQueue` — singleton owning enqueue/cancel/retry/delete, concurrency, and startup `recover()` (closes interrupted attempts, rejects their candidates, deletes their scratch dirs, sweeps leftover torrents, resumes unfinished downloads).
   - `DownloadRunner` — one download: movie unit, or season pack then per-episode units; the attempt loop.
   - `CandidateSearch` — Prowlarr → `ReleaseParser` → `ReleaseScorer` → `RelevanceFilter` → persisted candidates.
-  - `AttemptRunner` — one candidate: `TorrentSession` → `Sterilizer` → `LibrarySaver`, always cleaning up.
+  - `AttemptRunner` — one candidate: `TorrentSession` → `Sterilizer` → `LibrarySaver`, always cleaning up (each cleanup step time-limited).
+  - `Heartbeat` — fails an attempt whose current step shows no sign of life (torrent poll answering, mkvmerge progress, bytes copied) for `watchdog.stuckTimeoutMinutes`, and races the work so even a never-settling promise is escaped. Slow torrents still beat; judging them is `Watchdog`'s job.
   - `errors.ts` — `AttemptFailure` (reject this release, try the next), `FatalDownloadError` (environment broken; don't blame the release), `CancelledError`.
 - **Downloader** (`lib/downloader/`) — `Downloader` interface with `WebTorrentDownloader` (in-process client, uTP off, block requests gated until files are chosen, DHT nodes kept in `app_state`); `FileInspector` (safety and file selection), `Watchdog` (metadata/stall/speed), `TorrentSession`, `AttemptWorkspace` (`<downloads>/<downloadId>/<candidateId>/`).
+- **VPN killswitch** (`lib/vpn/`, documented in `docs/VPN.md`) — optional (`vpn` settings section), failing closed. `VpnSockets` wraps `net.connect`/`createServer` and `dgram.createSocket` process-wide so every torrent socket binds to the address `VpnGuard.binding()` returns, re-resolved per socket; HTTP trackers, web seeds and `xs` fetches are turned off because `fetch` can't be bound. `VpnGuard` checks the interface, that IPv4/IPv6 routes go through it (UDP-connect probes, re-run on `route -n monitor` / `ip monitor` events and every second) and optionally the public IP. When it trips, `DownloadQueue` calls `Downloader.disconnect()` (destroys the WebTorrent client); transfers then throw `SuspendedError`, which releases the candidate and leaves the download queued until the VPN is back. The client is also rebuilt when the killswitch turns on or the VPN's address changes.
 - **Media** (`lib/media/`) — `Sterilizer` (mkvmerge, video + audio only) and `LibrarySaver` (naming templates, atomic temp-name-then-rename placement).
 - **Prowlarr** (`lib/prowlarr/Prowlarr.ts`) — search, plus link handling: API keys are stripped into `prowlarr:` references before storage and re-attached only when fetching from the configured Prowlarr URL.
 - **TMDB** (`lib/tmdb/`) — cached client behind the `/api/tmdb/*` proxy routes (curated lists and the discover feed, search, details, `genres`, genre `browse`, and batched `cards` that let the web app resolve a whole library cheaply), plus `titleFacts` / `seasonEpisodes` for the pipeline.

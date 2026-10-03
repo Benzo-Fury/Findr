@@ -32,7 +32,7 @@ import type { ScoreTarget } from "../releases/ReleaseScorer";
 import TMDB, { type SeasonEpisode, type TitleFacts } from "../tmdb/TMDB";
 import type { AttemptResult, AttemptRunner } from "./AttemptRunner";
 import { CandidateSearch } from "./CandidateSearch";
-import { AttemptFailure, CancelledError, FatalDownloadError, throwIfCancelled } from "./errors";
+import { AttemptFailure, CancelledError, FatalDownloadError, SuspendedError, throwIfCancelled } from "./errors";
 import type { RelevanceContext } from "./RelevanceFilter";
 
 // ---------- Types ---------- //
@@ -256,9 +256,9 @@ export class DownloadRunner {
 
   /**
    * Runs one attempt and records how it ended. A bad release is rejected and
-   * reported back to the loop; cancellation and environment failures put the
-   * candidate back untouched and propagate, since no other candidate would
-   * fare better.
+   * reported back to the loop; cancellation, the killswitch and environment
+   * failures put the candidate back untouched and propagate, since no other
+   * candidate would fare better.
    */
   private async attempt(
     context: DownloadContext,
@@ -306,6 +306,10 @@ export class DownloadRunner {
       candidate.release();
       if (error instanceof CancelledError) {
         attempt.finish("cancelled");
+        throw error;
+      }
+      if (error instanceof SuspendedError) {
+        attempt.finish("interrupted", `Paused by the VPN killswitch: ${error.message}`);
         throw error;
       }
       attempt.finish("interrupted", this.message(error));
@@ -371,6 +375,15 @@ export class DownloadRunner {
 
   /** Records how a download that stopped early ended. */
   private recordFailure(error: unknown): void {
+    // Paused by the killswitch: unfinished, so the queue resumes it later
+    if (error instanceof SuspendedError) {
+      for (const episode of Episode.forDownload(this.download.id)) {
+        if (episode.status === "searching" || episode.status === "downloading") episode.setStatus("pending");
+      }
+      this.download.setStatus("queued", DownloadRunner.pausedMessage(error.message));
+      return;
+    }
+
     // Cancelled: episodes caught mid-flight are cancelled with it
     if (error instanceof CancelledError) {
       for (const episode of Episode.forDownload(this.download.id)) {
@@ -391,6 +404,11 @@ export class DownloadRunner {
     const numbers = (status: string) =>
       episodes.filter((episode) => episode.status === status).map((episode) => episode.episodeNumber);
     return { completed: numbers("completed"), failed: numbers("failed"), unaired: numbers("unaired") };
+  }
+
+  /** The status message of a download waiting for the VPN. */
+  public static pausedMessage(reason: string): string {
+    return `Paused until the VPN is back: ${reason}`;
   }
 
   private unitKey(unit: WorkUnit): string {

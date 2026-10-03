@@ -1,3 +1,4 @@
+import { SettingsPatchSchema } from "@findr/types/settings";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { migrateAuth } from "../../auth/client";
 import { ReleaseParser } from "../../releases/ReleaseParser";
@@ -216,6 +217,14 @@ describe("SettingsStore", () => {
     expect(settings.watchdog.stallTimeoutMinutes).toBe(3);
     expect(settings.watchdog.minSpeedKBps).toBe(0);
     expect(settings.watchdog.metadataTimeoutMinutes).toBe(5);
+  });
+
+  test("keeps fields a validated patch leaves out", () => {
+    SettingsStore.update(SettingsPatchSchema.parse({ services: { tmdbApiKey: "tmdb" } }));
+    SettingsStore.update(SettingsPatchSchema.parse({ services: { prowlarrApiKey: "prowlarr" } }));
+    const services = SettingsStore.load().services;
+    expect(services.tmdbApiKey).toBe("tmdb");
+    expect(services.prowlarrApiKey).toBe("prowlarr");
   });
 
   test("rejects an invalid patch without writing anything", () => {

@@ -92,6 +92,7 @@ describe("Watchdog", () => {
     minSpeedKBps: 50,
     speedWindowMinutes: 10,
     pollIntervalSeconds: 5,
+    stuckTimeoutMinutes: 10,
   };
 
   test("trips when metadata never arrives", () => {
@@ -186,6 +187,8 @@ class FakeDownloader implements Downloader {
   public async managed(): Promise<Map<string, string>> {
     return new Map();
   }
+
+  public async disconnect(): Promise<void> {}
 }
 
 describe("TorrentSession", () => {
@@ -195,6 +198,7 @@ describe("TorrentSession", () => {
     minSpeedKBps: 0,
     speedWindowMinutes: 1,
     pollIntervalSeconds: 0.001,
+    stuckTimeoutMinutes: 1,
   };
 
   /** Runs a session against a fake downloader with no-op callbacks. */

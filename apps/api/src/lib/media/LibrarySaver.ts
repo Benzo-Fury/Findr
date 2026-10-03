@@ -9,11 +9,14 @@
  * file, and a failure part-way leaves nothing behind but a cleaned-up temp.
  */
 
-import { copyFile, mkdir, rename, rm } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type { MediaType } from "@findr/types/media";
 import type { NamingSettings, PathsSettings } from "@findr/types/settings";
-import { FatalDownloadError } from "../pipeline/errors";
+import { CancelledError, FatalDownloadError, throwIfCancelled } from "../pipeline/errors";
 
 // ---------- Types ---------- //
 
@@ -40,10 +43,21 @@ export interface SaveRequest {
   items: SaveItem[];
 }
 
+/** Optional hooks for following and stopping a save. */
+export interface SaveOptions {
+  /** Stops a copy part-way; nothing reaches the library once it fires. */
+  signal?: AbortSignal;
+  /** Called with 0–1 across every item as bytes land. */
+  onProgress?: (progress: number) => void;
+}
+
 /** Characters illegal on macOS, Linux or Windows filesystems. */
 const ILLEGAL_CHARACTERS = /[<>:"/\\|?*\u0000-\u001f]+/g;
 
 const EXTENSION = ".mkv";
+
+/** Read and write in large chunks; library files run to gigabytes. */
+const COPY_CHUNK_BYTES = 1024 * 1024;
 
 // ---------- Saver ---------- //
 
@@ -54,15 +68,25 @@ export class LibrarySaver {
   ) {}
 
   /** Saves every item, returning the final library paths in the same order. */
-  public async save(request: SaveRequest): Promise<string[]> {
+  public async save(request: SaveRequest, options: SaveOptions = {}): Promise<string[]> {
     const directory = this.destinationDirectory(request);
     await mkdir(directory, { recursive: true });
 
+    // Weigh the items so progress runs across all of them
+    const sizes = await Promise.all(request.items.map(async (item) => (await stat(item.source)).size));
+    const total = Math.max(sizes.reduce((sum, size) => sum + size, 0), 1);
+    let placed = 0;
+    const report = (bytes: number) => {
+      placed += bytes;
+      options.onProgress?.(placed / total);
+    };
+
     // Place each file atomically; stop at the first failure
     const saved: string[] = [];
-    for (const item of request.items) {
+    for (const [index, item] of request.items.entries()) {
       const target = join(directory, this.fileName(request, item) + EXTENSION);
-      await this.placeAtomically(item.source, target);
+      const moved = await this.placeAtomically(item.source, target, options.signal, report);
+      if (moved) report(sizes[index] ?? 0);
       saved.push(target);
     }
     return saved;
@@ -112,24 +136,61 @@ export class LibrarySaver {
   /**
    * Moves `source` to `target` without ever exposing a partial file at
    * `target`. A same-filesystem move is a metadata-only rename; across
-   * filesystems the bytes are copied to the temp name first.
+   * filesystems the bytes are copied to the temp name first, reporting each
+   * chunk to `onBytes`. Returns true for a rename, false for a copy.
    */
-  private async placeAtomically(source: string, target: string): Promise<void> {
+  private async placeAtomically(
+    source: string,
+    target: string,
+    signal: AbortSignal | undefined,
+    onBytes: (bytes: number) => void,
+  ): Promise<boolean> {
     const temporary = join(target, "..", `.${Bun.randomUUIDv7()}.findr-partial`);
 
     try {
       // Stage the file under the temp name in the destination directory
+      let moved = true;
       try {
         await rename(source, temporary);
       } catch (error) {
         if (!this.isCrossDevice(error)) throw error;
-        await copyFile(source, temporary);
+        await this.copy(source, temporary, signal, onBytes);
+        moved = false;
       }
 
-      // Swap it into place in one atomic step
+      // Swap it into place in one atomic step, unless the save was stopped meanwhile
+      if (signal) throwIfCancelled(signal);
       await rename(temporary, target);
+      return moved;
     } catch (error) {
       await rm(temporary, { force: true });
+      throw error;
+    }
+  }
+
+  /** Copies a file chunk by chunk, so a long copy can be followed and stopped. */
+  private async copy(
+    source: string,
+    destination: string,
+    signal: AbortSignal | undefined,
+    onBytes: (bytes: number) => void,
+  ): Promise<void> {
+    const counter = new Transform({
+      transform(chunk: Buffer, _encoding, done) {
+        onBytes(chunk.length);
+        done(null, chunk);
+      },
+    });
+
+    try {
+      await pipeline(
+        createReadStream(source, { highWaterMark: COPY_CHUNK_BYTES }),
+        counter,
+        createWriteStream(destination, { highWaterMark: COPY_CHUNK_BYTES }),
+        { signal },
+      );
+    } catch (error) {
+      if (signal?.aborted) throw new CancelledError();
       throw error;
     }
   }

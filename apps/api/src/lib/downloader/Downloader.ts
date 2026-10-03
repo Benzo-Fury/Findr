@@ -74,4 +74,13 @@ export interface Downloader {
 
   /** Handles of every torrent this app added that the client still holds, keyed by tag — swept at startup. */
   managed(): Promise<Map<string, string>>;
+
+  /**
+   * Cuts every network connection at once, for the VPN killswitch. Torrents
+   * still transferring are destroyed with their data, and any later call on
+   * one throws `SuspendedError` with the reason. Stopped torrents keep their
+   * files, so an attempt already processing them can finish. Torrents added
+   * afterwards start a fresh client.
+   */
+  disconnect(reason: string): Promise<void>;
 }

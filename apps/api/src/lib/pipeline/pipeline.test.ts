@@ -21,7 +21,8 @@ import { AttemptRunner } from "./AttemptRunner";
 import DownloadQueue from "./DownloadQueue";
 import { DownloadRunner } from "./DownloadRunner";
 import { ReleaseParser } from "../releases/ReleaseParser";
-import { FatalDownloadError } from "./errors";
+import { FatalDownloadError, SuspendedError } from "./errors";
+import VpnGuard from "../vpn/VpnGuard";
 
 const hasTools = Bun.which("mkvmerge") !== null && Bun.which("ffmpeg") !== null;
 const GB = 1024 ** 3;
@@ -104,16 +105,23 @@ function mockNetwork(): void {
 /**
  * Serves the file lists in `TORRENTS` and "downloads" by copying the fixture
  * into place for each selected video. `hang` keeps transfers going forever;
- * `unavailable` makes every add fail as if the client were down.
+ * `freeze` makes status polls never return, like a wedged client;
+ * `unavailable` makes every add fail as if the client were down. After
+ * `disconnect()`, polling a torrent throws as the real client does, until the
+ * next add starts a fresh client.
  */
 class FakeDownloader implements Downloader {
   public hang = false;
+  public freeze = false;
   public unavailable = false;
+  public suspended: string | null = null;
   public readonly live = new Map<string, { hash: string; directory: string; tag: string; started: boolean }>();
   private next = 0;
 
   public async add(input: TorrentInput, options: AddOptions): Promise<string> {
     if (this.unavailable) throw new FatalDownloadError("The torrent client is unavailable");
+    VpnGuard.getInstance().assertAllowed();
+    this.suspended = null;
     const hash = input.kind === "magnet" ? (input.uri.split("btih:")[1] ?? "") : "file";
     const handle = `h${this.next++}`;
     this.live.set(handle, { hash, directory: options.directory, tag: options.tag, started: false });
@@ -121,6 +129,7 @@ class FakeDownloader implements Downloader {
   }
 
   public async files(handle: string): Promise<TorrentFile[] | null> {
+    if (this.suspended) throw new SuspendedError(this.suspended);
     const torrent = this.live.get(handle);
     return (TORRENTS[torrent?.hash ?? ""] ?? []).map(([path, sizeBytes], index) => ({ index, path, sizeBytes }));
   }
@@ -141,7 +150,9 @@ class FakeDownloader implements Downloader {
   }
 
   public async status(handle: string): Promise<TorrentStatus | null> {
+    if (this.suspended) throw new SuspendedError(this.suspended);
     if (!this.live.has(handle)) return null;
+    if (this.freeze) return new Promise(() => {});
     return this.hang
       ? { state: "downloading", downloadedBytes: Date.now(), totalBytes: GB, progress: 0.5, speedBytesPerSecond: 1, peers: 1 }
       : { state: "complete", downloadedBytes: GB, totalBytes: GB, progress: 1, speedBytesPerSecond: 0, peers: 1 };
@@ -155,6 +166,10 @@ class FakeDownloader implements Downloader {
 
   public async managed(): Promise<Map<string, string>> {
     return new Map([...this.live.entries()].map(([handle, torrent]) => [torrent.tag, handle]));
+  }
+
+  public async disconnect(reason: string): Promise<void> {
+    this.suspended = reason;
   }
 }
 
@@ -206,6 +221,15 @@ async function runDownload(
   const reloaded = Download.find(download.id);
   if (!reloaded) throw new Error("download vanished");
   return reloaded;
+}
+
+/** Resolves once `condition` holds, polling briefly; fails the test after `timeoutMs`. */
+async function waitFor(condition: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for a condition");
+    await Bun.sleep(20);
+  }
 }
 
 /** Candidate statuses by title, for compact assertions. */
@@ -284,6 +308,35 @@ describe.skipIf(!hasTools)("download pipeline", () => {
     expect(await readdir(join(root, "downloads"))).toEqual([]);
   });
 
+  test("a client call that never returns is caught as stuck, and the release rejected", async () => {
+    const downloader = new FakeDownloader();
+    downloader.freeze = true;
+    SettingsStore.update({ watchdog: { stuckTimeoutMinutes: 0.005 } });
+
+    const download = await runDownload(downloader, 603, "movie", null);
+
+    // The malicious release fails inspection; the clean one hangs and is caught
+    expect(download.status).toBe("failed");
+    expect(candidateStatuses(download.id)["The.Matrix.1999.1080p.WEBRip.x264-GRP"]).toStartWith(
+      "rejected: Stuck: nothing happened while downloading",
+    );
+    expect(downloader.live.size).toBe(0);
+    expect(await readdir(join(root, "downloads"))).toEqual([]);
+  });
+
+  test("cancelling escapes a client call that never returns", async () => {
+    const downloader = new FakeDownloader();
+    downloader.freeze = true;
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 200);
+
+    const download = await runDownload(downloader, 603, "movie", null, controller.signal);
+
+    expect(download.status).toBe("cancelled");
+    expect(Attempt.forDownload(download.id)[0]?.toRecord().outcome).toBe("cancelled");
+    expect(downloader.live.size).toBe(0);
+  });
+
   test("recovery closes interrupted attempts, removes their files and torrents, and resumes", async () => {
     // Simulate a crash: an open attempt, its scratch dir, and its torrent
     const downloader = new FakeDownloader();
@@ -323,5 +376,50 @@ describe.skipIf(!hasTools)("download pipeline", () => {
     expect(resumed?.status).toBe("completed");
     expect(candidateStatuses(download.id)["The.Matrix.1999.1080p.WEBRip.x264-GRP"]).toBe("succeeded");
     expect(await readdir(join(root, "downloads"))).toEqual([]);
+  });
+
+  test("the killswitch pauses a transfer without blaming the release, and resumes it when the VPN is back", async () => {
+    // A VPN tunnel the test can pull
+    let tunnel = true;
+    const vpn = VpnGuard.getInstance().useProbes({
+      interfaces: () =>
+        tunnel
+          ? { wg0: [{ address: "10.2.0.2", internal: false, family: "IPv4", netmask: "255.255.255.0", mac: "00:00:00:00:00:00", cidr: "10.2.0.2/24" }] }
+          : {},
+      // All internet traffic is routed through the tunnel while it is up
+      route: async (destination) => (tunnel && !destination.includes(":") ? "10.2.0.2" : null),
+      watchRoutes: () => null,
+      publicIp: async () => "203.0.113.9",
+    });
+    SettingsStore.update({ vpn: { enabled: true, interfaceName: "wg0" } });
+    await vpn.check();
+
+    // Start a download whose transfer never finishes on its own
+    const downloader = new FakeDownloader();
+    downloader.hang = true;
+    const queue = DownloadQueue.getInstance().useDownloader(downloader);
+    const download = Download.create(Title.findOrCreate(603, "movie"), null, null);
+    await queue.recover();
+    await waitFor(() => Attempt.activeFor(download.id)?.phase === "downloading");
+
+    // The tunnel drops: the transfer stops and the download waits, its release untouched
+    tunnel = false;
+    await vpn.check();
+    await queue.idle();
+    const paused = Download.find(download.id);
+    expect(paused?.status).toBe("queued");
+    expect(paused?.toSummary().statusMessage).toBe("Paused until the VPN is back: The VPN interface wg0 is not up");
+    expect(candidateStatuses(download.id)["The.Matrix.1999.1080p.WEBRip.x264-GRP"]).toBe("pending");
+    expect(Attempt.forDownload(download.id).map((attempt) => attempt.toRecord().outcome)).toContain("interrupted");
+    expect(await readdir(join(root, "downloads"))).toEqual([]);
+
+    // The tunnel returns: the same release is tried again and saved
+    downloader.hang = false;
+    tunnel = true;
+    await vpn.check();
+    await waitFor(() => Download.find(download.id)?.isFinished === true);
+    await queue.idle();
+    expect(Download.find(download.id)?.status).toBe("completed");
+    expect(candidateStatuses(download.id)["The.Matrix.1999.1080p.WEBRip.x264-GRP"]).toBe("succeeded");
   });
 });

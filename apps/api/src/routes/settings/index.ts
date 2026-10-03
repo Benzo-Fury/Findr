@@ -5,10 +5,14 @@
  *
  * API keys never leave the server: both methods answer with every secret
  * blanked, and say only which of them are set.
+ *
+ * A change to the VPN killswitch is checked straight away, so turning it on
+ * stops torrents at once when the VPN is not up.
  */
 
 import { SECRET_FIELDS, SettingsPatchSchema, type Settings, type SettingsResponse } from "@findr/types/settings"
 import { SettingsStore } from "../../lib/db/models/SettingsStore"
+import VpnGuard from "../../lib/vpn/VpnGuard"
 import { factory } from "../../lib/routing/factory"
 import { bodyOf } from "../../lib/routing/input"
 
@@ -33,6 +37,11 @@ export default factory({
 
   PATCH: {
     body: SettingsPatchSchema,
-    handler: (c) => c.json(response(SettingsStore.update(bodyOf(c, SettingsPatchSchema)))),
+    handler: async (c) => {
+      const patch = bodyOf(c, SettingsPatchSchema)
+      const settings = SettingsStore.update(patch)
+      if (patch.vpn) await VpnGuard.getInstance().check({ lookupIp: true })
+      return c.json(response(settings))
+    },
   },
 })

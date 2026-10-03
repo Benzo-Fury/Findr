@@ -115,6 +115,9 @@ interface MapOptions {
 
 const BASE_URL = "https://api.themoviedb.org/3";
 
+/** Longest a single TMDB request may take, so a lookup can never hang a download. */
+const REQUEST_TIMEOUT_MS = 20_000;
+
 /** How long the featured and discover-feed payloads stay warm. */
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
@@ -446,7 +449,7 @@ export default class TMDB extends SelfManagedSingleton {
     const url = new URL(`${BASE_URL}${path}`);
     url.search = new URLSearchParams({ ...params, api_key: key }).toString();
 
-    const res = await fetch(url).catch((error) => {
+    const res = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }).catch((error) => {
       throw new TMDBError(`TMDB request failed: ${error}`);
     });
 

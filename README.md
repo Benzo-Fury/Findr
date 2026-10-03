@@ -1,12 +1,12 @@
 <div align="center">
   <img src="apps/web/public/findr-banner-rounded.png" width="900px"/>
   <h1>Find. Anything.</h1>
-  <h4>A self-hosted downloader for movies and TV seasons, built for Jellyfin and Plex libraries.</h4>
+  <h4>A self-hosted media library tool for Jellyfin and Plex, with a built-in BitTorrent client.</h4>
 </div>
 
 ## What is this?
 
-Findr is a self-hosted web app that turns "I want this movie" or "I want season 2 of this show" into a clean file in your media library. It searches your indexers through Prowlarr, ranks every release it finds, downloads the best one with its built-in torrent client, strips it down to just its video and audio, and files it where Jellyfin or Plex expect it. When a release turns out to be bad — stalled, too slow, carrying an executable — Findr throws it away and tries the next one on its own.
+Findr is a self-hosted web app that automates the tedious parts of building a media library. You pick a title from TMDB, and Findr searches the indexers you have configured through Prowlarr, ranks every release it finds, fetches the best one with its built-in torrent client, strips it down to just its video and audio, and files it where Jellyfin or Plex expect it. When a release turns out to be bad - stalled, too slow, carrying an executable - Findr throws it away and tries the next one on its own.
 
 > [!WARNING]
 > Downloading copyrighted material without permission may be **illegal** where you live. Read the [disclaimer](#disclaimer) before using Findr.
@@ -23,17 +23,18 @@ Findr is a self-hosted web app that turns "I want this movie" or "I want season 
 
 ## Features
 
-- 🔍 **Browse and request** — discover and search movies and shows (TMDB), then download a movie or a single season in one click.
-- 🏆 **Release ranking** — parses every release title (resolution, codec, HDR, source, group, season/episode structure) and scores it on your preferences, size, seeders and more. Hard filters reject cams, wrong years, wrong seasons and oversized files outright.
-- 🤖 **Wrong-title filter** *(optional)* — asks Claude to drop releases that are clearly a different film or show before anything downloads.
-- 🛡️ **Inspected before downloaded** — the torrent's file list is checked before a single byte of payload arrives. Executables, scripts and archive-only releases are rejected; only the needed video files are fetched.
-- ⏱️ **Watchdog** — abandons torrents that never resolve, stall, or crawl, and moves to the next release automatically.
-- 🧼 **Sterilized output** — every file is remuxed with mkvmerge to video and audio only: no subtitles, attachments, chapters, tags or embedded titles survive.
-- 📺 **Seasons done properly** — takes a complete season pack when one exists, otherwise fetches each aired episode on its own and reports exactly which ones made it.
-- 💾 **Library-safe** — files land atomically under your naming templates, so your media server never sees a half-copied file.
-- 🔁 **Resilient** — a persistent queue resumes after restarts and cleans up anything a crash left behind.
-- 👥 **Private by default** — reachable only from the server itself until you allow remote access; no public sign-up, admins create accounts. Rate-limited API.
-- 📦 **One binary, one service** — a single executable with the web UI and a BitTorrent client built in, for Linux, macOS or Windows. Prowlarr is the only service it needs.
+- 🔍 **Browse and request** - discover and search titles (TMDB), then queue a film or a single season in one click.
+- 🏆 **Release ranking** - parses every release title (resolution, codec, HDR, source, group, season/episode structure) and scores it on your preferences, size, seeders and more. Hard filters reject cams, wrong years, wrong seasons and oversized files outright.
+- 🤖 **Wrong-title filter** *(optional)* - asks Claude to drop releases that are clearly a different film or show before anything downloads.
+- 🛡️ **Inspected before downloaded** - the torrent's file list is checked before a single byte of payload arrives. Executables, scripts and archive-only releases are rejected; only the needed video files are fetched.
+- ⏱️ **Watchdog** - abandons torrents that never resolve, stall, or crawl, and any step that hangs outright, and moves to the next release automatically.
+- 🧼 **Sterilized output** - every file is remuxed with mkvmerge to video and audio only: no subtitles, attachments, chapters, tags or embedded titles survive.
+- 📺 **Seasons done properly** - takes a complete season pack when one exists, otherwise fetches each aired episode on its own and reports exactly which ones made it.
+- 💾 **Library-safe** - files land atomically under your naming templates, so your media server never sees a half-copied file.
+- 🔁 **Resilient** - a persistent queue resumes after restarts and cleans up anything a crash left behind.
+- 🔒 **VPN killswitch** *(optional)* - binds every torrent connection to your VPN's address, checks the routes the moment they change, and pauses downloads until the VPN is back. See [docs/VPN.md](docs/VPN.md).
+- 👥 **Private by default** - reachable only from the server itself until you allow remote access; no public sign-up, admins create accounts. Rate-limited API.
+- 📦 **One binary, one service** - a single executable with the web UI and a BitTorrent client built in, for Linux, macOS or Windows. Prowlarr is the only service it needs.
 
 ## How it works
 
@@ -47,13 +48,13 @@ graph LR
     D -. "bad release" .-> B
 ```
 
-1. **Search** — Prowlarr is queried by IMDb id (TVDB for shows), falling back to a text search. Duplicate listings of the same torrent collapse into one.
-2. **Rank** — every release is parsed and scored. Releases failing a hard filter are kept with their rejection reason so you can see why they were skipped. If enabled, the best 20 are screened for wrong titles.
-3. **Download** — the best candidate is added to Findr's built-in torrent client so that it fetches only its file list. Findr inspects the list, rejects anything unsafe or incomplete, selects just the needed video files, and downloads them while the watchdog watches.
-4. **Sterilize** — each file is remuxed to a fresh Matroska file with only video and audio tracks.
-5. **Save** — the file is moved into your library under your naming templates, via a hidden temp file and an atomic rename.
+1. **Search** - Prowlarr is queried by IMDb id (TVDB for shows), falling back to a text search. Duplicate listings of the same torrent collapse into one.
+2. **Rank** - every release is parsed and scored. Releases failing a hard filter are kept with their rejection reason so you can see why they were skipped. If enabled, the best 20 are screened for wrong titles.
+3. **Download** - the best candidate is added to Findr's built-in torrent client so that it fetches only its file list. Findr inspects the list, rejects anything unsafe or incomplete, selects just the needed video files, and downloads them while the watchdog watches.
+4. **Sterilize** - each file is remuxed to a fresh Matroska file with only video and audio tracks.
+5. **Save** - the file is moved into your library under your naming templates, via a hidden temp file and an atomic rename.
 
-If any step fails because of the release, it is rejected with the reason, its files and torrent are deleted, and the next candidate is tried — up to your attempt limit. For a season, Findr first tries whole-season packs (which must contain every aired episode), then falls back to one search per missing episode. Everything — candidates, scores, rejection reasons and every attempt — is visible on the **Downloads** page, where you can also hand-pick a release and retry.
+If any step fails because of the release, it is rejected with the reason, its files and torrent are deleted, and the next candidate is tried - up to your attempt limit. For a season, Findr first tries whole-season packs (which must contain every aired episode), then falls back to one search per missing episode. Everything - candidates, scores, rejection reasons and every attempt - is visible on the **Downloads** page, where you can also hand-pick a release and retry.
 
 ## Requirements
 
@@ -71,7 +72,7 @@ Torrents are downloaded by Findr itself ([WebTorrent](https://webtorrent.io), bu
 
 ### From a binary
 
-`bun run build` produces `dist/findr`, a single executable with the web UI embedded, for the machine you build on. To build for another machine, pass its target — see [Building](#building).
+`bun run build` produces `dist/findr`, a single executable with the web UI embedded, for the machine you build on. To build for another machine, pass its target - see [Building](#building).
 
 ```bash
 mkdir -p ~/findr && cp dist/findr ~/findr/ && cd ~/findr
@@ -103,7 +104,7 @@ BETTER_AUTH_SECRET=<openssl rand -hex 32>
 
 Then, from the machine Findr runs on:
 
-1. Sign in and set your own credentials — see [First sign-in](#first-sign-in).
+1. Sign in and set your own credentials - see [First sign-in](#first-sign-in).
 2. Open **Settings → Services** and enter your Prowlarr URL and API key and your TMDB API key (plus an Anthropic key if you want the wrong-title filter).
 3. Set the three library paths (downloads scratch space, movies, TV).
 4. To use Findr from other devices, turn on **Settings → Access → Allow access from other machines**. Until then it answers only requests from the server itself.
@@ -130,15 +131,19 @@ Locked out? Stop Findr, delete the rows from the `user`, `account`, `session` an
 
 ### Torrent client
 
-Findr downloads with a built-in BitTorrent client, so there is nothing to install. It listens on the port set under **Settings → Torrent client** (default `6881`, TCP for peers and UDP for the DHT; a change applies after a restart); forward that port on your router for better speeds, and allow incoming connections if your OS firewall asks. Peers connect over TCP — uTP is not supported. Each torrent is removed when its attempt ends; Findr does not seed.
+Findr downloads with a built-in BitTorrent client, so there is nothing to install. It listens on the port set under **Settings → Torrent client** (default `6881`, TCP for peers and UDP for the DHT; a change applies after a restart); forward that port on your router for better speeds, and allow incoming connections if your OS firewall asks. Peers connect over TCP - uTP is not supported. Each torrent is removed when its attempt ends; Findr does not seed.
+
+### VPN killswitch
+
+To keep torrents on your VPN, open **Settings → VPN killswitch**, turn it on and enter your VPN's interface (`wg0`, `tun0`, or `utun*` on macOS). Every torrent connection is then bound to the VPN's address, internet routes are checked every time they change, and downloads pause whenever the VPN is down. Some traffic is outside Findr's control (DNS, Prowlarr), so for a hard guarantee also enforce a killswitch outside Findr. **[docs/VPN.md](docs/VPN.md)** explains every check, the gaps, and how to do that.
 
 ## Usage
 
-- **Discover** — browse trending and curated lists, or press <kbd>/</kbd> to search.
+- **Discover** - browse trending and curated lists, or press <kbd>/</kbd> to search.
 - Open a title and press **Download** (choose a season for shows). You are taken to its progress.
-- **Downloads** — every download with live progress. Open one to see per-episode status, each attempt and why it ended, and every release considered with its score or rejection reason. Finished downloads can be retried, optionally with a release you pick.
-- **Library** — everything requested, with the state of its latest download.
-- **Settings** *(admins)* — everything tunable, plus account management.
+- **Downloads** - every download with live progress. Open one to see per-episode status, each attempt and why it ended, and every release considered with its score or rejection reason. Finished downloads can be retried, optionally with a release you pick.
+- **Library** - everything requested, with the state of its latest download.
+- **Settings** *(admins)* - everything tunable, plus account management.
 
 ## Building
 
@@ -161,7 +166,7 @@ To cross-compile, pass one or more targets; each produces `dist/findr-<target>`:
 bun run build --target linux-x64 --target linux-arm64 --target windows-x64
 ```
 
-Targets: `linux-x64`, `linux-arm64` (add `-musl` for Alpine), `darwin-x64`, `darwin-arm64`, `windows-x64`. The build contains no native code — WebTorrent's optional native addons are replaced with stubs (`apps/api/scripts/native-stubs.ts`) — so every target works the same way. The only external program Findr calls at runtime is `mkvmerge`, which must be installed on the machine that runs it.
+Targets: `linux-x64`, `linux-arm64` (add `-musl` for Alpine), `darwin-x64`, `darwin-arm64`, `windows-x64`. The build contains no native code - WebTorrent's optional native addons are replaced with stubs (`apps/api/scripts/native-stubs.ts`) - so every target works the same way. The only external program Findr calls at runtime is `mkvmerge`, which must be installed on the machine that runs it.
 
 ## Development
 
@@ -170,7 +175,7 @@ bun install
 bun run dev          # API on :3030 (hot reload) + Vite on :5173; open http://localhost:3030
 ```
 
-A new development database starts with the default `admin` / `admin` login, which must be replaced on first sign-in — see [First sign-in](#first-sign-in).
+A new development database starts with the default `admin` / `admin` login, which must be replaced on first sign-in - see [First sign-in](#first-sign-in).
 
 Tests use Bun's test runner and an in-memory database; the sterilizer and end-to-end pipeline tests also need `mkvmerge` and `ffmpeg`:
 
@@ -216,7 +221,7 @@ docker/                 Compose file and setup guide for Prowlarr and FlareSolve
 
 ## Attribution
 
-[Roundup](https://github.com/0xlunar/roundup) by [0xlunar](https://github.com/0xlunar) — Findr was inspired by this project.
+[Roundup](https://github.com/0xlunar/roundup) by [0xlunar](https://github.com/0xlunar) - Findr was inspired by this project.
 
 ## Disclaimer
 

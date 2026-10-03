@@ -211,3 +211,38 @@ describe("WebTorrentDownloader.gateRequests", () => {
     expect(calls).toEqual([["wire", 7, false]]);
   });
 });
+
+// ---------- Killswitch transports ---------- //
+
+describe("WebTorrentDownloader.restrictToBoundTransports", () => {
+  test("the installed WebTorrent still has the methods it wraps", () => {
+    const client = new WebTorrent(ISOLATED);
+    const torrent = client.add(Buffer.from(seeded.torrentFile), { path: join(scratch, "restrict"), deselect: true });
+    try {
+      expect(WebTorrentDownloader.restrictToBoundTransports(torrent)).toBe(true);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  test("keeps only UDP trackers, and never fetches metadata over HTTP", () => {
+    const seen: string[][] = [];
+    let fetched = false;
+    const torrent = {
+      announce: ["udp://tracker.example:1337/announce", "https://tracker.example/announce", "http://tracker.example/announce"],
+      _startDiscovery(this: { announce: string[] }) {
+        seen.push(this.announce);
+      },
+      _getMetadataFromServer: () => {
+        fetched = true;
+      },
+    };
+    const internals = torrent as unknown as { _startDiscovery: () => void; _getMetadataFromServer: () => void };
+    WebTorrentDownloader.restrictToBoundTransports(torrent as unknown as Torrent);
+
+    internals._getMetadataFromServer();
+    internals._startDiscovery();
+    expect(fetched).toBe(false);
+    expect(seen).toEqual([["udp://tracker.example:1337/announce"]]);
+  });
+});

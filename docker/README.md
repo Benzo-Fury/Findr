@@ -28,9 +28,9 @@ cp .env.example .env
 
 Edit `.env`:
 
-- `PUID` / `PGID` — the output of `id -u` and `id -g`, so files the containers write belong to you.
-- `TZ` — your timezone, e.g. `Europe/London`.
-- `PROWLARR_API_KEY` — any 32-character hex string (`openssl rand -hex 16`). The compose file passes it to Prowlarr as `PROWLARR__AUTH__APIKEY`, which overrides the key Prowlarr would otherwise generate, so Findr and Prowlarr agree from the first start.
+- `PUID` / `PGID` - the output of `id -u` and `id -g`, so files the containers write belong to you.
+- `TZ` - your timezone, e.g. `Europe/London`.
+- `PROWLARR_API_KEY` - any 32-character hex string (`openssl rand -hex 16`). The compose file passes it to Prowlarr as `PROWLARR__AUTH__APIKEY`, which overrides the key Prowlarr would otherwise generate, so Findr and Prowlarr agree from the first start.
 
 ### 2. Start
 
@@ -55,8 +55,8 @@ If you started FlareSolverr and an indexer needs it:
 
 Start Findr and sign in. On **Settings → Services**, set:
 
-- **Prowlarr URL** — `http://localhost:9696`
-- **Prowlarr API key** — the same value as `PROWLARR_API_KEY` in `docker/.env`
+- **Prowlarr URL** - `http://localhost:9696`
+- **Prowlarr API key** - the same value as `PROWLARR_API_KEY` in `docker/.env`. (If you're pointing Findr at a Prowlarr instance you didn't set up with this stack, find the key instead in Prowlarr's own UI under **Settings → General → Security → API Key**.)
 
 Then set the library paths on **Settings → Library paths**.
 
@@ -74,4 +74,4 @@ To pin versions, set `PROWLARR_TAG` and `FLARESOLVERR_TAG` in `.env` to specific
 
 - **Prowlarr's web UI is bound to 127.0.0.1** so only this machine can reach it. If Findr runs on another host, set `BIND_ADDRESS=0.0.0.0` and put it behind a firewall or VPN.
 - **Prowlarr's download links** point at the address Findr used to search (the Prowlarr URL in its settings). Findr fetches `.torrent` files itself, so nothing else needs to reach Prowlarr.
-- **Torrent traffic** comes from Findr, not from this stack. Its port is set under **Settings → Torrent client** in Findr (default 6881); forward it on your router for better speeds.
+- **Torrent traffic** comes from Findr, not from this stack. Its port is set under **Settings → Torrent client** in Findr (default 6881); forward it on your router for better speeds. To keep it on a VPN, use Findr's VPN killswitch; to put Prowlarr and FlareSolverr on the VPN too, see [docs/VPN.md](../docs/VPN.md#prowlarr-and-flaresolverr).

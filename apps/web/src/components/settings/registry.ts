@@ -13,6 +13,7 @@ import {
   QueueIcon,
   RankingIcon,
   RobotIcon,
+  ShieldCheckIcon,
   SlidersHorizontalIcon,
   TextAaIcon,
   TimerIcon,
@@ -58,9 +59,10 @@ export const SECTIONS: readonly SectionDef[] = [
   { id: "preferences", title: "Release preferences", description: "Which releases are allowed at all, and which resolutions come first.", icon: SlidersHorizontalIcon, keywords: "quality filter blacklist" },
   { id: "scoring", title: "Scoring weights", description: "How much each quality signal counts when ranking releases that passed the filters. Each weight is the most that signal can add.", icon: RankingIcon, keywords: "rank score weight priority" },
   { id: "queue", title: "Queue", description: "How many downloads run at once, and how many releases each tries before giving up.", icon: QueueIcon, keywords: "concurrency parallel retries" },
-  { id: "watchdog", title: "Download watchdog", description: "Abandon a release for the next one when it is not going to finish.", icon: TimerIcon, keywords: "timeout stall slow speed" },
+  { id: "watchdog", title: "Download watchdog", description: "Abandon a release for the next one when it is not going to finish.", icon: TimerIcon, keywords: "timeout stall slow speed stuck hang frozen" },
   { id: "llmFilter", title: "Wrong-title filter", description: "Uses Claude to drop releases that are clearly for a different title before anything downloads. Falls back to no filtering on any error.", icon: RobotIcon, keywords: "ai claude llm anthropic model" },
   { id: "torrent", title: "Torrent client", description: "The built-in BitTorrent client. Forward the port on your router for better speeds.", icon: GaugeIcon, keywords: "bittorrent port network dht peers" },
+  { id: "vpn", title: "VPN killswitch", description: "Torrents run only while your VPN is connected, and every torrent connection is bound to its address. The moment a check fails every connection is cut and downloads wait until the VPN is back. For a hard guarantee, also run Findr inside the VPN's network.", icon: ShieldCheckIcon, keywords: "vpn killswitch kill switch leak privacy wireguard openvpn tunnel ip" },
   { id: "access", title: "Access", description: "Findr only answers requests from this machine unless remote access is on. Behind a reverse proxy on the same machine, also set TRUST_PROXY on the server.", icon: GlobeIcon, keywords: "remote network lan proxy security" },
   { id: "accounts", title: "Accounts", description: "Sign-up is disabled. Create an account here for anyone who should have access.", icon: UsersIcon, keywords: "users people password email admin role" },
 ]
@@ -119,6 +121,7 @@ export const FIELDS: readonly FieldDef[] = [
   field({ section: "watchdog", key: "stallTimeoutMinutes", label: "Stall timeout", help: "How long a download may go without a single new byte.", control: { kind: "number", min: 1, step: 1, unit: "min" } }),
   field({ section: "watchdog", key: "minSpeedKBps", label: "Minimum average speed", help: "Zero turns the speed check off.", keywords: "slow bandwidth", control: { kind: "number", min: 0, step: 10, unit: "KB/s" } }),
   field({ section: "watchdog", key: "speedWindowMinutes", label: "Speed window", help: "The span the average speed is measured over.", control: { kind: "number", min: 1, step: 1, unit: "min" } }),
+  field({ section: "watchdog", key: "stuckTimeoutMinutes", label: "Stuck timeout", help: "How long any step may show no sign of life before the release is skipped. A slow download still counts as alive.", keywords: "hang frozen sterilize save", control: { kind: "number", min: 1, step: 1, unit: "min" } }),
   field({ section: "watchdog", key: "pollIntervalSeconds", label: "Check every", keywords: "poll interval", control: { kind: "number", min: 1, max: 60, step: 1, unit: "s" } }),
 
   // Wrong-title filter
@@ -129,6 +132,11 @@ export const FIELDS: readonly FieldDef[] = [
 
   // Torrent
   field({ section: "torrent", key: "port", label: "Port", help: "TCP for peers, UDP for the DHT. 0 picks a random port. Applies after Findr restarts.", keywords: "restart forward router", control: { kind: "number", min: 0, max: 65535, step: 1 } }),
+
+  // VPN killswitch
+  field({ section: "vpn", key: "enabled", label: "Require a VPN for torrents", help: "Binds every torrent connection to the VPN, and turns off router port mapping, local peer discovery, HTTP trackers and web seeds.", keywords: "killswitch block", control: { kind: "toggle" } }),
+  field({ section: "vpn", key: "interfaceName", label: "VPN interface", help: "The network interface your VPN creates, such as wg0 or tun0. End with * to match a prefix, such as utun* on macOS. Required: torrents are bound to its address, and stop if internet traffic would leave through any other interface.", keywords: "wireguard openvpn tun utun wg0 adapter network", control: { kind: "text", placeholder: "wg0", mono: true } }),
+  field({ section: "vpn", key: "homeIps", label: "Home public IP", help: "Your connection's public IPv4 and IPv6 addresses, comma separated. Torrents stop if traffic leaves from one of them, or if the public IP cannot be looked up. Leave empty to skip this check.", keywords: "address leak ipv4 ipv6 isp", control: { kind: "text", placeholder: "198.51.100.7, 2001:db8::1", mono: true } }),
 
   // Access
   field({ section: "access", key: "allowRemote", label: "Allow access from other machines", help: "Off by default, so a fresh install is reachable only from the server itself.", keywords: "remote lan", control: { kind: "toggle" } }),

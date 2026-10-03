@@ -17,6 +17,7 @@ import type {
 } from "@findr/types/downloads"
 import type { CredentialsReset } from "@findr/types/account"
 import type { SettingsPatch, SettingsResponse } from "@findr/types/settings"
+import type { VpnStatus } from "@findr/types/vpn"
 import type { GenresResponse, TitleCard as RawTitleCard, TitleCardsResponse } from "@findr/types/tmdb"
 import { MAX_PAGE_SIZE } from "@findr/types/downloads"
 import type {
@@ -251,6 +252,16 @@ export function fetchSettings(): Promise<SettingsResponse> {
 /** Changes any subset of settings and returns the result. Admins only. */
 export function updateSettings(patch: SettingsPatch): Promise<SettingsResponse> {
   return request("/api/settings", json(patch, "PATCH"))
+}
+
+/** The VPN killswitch's latest verdict. Admins only. */
+export function fetchVpnStatus(init?: RequestInit): Promise<VpnStatus> {
+  return request("/api/vpn", init)
+}
+
+/** Runs every VPN check now, looking the public IP up afresh. Admins only. */
+export function checkVpn(): Promise<VpnStatus> {
+  return request("/api/vpn/check", { method: "POST" })
 }
 
 /* -------------------------------------------------------------------------- */

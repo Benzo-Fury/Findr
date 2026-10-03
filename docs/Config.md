@@ -4,8 +4,8 @@ Findr has two kinds of configuration, stored in two places:
 
 | Kind | Where | Changed by | Examples |
 |---|---|---|---|
-| **Deployment** — how and where the server runs | Environment variables (`.env`) | Whoever runs the server; needs a restart | Port, database file, auth secret, mkvmerge path |
-| **Settings** — everything else | The database, edited on the **Settings** page | Admins, in the browser; most apply to the next download | Service URLs and API keys, library paths, naming, release preferences, scoring, watchdog, remote access |
+| **Deployment** - how and where the server runs | Environment variables (`.env`) | Whoever runs the server; needs a restart | Port, database file, auth secret, mkvmerge path |
+| **Settings** - everything else | The database, edited on the **Settings** page | Admins, in the browser; most apply to the next download | Service URLs and API keys, library paths, naming, release preferences, scoring, watchdog, VPN killswitch, remote access |
 
 There is no config file. API keys are stored in the database but never sent back to the browser, and nothing the browser can edit can point Findr at an executable.
 
@@ -13,7 +13,7 @@ There is no config file. API keys are stored in the database but never sent back
 
 ## Environment variables
 
-Bun reads `.env` from the working directory automatically — in development that is `apps/api/.env`; for the compiled `findr` binary it is the directory you run it from. A starting point is in [`apps/api/.env.example`](../apps/api/.env.example).
+Bun reads `.env` from the working directory automatically - in development that is `apps/api/.env`; for the compiled `findr` binary it is the directory you run it from. A starting point is in [`apps/api/.env.example`](../apps/api/.env.example).
 
 Startup fails with a list of problems if anything required is missing or malformed.
 
@@ -24,16 +24,16 @@ Startup fails with a list of problems if anything required is missing or malform
 | `NODE_ENV` | No | `development` | `production` in builds. In development the API proxies the web app to Vite and trusts `http://localhost:5173` for auth. |
 | `PORT` | No | `3030` | Port for the API and web app. |
 | `DATABASE_PATH` | No | `data/findr.db` | SQLite file (the folder is created on first run). Relative paths resolve from the repo root in development, and from the working directory for the compiled binary. |
-| `BASE_URL` | **Yes** | — | Public URL of the server, e.g. `http://localhost:3030`. Used by BetterAuth for cookies and redirects. |
-| `BETTER_AUTH_SECRET` | **Yes** | — | Session signing secret. Generate with `openssl rand -hex 32`. |
+| `BASE_URL` | **Yes** | - | Public URL of the server, e.g. `http://localhost:3030`. Used by BetterAuth for cookies and redirects. |
+| `BETTER_AUTH_SECRET` | **Yes** | - | Session signing secret. Generate with `openssl rand -hex 32`. |
 | `TRUST_PROXY` | No | `false` | Believe the first `X-Forwarded-For` address, for rate limiting and for the remote access check. Only enable behind a reverse proxy you control. |
-| `MKVMERGE_PATH` | No | `mkvmerge` | mkvmerge binary, from [MKVToolNix](https://mkvtoolnix.download/). An env var on purpose — an executable path should not be editable from a browser. |
+| `MKVMERGE_PATH` | No | `mkvmerge` | mkvmerge binary, from [MKVToolNix](https://mkvtoolnix.download/). An env var on purpose - an executable path should not be editable from a browser. |
 
 ---
 
 ## First sign-in
 
-Sign-up is disabled. When the database has no accounts, Findr creates one admin that signs in as **`admin`** / **`admin`** (it is stored as `admin@findr.local`; typing either works). That account must set its own email and password before it can do anything else — every other page and API call is refused until it does — and doing so signs out any other session that used the old credentials. New passwords must be at least 8 characters.
+Sign-up is disabled. When the database has no accounts, Findr creates one admin that signs in as **`admin`** / **`admin`** (it is stored as `admin@findr.local`; typing either works). That account must set its own email and password before it can do anything else - every other page and API call is refused until it does - and doing so signs out any other session that used the old credentials. New passwords must be at least 8 characters.
 
 Because remote access is off by default (see [Access](#access--access)), the first sign-in can only happen from the machine Findr runs on. Further accounts are created on the Settings page.
 
@@ -45,7 +45,7 @@ Admins edit these on the **Settings** page; they are stored in the database and 
 
 The same data is available at `GET /api/settings` and `PATCH /api/settings` (admins only; a patch may contain any subset of fields and is validated as a whole before anything is saved). API keys are never returned: both answer with them blanked, plus a `configured` map saying which are set.
 
-### Services — `services`
+### Services - `services`
 
 | Field | Description |
 |---|---|
@@ -56,7 +56,7 @@ The same data is available at `GET /api/settings` and `PATCH /api/settings` (adm
 
 The three keys are secrets: stored in the database, never sent to the browser. On the page a key field shows only whether a key is saved; typing replaces it and **Remove** clears it. Through the API, an empty string clears a key.
 
-### Library paths — `paths`
+### Library paths - `paths`
 
 Absolute paths on the server. They must be set before the first download.
 
@@ -66,9 +66,9 @@ Absolute paths on the server. They must be set before the first download.
 | `movies` | Library root for movies, e.g. your Jellyfin or Plex movies folder. |
 | `series` | Library root for shows. |
 
-Files are placed atomically: they are written under a hidden temporary name inside the destination folder and renamed into place, so the library never contains a half-written file — even across filesystems or if Findr is killed mid-copy.
+Files are placed atomically: they are written under a hidden temporary name inside the destination folder and renamed into place, so the library never contains a half-written file - even across filesystems or if Findr is killed mid-copy.
 
-### Naming — `naming`
+### Naming - `naming`
 
 Templates using `{title}`, `{year}`, `{season}` and `{episode}`. Titles and years come from TMDB; seasons and episodes are zero-padded. `.mkv` is always appended. Characters illegal on macOS, Linux or Windows are removed, and empty `()` from a missing year are dropped.
 
@@ -82,7 +82,7 @@ Templates using `{title}`, `{year}`, `{season}` and `{episode}`. Titles and year
 
 A file holding several episodes is named with a range, e.g. `S01E01-E02`.
 
-### Release preferences — `preferences`
+### Release preferences - `preferences`
 
 | Field | Default | Description |
 |---|---|---|
@@ -91,9 +91,9 @@ A file holding several episodes is named with a range, e.g. `S01E01-E02`.
 | `minSeeders` | `5` | Releases with fewer seeders are rejected. |
 | `blacklistedReleaseTypes` | `CAM, TS, SCR` | Release types never downloaded. |
 
-### Scoring weights — `scoring`
+### Scoring weights - `scoring`
 
-How much each quality signal counts when ranking releases that passed the hard filters. Each weight is the most that signal can add. The rank tables they scale — which codecs, release types and groups are preferred — are in [`packages/config/src/scoring.ts`](../packages/config/src/scoring.ts).
+How much each quality signal counts when ranking releases that passed the hard filters. Each weight is the most that signal can add. The rank tables they scale - which codecs, release types and groups are preferred - are in [`packages/config/src/scoring.ts`](../packages/config/src/scoring.ts).
 
 | Field | Default | Description |
 |---|---|---|
@@ -111,16 +111,16 @@ How much each quality signal counts when ranking releases that passed the hard f
 | `bloated4KPenalty` | `15` | Subtracted from 2160p releases above `bloated4KSizeGB`. |
 | `bloated4KSizeGB` | `20` | Per movie or episode. |
 
-### Queue — `queue`
+### Queue - `queue`
 
 | Field | Default | Description |
 |---|---|---|
 | `maxConcurrent` | `2` | Downloads running at once. |
-| `maxAttempts` | `5` | Failed attempts allowed per unit of work — the movie, the season pack, or each episode — in one run before that unit gives up. Attempts cut short by a restart or by an unavailable service do not count. |
+| `maxAttempts` | `5` | Failed attempts allowed per unit of work - the movie, the season pack, or each episode - in one run before that unit gives up. Attempts cut short by a restart or by an unavailable service do not count. |
 
-### Download watchdog — `watchdog`
+### Download watchdog - `watchdog`
 
-A torrent that trips any of these is abandoned, its files deleted, and the next release tried.
+A torrent that trips any of these is abandoned, its files deleted, and the next release tried. The same happens to an attempt that hangs outright at any step (see `stuckTimeoutMinutes`), and cleanup afterwards is time-limited, so a hung step can never hold up a download or a cancel.
 
 | Field | Default | Description |
 |---|---|---|
@@ -129,10 +129,11 @@ A torrent that trips any of these is abandoned, its files deleted, and the next 
 | `minSpeedKBps` | `50` | Average speed floor, judged over a full `speedWindowMinutes`. `0` disables it. |
 | `speedWindowMinutes` | `10` | The window the average speed is measured over. |
 | `pollIntervalSeconds` | `5` | How often progress is checked. |
+| `stuckTimeoutMinutes` | `10` | How long any step of an attempt - fetching, downloading, sterilizing, saving - may show no sign of life before it counts as stuck. A sign of life is a torrent poll answering (however little arrived), mkvmerge reporting progress, or bytes copied into the library, so a slow or seedless torrent is never caught by this; the checks above handle those. |
 
-### Wrong-title filter — `llmFilter`
+### Wrong-title filter - `llmFilter`
 
-An optional pass that asks Claude which of the best-scoring releases are clearly for a different title — a remake, sequel, spin-off or similarly named film — and drops them before anything downloads. It only runs when an Anthropic API key is set under `services`. It **fails open**: on any error, refusal or timeout every release is kept, so it can never block a download.
+An optional pass that asks Claude which of the best-scoring releases are clearly for a different title - a remake, sequel, spin-off or similarly named film - and drops them before anything downloads. It only runs when an Anthropic API key is set under `services`. It **fails open**: on any error, refusal or timeout every release is kept, so it can never block a download.
 
 | Field | Default | Description |
 |---|---|---|
@@ -141,13 +142,23 @@ An optional pass that asks Claude which of the best-scoring releases are clearly
 | `maxCandidates` | `20` | How many of the top-scoring releases are screened. |
 | `timeoutSeconds` | `20` | Request timeout. |
 
-### Torrent client — `torrent`
+### Torrent client - `torrent`
 
 | Field | Default | Description |
 |---|---|---|
 | `port` | `6881` | Port of the built-in torrent client: TCP for peers, UDP for the DHT. Forward it on your router for better speeds; `0` picks a random free port. Read when the client starts, so a change applies after Findr restarts. |
 
-### Access — `access`
+### VPN killswitch - `vpn`
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Run torrents only through the VPN: every torrent socket is bound to the VPN interface's address, and the client is cut off whenever a check fails. Also turns off HTTP trackers, web seeds, local peer discovery and router port mapping. |
+| `interfaceName` | - | The VPN's network interface, such as `wg0` or `tun0`; a trailing `*` matches a prefix (`utun*` on macOS). Required while `enabled`: with it empty, torrents stay blocked. Internet traffic must also be routed through it. |
+| `homeIps` | - | Optional. Your home connection's public IPv4/IPv6 addresses, comma separated. When set, the public address is looked up and torrents stop if it is one of these or the lookup fails. |
+
+How each check works, what it can't cover, and how to add a killswitch outside Findr: **[VPN.md](VPN.md)**.
+
+### Access - `access`
 
 | Field | Default | Description |
 |---|---|---|
@@ -163,9 +174,10 @@ Behind a reverse proxy on the same machine, every request reaches Findr from loo
 
 For reference, every check a release goes through, in order:
 
-1. **Search** — Prowlarr results are de-duplicated (the same torrent from several indexers counts once).
-2. **Hard filters** — wrong structure (a TV release for a movie, a single episode for a season, a multi-season pack), blacklisted type, too few seeders, over the size limit, or a movie from a different year. Rejected with the reason; never downloaded.
-3. **Wrong-title filter** — optional, see above.
-4. **File inspection** — after the torrent's file list arrives but *before any payload downloads*: any executable or script (`.exe`, `.scr`, `.lnk`, `.bat`, `.cmd`, `.ps1`, `.msi`, `.js`, …) rejects the whole torrent, as does an archive-only release or one with no full-length video. Season packs must contain every aired episode. Only the needed video files are downloaded.
-5. **Watchdog** — while downloading, see above.
-6. **Sterilize** — mkvmerge rejects unreadable containers and files without a video stream.
+1. **Search** - Prowlarr results are de-duplicated (the same torrent from several indexers counts once).
+2. **Hard filters** - wrong structure (a TV release for a movie, a single episode for a season, a multi-season pack), blacklisted type, too few seeders, over the size limit, or a movie from a different year. Rejected with the reason; never downloaded.
+3. **Wrong-title filter** - optional, see above.
+4. **File inspection** - after the torrent's file list arrives but *before any payload downloads*: any executable or script (`.exe`, `.scr`, `.lnk`, `.bat`, `.cmd`, `.ps1`, `.msi`, `.js`, …) rejects the whole torrent, as does an archive-only release or one with no full-length video. Season packs must contain every aired episode. Only the needed video files are downloaded.
+5. **Watchdog** - while downloading, see above.
+6. **Sterilize** - mkvmerge rejects unreadable containers and files without a video stream.
+7. **Stuck** - at any step, an attempt with no sign of life for `stuckTimeoutMinutes` is rejected, see above.

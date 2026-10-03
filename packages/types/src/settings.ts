@@ -69,6 +69,11 @@ export const WatchdogSettingsSchema = z.object({
   minSpeedKBps: z.number().nonnegative().default(50),
   speedWindowMinutes: z.number().positive().default(10),
   pollIntervalSeconds: z.number().int().min(1).max(60).default(5),
+  /**
+   * How long any step of an attempt may go without a sign of life — a torrent
+   * poll answering, remux progress, bytes copied — before it counts as stuck.
+   */
+  stuckTimeoutMinutes: z.number().positive().default(10),
 });
 
 /** Optional LLM pass that drops releases which are clearly the wrong title. */
@@ -145,6 +150,42 @@ export const AccessSettingsSchema = z.object({
   allowRemote: z.boolean().default(false),
 });
 
+/** IPv4 or IPv6 addresses separated by commas, or empty. */
+const addressList = z
+  .string()
+  .trim()
+  .refine(
+    (value) => value === "" || value.split(",").every((part) => z.union([z.ipv4(), z.ipv6()]).safeParse(part.trim()).success),
+    "Must be IP addresses separated by commas",
+  );
+
+/**
+ * The VPN killswitch. While it is on, every torrent connection is bound to the
+ * VPN interface's address, and the torrent client runs only while the VPN
+ * checks pass: the moment one fails every torrent connection is cut, and
+ * downloads wait until the VPN is back.
+ */
+export const VpnSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  /**
+   * The VPN's network interface, such as `wg0` or `tun0`. A trailing `*`
+   * matches by prefix (`utun*`). It counts as up while it holds an address
+   * that is not link-local and the routes to the internet go through it.
+   * Required while the killswitch is on: torrents are bound to its address.
+   */
+  interfaceName: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_.:-]*\*?$/, "Must be an interface name, optionally ending in *")
+    .default(""),
+  /**
+   * Public addresses that mean traffic is not going through the VPN — usually
+   * the home connection's. When set, the public address is looked up and the
+   * killswitch trips if it is one of these, or if it cannot be looked up.
+   */
+  homeIps: addressList.default(""),
+});
+
 // ---------- Settings ---------- //
 
 /** Every section, keyed as stored. `prefault` runs each section's field defaults when absent. */
@@ -159,6 +200,7 @@ export const SettingsSchema = z.object({
   services: ServicesSettingsSchema.prefault({}),
   torrent: TorrentSettingsSchema.prefault({}),
   access: AccessSettingsSchema.prefault({}),
+  vpn: VpnSettingsSchema.prefault({}),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -172,6 +214,22 @@ export type ScoringSettings = Settings["scoring"];
 export type ServicesSettings = Settings["services"];
 export type TorrentSettings = Settings["torrent"];
 export type AccessSettings = Settings["access"];
+export type VpnSettings = Settings["vpn"];
+
+/**
+ * One section's patch: every field optional and its default removed. A plain
+ * `partial()` keeps the defaults, which would fill every omitted field and
+ * overwrite the stored value with it.
+ */
+function patchOf<Shape extends z.ZodRawShape>(section: z.ZodObject<Shape>) {
+  const fields = Object.fromEntries(
+    Object.entries(section.shape).map(([key, field]) => [
+      key,
+      z.optional(field instanceof z.ZodDefault ? field.removeDefault() : field),
+    ]),
+  );
+  return z.object(fields).strict() as unknown as ReturnType<typeof section.partial>;
+}
 
 /**
  * An update from the settings page. Sections and fields are optional; only
@@ -180,16 +238,17 @@ export type AccessSettings = Settings["access"];
  */
 export const SettingsPatchSchema = z
   .object({
-    paths: PathsSettingsSchema.partial().strict(),
-    naming: NamingSettingsSchema.partial().strict(),
-    preferences: PreferencesSchema.partial().strict(),
-    queue: QueueSettingsSchema.partial().strict(),
-    watchdog: WatchdogSettingsSchema.partial().strict(),
-    llmFilter: LlmFilterSettingsSchema.partial().strict(),
-    scoring: ScoringSettingsSchema.partial().strict(),
-    services: ServicesSettingsSchema.partial().strict(),
-    torrent: TorrentSettingsSchema.partial().strict(),
-    access: AccessSettingsSchema.partial().strict(),
+    paths: patchOf(PathsSettingsSchema),
+    naming: patchOf(NamingSettingsSchema),
+    preferences: patchOf(PreferencesSchema),
+    queue: patchOf(QueueSettingsSchema),
+    watchdog: patchOf(WatchdogSettingsSchema),
+    llmFilter: patchOf(LlmFilterSettingsSchema),
+    scoring: patchOf(ScoringSettingsSchema),
+    services: patchOf(ServicesSettingsSchema),
+    torrent: patchOf(TorrentSettingsSchema),
+    access: patchOf(AccessSettingsSchema),
+    vpn: patchOf(VpnSettingsSchema),
   })
   .partial()
   .strict();

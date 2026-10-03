@@ -1,5 +1,5 @@
 /**
- * The three ways a unit of work can stop early. The distinction decides what
+ * The four ways a unit of work can stop early. The distinction decides what
  * happens to the candidate being tried:
  *
  * - `AttemptFailure` — this release is bad (stalled, dangerous files, broken
@@ -7,6 +7,8 @@
  * - `FatalDownloadError` — the environment is broken (the torrent client
  *   cannot listen, library paths unset). Trying another release would fail the same way, so
  *   stop without blaming the candidate.
+ * - `SuspendedError` — the VPN killswitch cut torrent traffic. Put the
+ *   candidate back and leave the download queued, to resume once the VPN is up.
  * - `CancelledError` — a user cancelled. Clean up and stop quietly.
  */
 
@@ -18,6 +20,11 @@ export class AttemptFailure extends Error {
 /** Something outside the release is wrong; no candidate can succeed until it is fixed. */
 export class FatalDownloadError extends Error {
   override readonly name = "FatalDownloadError";
+}
+
+/** The VPN killswitch has stopped torrent traffic. Carries why the VPN counts as down. */
+export class SuspendedError extends Error {
+  override readonly name = "SuspendedError";
 }
 
 /** The download was cancelled while this work was in flight. */

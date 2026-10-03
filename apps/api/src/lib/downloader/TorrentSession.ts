@@ -28,6 +28,8 @@ export interface FetchRequest {
   onDownloadStart: () => void;
   /** Called with 0–1 progress on each poll while downloading. */
   onProgress: (progress: number) => void;
+  /** Called whenever the client answers, however little moved. A sign the session is alive. */
+  onActivity?: () => void;
 }
 
 /** A selected file, now on disk. */
@@ -50,12 +52,14 @@ export class TorrentSession {
   /** Runs the torrent to completion, returning the selected files on disk. */
   public async fetch(request: FetchRequest): Promise<FetchedFile[]> {
     const { signal } = request;
+    const alive = request.onActivity ?? (() => {});
     const pollMs = this.watchdogSettings.pollIntervalSeconds * 1000;
     const watchdog = new Watchdog(this.watchdogSettings, Date.now());
 
     // Add the torrent paused at metadata
     this.handle = await this.downloader.add(request.input, { directory: request.directory, tag: request.tag });
     const handle = this.handle;
+    alive();
 
     // Wait for the file list, under the metadata timeout
     let files = await this.downloader.files(handle);
@@ -64,6 +68,7 @@ export class TorrentSession {
       this.trip(watchdog.check({ at: Date.now(), phase: "metadata", downloadedBytes: 0 }));
       await sleep(pollMs, signal);
       files = await this.downloader.files(handle);
+      alive();
     }
 
     // Decide what to fetch before a single payload byte arrives
@@ -78,6 +83,7 @@ export class TorrentSession {
     while (true) {
       throwIfCancelled(signal);
       const status = await this.downloader.status(handle);
+      alive();
       if (!status) throw new AttemptFailure("The torrent was removed from the download client");
       if (status.state === "error") throw new AttemptFailure(status.error ?? "The download client reported an error");
       if (status.state === "complete") break;

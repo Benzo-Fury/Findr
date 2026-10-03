@@ -13,6 +13,13 @@
  * which every mainstream client supports. The DHT's known nodes are saved to
  * the database so a restart does not depend on the public bootstrap servers.
  *
+ * With the VPN killswitch on, the client is only created while the VPN
+ * checks pass, and every socket it opens is bound to the VPN's address (see
+ * `VpnSockets`). What cannot be bound stays off: router port mapping, local
+ * discovery, web seeds, HTTP trackers (they go through `fetch`) and fetching
+ * metadata from a magnet's `xs` URL. `disconnect()` destroys the client the
+ * moment the VPN drops.
+ *
  * Handles are the attempt's unique tag. Torrents live only as long as the
  * process; after a restart there is nothing to sweep, and the queue's
  * recovery deletes the interrupted attempts' files.
@@ -22,7 +29,8 @@ import WebTorrent, { type Torrent } from "webtorrent";
 import { z } from "zod";
 import { AppState } from "../db/models/AppState";
 import { SettingsStore } from "../db/models/SettingsStore";
-import { AttemptFailure, FatalDownloadError } from "../pipeline/errors";
+import { AttemptFailure, FatalDownloadError, SuspendedError } from "../pipeline/errors";
+import VpnGuard from "../vpn/VpnGuard";
 import type { AddOptions, Downloader, TorrentFile, TorrentInput, TorrentStatus } from "./Downloader";
 
 // ---------- Types ---------- //
@@ -43,6 +51,10 @@ interface Entry {
   torrent: Torrent;
   /** Whether `start()` has run; block requests are refused until it has. */
   started: boolean;
+  /** Whether `stop()` has run, after which the files are being processed. */
+  stopped: boolean;
+  /** Why the killswitch destroyed this torrent mid-transfer, if it did. */
+  suspended: string | null;
   /** File indexes chosen by `start()`. */
   selected: number[];
   /** The torrent's error, once it has failed. */
@@ -90,6 +102,7 @@ export class WebTorrentDownloader implements Downloader {
 
   public async add(input: TorrentInput, options: AddOptions): Promise<string> {
     const client = this.ensureClient();
+    const vpn = SettingsStore.section("vpn").enabled;
 
     // Add with nothing selected; the gate stops any block request until start()
     const torrent = client.add(input.kind === "magnet" ? input.uri : Buffer.from(input.bytes), {
@@ -97,9 +110,14 @@ export class WebTorrentDownloader implements Downloader {
       deselect: true,
       destroyStoreOnDestroy: true,
     });
-    const entry: Entry = { torrent, started: false, selected: [], error: null };
+    const entry: Entry = { torrent, started: false, stopped: false, suspended: null, selected: [], error: null };
     if (!WebTorrentDownloader.gateRequests(torrent, () => entry.started)) {
       console.warn("[Downloader] WebTorrent has no _request method; pieces may arrive before inspection");
+    }
+    // Behind the killswitch, fail closed if the HTTP paths cannot be shut
+    if (vpn && !WebTorrentDownloader.restrictToBoundTransports(torrent)) {
+      torrent.destroy();
+      throw new FatalDownloadError("WebTorrent has changed: its HTTP trackers cannot be turned off for the VPN killswitch");
     }
 
     // Torrent errors (invalid metadata, a duplicate) belong to this release
@@ -168,6 +186,7 @@ export class WebTorrentDownloader implements Downloader {
     if (!entry) return;
 
     // Refuse new peers and drop current ones, so nothing reads or writes the files
+    entry.stopped = true;
     entry.torrent.pause();
     for (const wire of entry.torrent.wires) wire.destroy();
   }
@@ -177,8 +196,9 @@ export class WebTorrentDownloader implements Downloader {
     if (!entry) return;
     this.entries.delete(handle);
 
-    // A torrent that already failed is destroyed, and WebTorrent never calls
-    // back for a second destroy; the attempt's workspace removes its files
+    // A torrent that already failed or was disconnected is destroyed, and
+    // WebTorrent never calls back for a second destroy; the attempt's
+    // workspace removes its files
     const { torrent } = entry;
     if ((torrent as unknown as { destroyed?: boolean }).destroyed) return;
 
@@ -197,26 +217,78 @@ export class WebTorrentDownloader implements Downloader {
     return new Map([...this.entries.keys()].map((tag) => [tag, tag]));
   }
 
+  public async disconnect(reason: string): Promise<void> {
+    const client = this.client;
+    this.client = null;
+    this.stopDhtSaving();
+
+    // Mark transfers first, so a poll racing the teardown sees the suspension
+    // rather than a vanished torrent it would blame on the release
+    const destroying: Array<Promise<void>> = [];
+    for (const entry of this.entries.values()) {
+      const { torrent } = entry;
+      if (!entry.stopped) entry.suspended = reason;
+      if ((torrent as unknown as { destroyed?: boolean }).destroyed) continue;
+
+      // Keep the files of a finished transfer; drop a partial one's
+      destroying.push(
+        new Promise<void>((resolve) => {
+          const fallback = setTimeout(resolve, DESTROY_TIMEOUT_MS);
+          torrent.destroy({ destroyStore: !entry.stopped }, () => {
+            clearTimeout(fallback);
+            resolve();
+          });
+        }),
+      );
+    }
+
+    // Then the client itself: its listener, the DHT and tracker sockets
+    if (client && !client.destroyed) {
+      destroying.push(
+        new Promise<void>((resolve) => {
+          const fallback = setTimeout(resolve, DESTROY_TIMEOUT_MS);
+          client.destroy(() => {
+            clearTimeout(fallback);
+            resolve();
+          });
+        }),
+      );
+    }
+    await Promise.all(destroying);
+  }
+
   // ---------- Internals ---------- //
 
-  /** The shared client, created on first use. Throws if the client has failed. */
+  /**
+   * The shared client, created on first use. Throws if the client has failed,
+   * or `SuspendedError` while the VPN killswitch holds traffic back.
+   */
   private ensureClient(): WebTorrent {
     this.throwIfClientFailed();
+    const guard = VpnGuard.getInstance();
+    guard.assertAllowed();
     if (this.client && !this.client.destroyed) return this.client;
+    // Every socket the client opens from here on is bound to the VPN while the killswitch is on
+    guard.bindSockets();
 
     // The port setting applies whenever a client starts, so a change needs a restart
     const port = this.options.port ?? SettingsStore.section("torrent").port;
     const { discovery } = this.options;
+    // Behind the killswitch, nothing that could leave outside the VPN: no
+    // router port mapping, LAN announcements or HTTP web seeds
+    const vpn = SettingsStore.section("vpn").enabled;
+    const local = discovery && !vpn;
     this.port = port;
     const client = new WebTorrent({
       utp: false,
       torrentPort: port,
       dhtPort: port,
       dht: discovery,
-      lsd: discovery,
+      lsd: local,
       tracker: discovery,
-      natUpnp: discovery,
-      natPmp: discovery,
+      natUpnp: local,
+      natPmp: local,
+      webSeeds: !vpn,
     });
 
     // Torrent errors have their own listeners, so anything here is the client's
@@ -230,10 +302,12 @@ export class WebTorrentDownloader implements Downloader {
     return client;
   }
 
-  /** Looks up a torrent, first surfacing any client-wide failure. */
+  /** Looks up a torrent, first surfacing any client-wide failure or a killswitch suspension. */
   private entry(handle: string): Entry | undefined {
     this.throwIfClientFailed();
-    return this.entries.get(handle);
+    const entry = this.entries.get(handle);
+    if (entry?.suspended) throw new SuspendedError(entry.suspended);
+    return entry;
   }
 
   /**
@@ -247,8 +321,7 @@ export class WebTorrentDownloader implements Downloader {
 
     this.clientError = null;
     this.entries.clear();
-    if (this.dhtSaveTimer) clearInterval(this.dhtSaveTimer);
-    this.dhtSaveTimer = null;
+    this.stopDhtSaving();
     // WebTorrent destroys a client that cannot listen, and throws on a second destroy
     if (this.client && !this.client.destroyed) this.client.destroy();
     this.client = null;
@@ -269,6 +342,32 @@ export class WebTorrentDownloader implements Downloader {
 
     internals._request = (...args) => isOpen() && request.apply(torrent, args);
     return true;
+  }
+
+  /**
+   * Keeps a torrent to the transports the killswitch can bind: drops HTTP
+   * trackers from its announce list as discovery starts (after the metadata
+   * may have added more), and never fetches metadata from an `xs` URL.
+   * Returns false when WebTorrent no longer has these methods — a test checks
+   * for them, in case a future version renames them.
+   */
+  public static restrictToBoundTransports(torrent: Torrent): boolean {
+    const internals = torrent as unknown as { _startDiscovery?: () => void; _getMetadataFromServer?: () => void; announce?: string[] };
+    const startDiscovery = internals._startDiscovery;
+    if (typeof startDiscovery !== "function" || typeof internals._getMetadataFromServer !== "function") return false;
+
+    internals._getMetadataFromServer = () => undefined;
+    internals._startDiscovery = () => {
+      internals.announce = (internals.announce ?? []).filter((url) => url.startsWith("udp:"));
+      startDiscovery.call(torrent);
+    };
+    return true;
+  }
+
+  /** Stops the periodic DHT save, for a client being torn down. */
+  private stopDhtSaving(): void {
+    if (this.dhtSaveTimer) clearInterval(this.dhtSaveTimer);
+    this.dhtSaveTimer = null;
   }
 
   /** Seeds the DHT with the nodes saved last run, then keeps saving them. */
