@@ -26,8 +26,8 @@ export function TopBar({ session, activeCount, onSearch }: TopBarProps) {
   return (
     <header className="sticky top-0 z-[var(--z-chrome)] h-[var(--chrome-height)] border-b border-line/70 bg-paper/82 backdrop-blur-xl backdrop-saturate-150">
       <div className="mx-auto grid h-full max-w-[1600px] grid-cols-[auto_1fr_auto] items-center gap-4 px-4 md:px-8">
-        <NavLink to="/" aria-label="Findr, Library" className="rounded-full outline-offset-4">
-          <Brand />
+        <NavLink to="/" aria-label="Findr, Library" className="h-full rounded-full outline-offset-4">
+          <Brand wordmark={false} className="h-full" />
         </NavLink>
 
         <nav aria-label="Primary" className="hidden justify-center md:flex">

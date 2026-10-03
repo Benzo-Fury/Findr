@@ -54,6 +54,9 @@ export function FieldRow({ field, value, onChange, error, words, configured, onC
                 value={String(value ?? "")}
                 placeholder={control.placeholder}
                 spellCheck={false}
+                autoComplete="off"
+                data-1p-ignore
+                data-lpignore="true"
                 onChange={(event) => onChange(event.target.value)}
                 className={cn(INPUT_CLASS, control.mono && "font-mono text-[0.8125rem]")}
               />
@@ -101,7 +104,10 @@ function SecretInput({ id, describedBy, value, configured, onChange, onClear }: 
         <input
           id={id}
           type="password"
-          autoComplete="off"
+          // "off" is ignored for password fields; "new-password" stops the browser pairing this key with a saved login and filling the field before it with an email.
+          autoComplete="new-password"
+          data-1p-ignore
+          data-lpignore="true"
           aria-describedby={describedBy}
           value={value}
           placeholder={configured ? "Type to replace" : "Not set"}

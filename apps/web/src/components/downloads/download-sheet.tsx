@@ -216,7 +216,7 @@ function Body({ downloadId, onClose, onOpenTitle }: BodyProps) {
 
       <Section title="Releases" count={detail.candidates.length}>
         {!running && detail.candidates.length > 0 && <p className="mb-3 text-[0.875rem] text-ink-2">Pick a release to try it first on the next run.</p>}
-        <ReleaseGroups detail={detail} onTry={running ? undefined : tryRelease} tryingId={tryingId} />
+        <ReleaseGroups detail={detail} running={running} onTry={running ? undefined : tryRelease} tryingId={tryingId} />
       </Section>
     </div>
   )
@@ -315,12 +315,13 @@ function AttemptTimeline({ attempts, candidates, episodes }: AttemptTimelineProp
 
 interface ReleaseGroupsProps {
   detail: DownloadDetail
+  running: boolean
   onTry?: (candidateId: string) => void
   tryingId: string | null
 }
 
 /** Releases by unit: the movie or season packs first, then each episode's. */
-function ReleaseGroups({ detail, onTry, tryingId }: ReleaseGroupsProps) {
+function ReleaseGroups({ detail, running, onTry, tryingId }: ReleaseGroupsProps) {
   const main = detail.candidates.filter((candidate) => candidate.episodeId === null)
   const perEpisode = detail.episodes
     .map((episode) => ({ episode, list: detail.candidates.filter((candidate) => candidate.episodeId === episode.id) }))
@@ -331,13 +332,13 @@ function ReleaseGroups({ detail, onTry, tryingId }: ReleaseGroupsProps) {
       {(main.length > 0 || perEpisode.length === 0) && (
         <div>
           {detail.season !== null && <p className="mb-2 text-micro font-semibold text-ink-3">Season packs</p>}
-          <ReleaseList candidates={main} onTry={onTry} tryingId={tryingId} />
+          <ReleaseList candidates={main} running={running} onTry={onTry} tryingId={tryingId} />
         </div>
       )}
       {perEpisode.map(({ episode, list }) => (
         <div key={episode.id}>
           <p className="mb-2 font-mono text-micro font-semibold text-ink-3">{episodeCode(detail.season ?? 0, episode.episodeNumber)}</p>
-          <ReleaseList candidates={list} onTry={onTry} tryingId={tryingId} initialCount={3} />
+          <ReleaseList candidates={list} running={running} onTry={onTry} tryingId={tryingId} initialCount={3} />
         </div>
       ))}
     </div>

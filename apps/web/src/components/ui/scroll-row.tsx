@@ -50,7 +50,7 @@ export function ScrollRow({ label, children, trackClassName, className }: Scroll
 
   return (
     <div role="region" aria-label={label} className={cn("group/row relative", className)}>
-      <div ref={trackRef} className={cn("scroll-x flex snap-x snap-mandatory scroll-px-4 md:scroll-px-8", trackClassName)}>
+      <div ref={trackRef} className={cn("scroll-x -my-3 flex snap-x py-3 snap-mandatory scroll-px-4 md:scroll-px-8", trackClassName)}>
         <span ref={startRef} aria-hidden className="w-px shrink-0" />
         {children}
         <span ref={endRef} aria-hidden className="w-px shrink-0" />

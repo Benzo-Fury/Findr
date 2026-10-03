@@ -43,6 +43,12 @@ export interface TitleDetails {
 /** A title released within this window may not have good releases yet. */
 const RECENT_RELEASE_MS = 30 * 24 * 60 * 60 * 1000
 
+/**
+ * A movie whose cinema release is older than this is assumed to be out on
+ * digital, since TMDB often lists no digital or physical date at all.
+ */
+const THEATRICAL_WINDOW_MS = 120 * 24 * 60 * 60 * 1000
+
 type Raw = Record<string, unknown>
 
 const text = (value: unknown): string => (typeof value === "string" ? value : "")
@@ -124,10 +130,13 @@ function readAvailability(raw: Raw, mediaType: MediaType, date: string): string 
     const countries = list<{ iso_3166_1: string; release_dates: { type: number; release_date: string }[] }>(nested(raw.release_dates, "results"))
     if (countries.length > 0) {
       const releases = countries.find((country) => country.iso_3166_1 === "US")?.release_dates ?? countries.flatMap((country) => country.release_dates)
-      const out = (types: number[]) => releases.some((release) => types.includes(release.type) && new Date(release.release_date).getTime() <= now)
+      const released = (types: number[]) =>
+        releases.filter((release) => types.includes(release.type)).map((release) => new Date(release.release_date).getTime()).filter((time) => time <= now)
 
-      // Theatrical is type 2 or 3; digital and physical are 4 and 5
-      if (out([2, 3]) && !out([4, 5])) return "Only in cinemas so far. Releases may be missing or poor quality."
+      // Theatrical is type 2 or 3; digital and physical are 4 and 5. Only a first cinema release inside the window counts
+      const theatrical = released([2, 3])
+      const inCinemas = theatrical.length > 0 && now - Math.min(...theatrical) < THEATRICAL_WINDOW_MS
+      if (inCinemas && released([4, 5]).length === 0) return "Only in cinemas so far. Releases may be missing or poor quality."
     }
   }
 

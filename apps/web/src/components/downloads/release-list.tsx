@@ -2,7 +2,7 @@ import * as React from "react"
 import { AnimatePresence, motion } from "motion/react"
 import { ArrowsClockwiseIcon, CaretDownIcon, PushPinIcon } from "@phosphor-icons/react"
 import type { CandidateRecord } from "@findr/types/downloads"
-import { CANDIDATE_STATUS } from "@/lib/download-status"
+import { CANDIDATE_STATUS, UNTRIED_CANDIDATE } from "@/lib/download-status"
 import { formatSize } from "@/lib/format"
 import { FADE, staggerDelay } from "@/lib/motion"
 import { cn } from "@/lib/utils"
@@ -11,6 +11,8 @@ import { StatusLabel } from "@/components/ui/status-label"
 
 interface ReleaseListProps {
   candidates: CandidateRecord[]
+  /** Whether the download is still running, so pending releases may yet be tried. */
+  running: boolean
   /** When given, untried and rejected releases offer "Try this release". */
   onTry?: (candidateId: string) => void
   /** The release whose request is in flight. */
@@ -25,10 +27,12 @@ interface ReleaseListProps {
  * is, how it scored, and for rejected ones, exactly why. Long lists start
  * short and expand in place.
  */
-export function ReleaseList({ candidates, onTry, tryingId = null, emptyLabel = "No releases found.", initialCount = 5 }: ReleaseListProps) {
+export function ReleaseList({ candidates, running, onTry, tryingId = null, emptyLabel = "No releases found.", initialCount = 5 }: ReleaseListProps) {
   const [expanded, setExpanded] = React.useState(false)
   const shown = expanded ? candidates : candidates.slice(0, initialCount)
   const hidden = candidates.length - shown.length
+  // Pending releases are only in line while the unit still needs one
+  const waiting = running && !candidates.some((candidate) => candidate.status === "succeeded")
 
   if (candidates.length === 0) {
     return <p className="text-[0.9375rem] text-ink-2">{emptyLabel}</p>
@@ -47,7 +51,7 @@ export function ReleaseList({ candidates, onTry, tryingId = null, emptyLabel = "
               exit={{ opacity: 0 }}
               transition={{ ...FADE, delay: index >= initialCount ? staggerDelay(index - initialCount) : 0 }}
             >
-              <ReleaseRow candidate={candidate} onTry={onTry} trying={tryingId === candidate.id} disabled={tryingId !== null} />
+              <ReleaseRow candidate={candidate} waiting={waiting} onTry={onTry} trying={tryingId === candidate.id} disabled={tryingId !== null} />
             </motion.li>
           ))}
         </AnimatePresence>
@@ -63,12 +67,14 @@ export function ReleaseList({ candidates, onTry, tryingId = null, emptyLabel = "
 
 interface ReleaseRowProps {
   candidate: CandidateRecord
+  /** Whether a pending release is still queued to be tried. */
+  waiting: boolean
   onTry?: (candidateId: string) => void
   trying: boolean
   disabled: boolean
 }
 
-function ReleaseRow({ candidate, onTry, trying, disabled }: ReleaseRowProps) {
+function ReleaseRow({ candidate, waiting, onTry, trying, disabled }: ReleaseRowProps) {
   const { parsed } = candidate
   const canTry = onTry && candidate.status !== "succeeded" && candidate.status !== "attempting"
   const tags = [parsed.resolution, parsed.videoCodec, parsed.audioCodec, parsed.hdrFormat !== "SDR" ? parsed.hdrFormat : null, parsed.releaseType].filter(
@@ -88,7 +94,7 @@ function ReleaseRow({ candidate, onTry, trying, disabled }: ReleaseRowProps) {
         <p className={cn("min-w-0 flex-1 break-all font-mono text-[0.8125rem] leading-snug", candidate.status === "rejected" ? "text-ink-2" : "text-ink")}>
           {candidate.title}
         </p>
-        <StatusLabel status={CANDIDATE_STATUS[candidate.status]} className="shrink-0 text-micro" />
+        <StatusLabel status={candidate.status === "pending" && !waiting ? UNTRIED_CANDIDATE : CANDIDATE_STATUS[candidate.status]} className="shrink-0 text-micro" />
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">

@@ -64,6 +64,12 @@ export const CANDIDATE_STATUS: Record<CandidateStatus, StatusStyle> = {
   succeeded: { label: "Used", icon: CheckCircleIcon, tone: "ok" },
 }
 
+/**
+ * A pending release that nothing will try: its download has finished, or
+ * another release for the same unit already succeeded.
+ */
+export const UNTRIED_CANDIDATE: StatusStyle = { label: "Not tried", icon: CircleDashedIcon, tone: "muted" }
+
 export const ATTEMPT_OUTCOME: Record<AttemptOutcome, StatusStyle> = {
   succeeded: { label: "Succeeded", icon: CheckCircleIcon, tone: "ok" },
   failed: { label: "Failed", icon: XCircleIcon, tone: "bad" },

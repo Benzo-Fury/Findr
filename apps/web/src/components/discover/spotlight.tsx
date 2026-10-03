@@ -86,20 +86,26 @@ export function Spotlight({ items, scope }: SpotlightProps) {
       onBlur={(event) => !event.currentTarget.contains(event.relatedTarget) && setFocused(false)}
       className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_19rem] lg:gap-6"
     >
-      {/* Stage */}
-      <div className="relative aspect-[4/5] overflow-hidden rounded-panel bg-ink sm:aspect-[16/10] lg:aspect-auto lg:min-h-[30rem]">
-        <AnimatePresence initial={false} mode="popLayout">
-          <motion.img
-            key={current.id}
-            src={tmdbImage(current.backdropPath, "backdropLarge") ?? undefined}
-            alt=""
-            initial={{ opacity: 0, scale: 1.08 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.9, ease: EASE_OUT }}
-            className="absolute inset-0 size-full object-cover"
-          />
-        </AnimatePresence>
+      {/* Stage; a click anywhere on it opens the title, and the button's own
+          click reaches it the same way so keyboard use still works */}
+      <div
+        onClick={() => open(current)}
+        className="group/stage relative aspect-[4/5] cursor-pointer overflow-hidden rounded-panel bg-ink shadow-ring transition-shadow duration-300 hover:shadow-lift sm:aspect-[16/10] lg:aspect-auto lg:min-h-[30rem]"
+      >
+        <div className="absolute inset-0 transition-transform duration-700 ease-out-expo group-hover/stage:scale-[1.04]">
+          <AnimatePresence initial={false} mode="popLayout">
+            <motion.img
+              key={current.id}
+              src={tmdbImage(current.backdropPath, "backdropLarge") ?? undefined}
+              alt=""
+              initial={{ opacity: 0, scale: 1.08 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.9, ease: EASE_OUT }}
+              className="absolute inset-0 size-full object-cover"
+            />
+          </AnimatePresence>
+        </div>
         <div className="absolute inset-0 bg-[linear-gradient(to_top,oklch(0.16_0.02_265/0.92),oklch(0.16_0.02_265/0.35)_45%,transparent_70%)]" />
         <div className="absolute inset-x-0 bottom-0 p-5 md:p-8">
           <AnimatePresence mode="wait" initial={false}>
@@ -124,7 +130,7 @@ export function Spotlight({ items, scope }: SpotlightProps) {
               <h2 className="display text-[2.75rem] text-surface [text-wrap:balance] md:text-7xl lg:text-8xl">{current.title}</h2>
               {current.overview && <p className="mt-3 line-clamp-2 max-w-[60ch] text-[0.9375rem] leading-relaxed text-surface/80 max-sm:hidden">{current.overview}</p>}
               <div className="mt-5 flex flex-wrap items-center gap-3">
-                <Button variant="signal" size="lg" iconEnd={ArrowRightIcon} onClick={() => open(current)}>
+                <Button variant="signal" size="lg" iconEnd={ArrowRightIcon}>
                   View title
                 </Button>
                 {state && <StatusLabel status={state.status} variant="filled" />}

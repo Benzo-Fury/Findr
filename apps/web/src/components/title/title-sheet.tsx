@@ -536,6 +536,7 @@ function Releases({ download, mediaType, onChanged }: ReleasesProps) {
       {detail ? (
         <ReleaseList
           candidates={main}
+          running={running}
           onTry={running ? undefined : tryRelease}
           tryingId={tryingId}
           emptyLabel={mediaType === "tv" ? "No whole-season releases were found, so episodes are fetched one by one." : "No releases found yet."}
