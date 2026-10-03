@@ -21,7 +21,7 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -59,7 +59,7 @@ jobs:
 
       # The image job packages these exact executables rather than building its own
       - name: Keep the Linux executables for the image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-executables
           path: dist/findr-linux-*
@@ -70,10 +70,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Fetch the Linux executables
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: linux-executables
           path: dist
@@ -85,7 +85,7 @@ jobs:
       # Tags: 1.4.0 and 1.4 for every release; latest only for full releases
       - name: Work out the tags
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
           flavor: latest=${{ !github.event.release.prerelease }}
@@ -94,17 +94,17 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ github.event.release.tag_name }}
 
       # The executables are prebuilt, but the image's apt step runs per platform
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
