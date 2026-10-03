@@ -155,16 +155,29 @@ export function SettingsPage() {
     return () => document.removeEventListener("keydown", onKeyDown)
   }, [save])
 
+  // Only a standalone executable installs updates itself; a container or source checkout is just told
+  const install = updates.status?.install
+  const selfUpdating = install === undefined || install === "binary"
+
   // Search narrows fields; a section shows while any of its fields match
   const words = React.useMemo(() => queryWords(query), [query])
   const visible = React.useMemo(
     () =>
       SECTIONS.map((section) => ({
         section,
-        fields: FIELDS.filter((field) => field.section === section.id && matchesAll(searchText(field, section), words)),
-        matches: section.id === "accounts" ? matchesAll(`${section.title} ${section.keywords} ${section.description}`, words) : false,
+        fields: FIELDS.filter(
+          (field) =>
+            field.section === section.id &&
+            (selfUpdating || !(field.section === "updates" && field.key === "autoInstall")) &&
+            matchesAll(searchText(field, section), words),
+        ),
+        // Accounts has no fields, and Updates may have none left, but each still has a panel to show
+        matches:
+          section.id === "accounts" || section.id === "updates"
+            ? matchesAll(`${section.title} ${section.keywords} ${section.description}`, words)
+            : false,
       })).filter((entry) => entry.fields.length > 0 || entry.matches),
-    [words],
+    [words, selfUpdating],
   )
 
   // Scroll-spy: the section nearest the top of the viewport is the active one
@@ -274,7 +287,7 @@ export function SettingsPage() {
                               <VpnStatusPanel revision={vpnRevision} />
                             </div>
                           )}
-                          {section.id === "updates" && words.length === 0 && (
+                          {section.id === "updates" && (words.length === 0 || fields.length === 0) && (
                             <div className="pt-5">
                               <UpdateStatusPanel updates={updates} />
                             </div>
