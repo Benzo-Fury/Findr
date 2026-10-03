@@ -109,7 +109,11 @@ const SYSTEM_PROBES: VpnProbes = {
         resolve(source);
       };
       socket.once("error", () => finish(null));
-      socket.connect(53, destination, () => finish(socket.address().address));
+      // An unspecified source (Bun reports `::` when IPv6 has no route) means there is no route
+      socket.connect(53, destination, () => {
+        const source = socket.address().address;
+        finish(source === "::" || source === "0.0.0.0" ? null : source);
+      });
     }),
 
   watchRoutes: (onChange) => {
