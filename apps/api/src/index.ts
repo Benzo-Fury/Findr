@@ -10,6 +10,12 @@ import { migrateAuth, seedRoot } from "./lib/auth/client"
 import DownloadQueue from "./lib/pipeline/DownloadQueue"
 import VpnGuard from "./lib/vpn/VpnGuard"
 
+// A library failing outside any awaited call (a torrent socket, a NAT mapper)
+// must not take the server down with it; the attempt it belonged to fails on
+// its own through the heartbeat or the downloader's error state
+process.on("unhandledRejection", (reason) => console.error("[Process] Unhandled rejection:", reason))
+process.on("uncaughtException", (error) => console.error("[Process] Uncaught exception:", error))
+
 // Create BetterAuth's tables before any request can hit them, then make
 // sure a fresh install has an admin to sign in with
 await migrateAuth()

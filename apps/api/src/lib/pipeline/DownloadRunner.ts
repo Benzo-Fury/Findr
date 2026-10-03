@@ -57,6 +57,11 @@ interface DownloadContext {
   relevance: RelevanceContext;
 }
 
+// ---------- Constants ---------- //
+
+/** What a user sees when a download fails on a bug rather than a known problem. */
+const UNEXPECTED_FAILURE = "Something went wrong inside Findr. Retry the download; if it keeps failing, check the server log.";
+
 // ---------- Runner ---------- //
 
 export class DownloadRunner {
@@ -313,7 +318,7 @@ export class DownloadRunner {
         throw error;
       }
       attempt.finish("interrupted", this.message(error));
-      throw error instanceof FatalDownloadError ? error : new FatalDownloadError(`Unexpected error: ${this.message(error)}`);
+      throw error instanceof FatalDownloadError ? error : new FatalDownloadError(UNEXPECTED_FAILURE, { cause: error });
     }
   }
 
@@ -393,10 +398,13 @@ export class DownloadRunner {
       return;
     }
 
-    // Environment problems and bugs both fail the download with their message
-    if (!(error instanceof FatalDownloadError)) console.error(`[Download ${this.download.id}] Unexpected error:`, error);
+    // Environment problems fail the download with their explanation; bugs with a
+    // plain one. The technical cause goes to the log, never to the user
+    const fatal = error instanceof FatalDownloadError;
+    const cause = fatal ? error.cause : error;
+    if (cause !== undefined) console.error(`[Download ${this.download.id}] Failed:`, cause);
     const episodes = this.download.mediaType === "tv" ? this.tally(Episode.forDownload(this.download.id)) : undefined;
-    this.download.finish("failed", this.message(error), episodes);
+    this.download.finish("failed", fatal ? error.message : UNEXPECTED_FAILURE, episodes);
   }
 
   /** Episode numbers grouped by outcome, for the download's result. */

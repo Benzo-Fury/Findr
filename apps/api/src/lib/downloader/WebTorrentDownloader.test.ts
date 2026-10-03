@@ -171,9 +171,42 @@ describe("WebTorrentDownloader", () => {
         ),
       );
       expect(failure).toBeInstanceOf(FatalDownloadError);
+      // The user is told what to do, not shown the socket error
+      expect((failure as Error).message).toContain(`port ${address.port} is already in use`);
+      expect((failure as Error).message).not.toContain("EADDRINUSE");
     } finally {
       blocker.close();
     }
+  });
+});
+
+// ---------- Single teardown ---------- //
+
+describe("WebTorrentDownloader.destroyOnce", () => {
+  test("the installed WebTorrent still has the method it wraps", () => {
+    const client = new WebTorrent(ISOLATED);
+    try {
+      expect(WebTorrentDownloader.destroyOnce(client)).toBe(true);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  test("ignores a second teardown, as when both the listener and the DHT fail", () => {
+    let teardowns = 0;
+    const client = {
+      destroyed: false,
+      _destroy(this: { destroyed: boolean }) {
+        teardowns++;
+        this.destroyed = true;
+      },
+    };
+    const internals = client as unknown as { _destroy: (error: Error) => void };
+    WebTorrentDownloader.destroyOnce(client as unknown as WebTorrent);
+
+    internals._destroy(new Error("listen EADDRINUSE"));
+    internals._destroy(new Error("bind EADDRINUSE"));
+    expect(teardowns).toBe(1);
   });
 });
 

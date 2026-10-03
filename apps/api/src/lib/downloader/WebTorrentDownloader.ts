@@ -92,7 +92,7 @@ export class WebTorrentDownloader implements Downloader {
   /** The port the current client was started on, for error messages. */
   private port = 0;
   /** Set when the client fails as a whole (e.g. its port is taken); reported once, then the client is rebuilt. */
-  private clientError: string | null = null;
+  private clientError: Error | null = null;
   private readonly entries = new Map<string, Entry>();
   private dhtSaveTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -290,11 +290,14 @@ export class WebTorrentDownloader implements Downloader {
       natPmp: local,
       webSeeds: !vpn,
     });
+    if (!WebTorrentDownloader.destroyOnce(client)) {
+      console.warn("[Downloader] WebTorrent internals changed; a port clash may crash the process");
+    }
 
     // Torrent errors have their own listeners, so anything here is the client's
     client.on("error", (error) => {
-      this.clientError = error instanceof Error ? error.message : String(error);
-      console.error(`[Downloader] Torrent client failed: ${this.clientError}`);
+      this.clientError = error instanceof Error ? error : new Error(String(error));
+      console.error(`[Downloader] Torrent client failed: ${this.clientError.message}`);
     });
 
     this.client = client;
@@ -317,7 +320,7 @@ export class WebTorrentDownloader implements Downloader {
    */
   private throwIfClientFailed(): void {
     if (!this.clientError) return;
-    const message = this.clientError;
+    const cause = this.clientError;
 
     this.clientError = null;
     this.entries.clear();
@@ -326,7 +329,38 @@ export class WebTorrentDownloader implements Downloader {
     if (this.client && !this.client.destroyed) this.client.destroy();
     this.client = null;
 
-    throw new FatalDownloadError(`The torrent client is unavailable (port ${this.port}): ${message}`);
+    throw new FatalDownloadError(WebTorrentDownloader.clientFailureMessage(cause, this.port), { cause });
+  }
+
+  /** Explains a client failure in terms a user can act on, rather than the socket error. */
+  public static clientFailureMessage(error: Error, port: number): string {
+    const code = (error as NodeJS.ErrnoException).code ?? error.message.match(/\bE[A-Z]+\b/)?.[0];
+    if (code === "EADDRINUSE") {
+      return `The torrent client couldn't start because port ${port} is already in use by another program. Close that program, or choose a different torrent port in Settings.`;
+    }
+    if (code === "EACCES") {
+      return `The torrent client isn't allowed to use port ${port}. Choose a torrent port above 1024 in Settings.`;
+    }
+    return "The torrent client stopped unexpectedly. Retry the download; if it keeps failing, check the server log.";
+  }
+
+  /**
+   * Makes the client's internal teardown run only once. When its port is
+   * taken, the TCP listener and the DHT socket each fail and each tear the
+   * client down; the second teardown destroys the NAT mapper again, which
+   * rejects with "client already destroyed" and kills the process. Returns
+   * false when the method is missing — a test checks for it, in case a
+   * future version renames it.
+   */
+  public static destroyOnce(client: WebTorrent): boolean {
+    const internals = client as unknown as { _destroy?: (...args: unknown[]) => void };
+    const destroy = internals._destroy;
+    if (typeof destroy !== "function") return false;
+
+    internals._destroy = (...args) => {
+      if (!client.destroyed) destroy.apply(client, args);
+    };
+    return true;
   }
 
   /**
