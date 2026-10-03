@@ -42,7 +42,7 @@ const SORTS: { value: BrowseSort; label: string }[] = [
 const SHELF_LAYOUT: Record<string, "spotlight" | "ranked" | "landscape" | "mosaic"> = {
   trending: "spotlight",
   "trending-movies": "ranked",
-  "now-playing": "landscape",
+  "popular-tv": "landscape",
   acclaimed: "mosaic",
 }
 

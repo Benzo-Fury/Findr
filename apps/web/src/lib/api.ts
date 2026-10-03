@@ -311,7 +311,6 @@ export type ListSource =
   | "popular"
   | "trending-movies"
   | "new-releases"
-  | "now-playing"
   | "acclaimed"
   | "airing-today"
 

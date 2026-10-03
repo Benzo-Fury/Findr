@@ -74,11 +74,6 @@ export const LIST_SOURCES = {
       };
     },
   },
-  "now-playing": {
-    title: "Now Playing in Theaters",
-    path: "/movie/now_playing",
-    mediaType: "movie",
-  },
   acclaimed: {
     title: "Critically Acclaimed",
     path: "/discover/movie",
@@ -128,7 +123,6 @@ export const FEED_ROWS: FeedRow[] = [
   { source: "new-releases" },
   { source: "trending-movies", limit: 10 },
   { source: "popular", title: "Popular TV Shows", mediaType: "tv" },
-  { source: "now-playing" },
   { source: "acclaimed" },
   { source: "top-rated", title: "Top Rated TV", mediaType: "tv" },
   { source: "airing-today" },
