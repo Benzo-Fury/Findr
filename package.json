@@ -1,7 +1,7 @@
 {
   "name": "findr",
   "private": true,
-  "version": "2.0.1",
+  "version": "2.1.1",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev": "bun run dev:api & bun run dev:web",
