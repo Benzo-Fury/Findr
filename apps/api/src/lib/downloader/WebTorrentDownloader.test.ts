@@ -180,6 +180,38 @@ describe("WebTorrentDownloader", () => {
   });
 });
 
+// ---------- Incoming peers ---------- //
+
+describe("WebTorrent incoming peers (patches/webtorrent@3.0.21.patch)", () => {
+  test("an encrypted incoming peer for a paused torrent is refused without crashing the process", async () => {
+    // A client holding a paused torrent, as `stop()` leaves one while the release is remuxed
+    const holder = new WebTorrent(ISOLATED);
+    const visitor = new WebTorrent(ISOLATED);
+    try {
+      const held = await new Promise<Torrent>((resolve) =>
+        holder.seed(join(scratch, "Fixture.Movie.2024"), { announce: [] }, resolve),
+      );
+      held.pause();
+      const port = await waitFor(async () => {
+        const address = holder.address();
+        return address && typeof address !== "string" && address.port > 0 ? address.port : null;
+      });
+
+      // The visitor connects in with protocol encryption (WebTorrent's default). Unpatched, the
+      // holder destroys the peer on `_addIncomingPeer` and then finishes the handshake anyway,
+      // reading `swarm.private` on null: an uncaught error that takes the whole process down
+      const visiting = visitor.add(`magnet:?xt=urn:btih:${held.infoHash}`, { path: join(scratch, "visitor") });
+      visiting.once("infoHash", () => visiting.addPeer(`127.0.0.1:${port}`));
+      await Bun.sleep(1500);
+
+      expect(held.wires).toHaveLength(0);
+      expect(visiting.wires).toHaveLength(0);
+    } finally {
+      await Promise.all([holder, visitor].map((client) => new Promise<void>((resolve) => client.destroy(() => resolve()))));
+    }
+  }, 15_000);
+});
+
 // ---------- Single teardown ---------- //
 
 describe("WebTorrentDownloader.destroyOnce", () => {

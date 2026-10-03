@@ -7,14 +7,15 @@
     "dev": "bun run dev:api & bun run dev:web",
     "dev:api": "bun --filter @findr/api dev",
     "dev:web": "bun --filter @findr/web dev",
-
     "build": "bun run scripts/build.ts",
     "build:api": "bun --filter @findr/api build",
     "build:web": "bun --filter @findr/web build",
-
     "start": "NODE_ENV=production bun run dist/index.js"
   },
   "devDependencies": {
     "@types/bun": "latest"
+  },
+  "patchedDependencies": {
+    "webtorrent@3.0.21": "patches/webtorrent@3.0.21.patch"
   }
 }
