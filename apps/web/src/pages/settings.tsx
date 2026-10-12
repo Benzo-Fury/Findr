@@ -287,8 +287,9 @@ export function SettingsPage() {
                               <VpnStatusPanel revision={vpnRevision} />
                             </div>
                           )}
+                          {/* Alone in the card (a container or source checkout, or a search matching only the section), it is inset below too */}
                           {section.id === "updates" && (words.length === 0 || fields.length === 0) && (
-                            <div className="pt-5">
+                            <div className={cn("pt-5", fields.length === 0 && "pb-5")}>
                               <UpdateStatusPanel updates={updates} />
                             </div>
                           )}
