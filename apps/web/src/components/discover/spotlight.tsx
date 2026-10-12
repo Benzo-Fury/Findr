@@ -95,7 +95,7 @@ export function Spotlight({ items, scope }: SpotlightProps) {
         <div className="absolute inset-0 transition-transform duration-700 ease-out-expo group-hover/stage:scale-[1.04]">
           <AnimatePresence initial={false} mode="popLayout">
             <motion.img
-              key={current.id}
+              key={`${current.mediaType}-${current.id}`}
               src={tmdbImage(current.backdropPath, "backdropLarge") ?? undefined}
               alt=""
               initial={{ opacity: 0, scale: 1.08 }}
@@ -110,7 +110,7 @@ export function Spotlight({ items, scope }: SpotlightProps) {
         <div className="absolute inset-x-0 bottom-0 p-5 md:p-8">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
-              key={current.id}
+              key={`${current.mediaType}-${current.id}`}
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
@@ -145,7 +145,7 @@ export function Spotlight({ items, scope }: SpotlightProps) {
         {staged.map((item, position) => {
           const active = position === index
           return (
-            <li key={item.id} className="shrink-0 lg:shrink">
+            <li key={`${item.mediaType}-${item.id}`} className="shrink-0 lg:shrink">
               <button
                 type="button"
                 onPointerEnter={() => setIndex(position)}
