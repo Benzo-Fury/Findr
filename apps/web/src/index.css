@@ -127,6 +127,19 @@
   }
 }
 
+/*
+ * iOS Safari zooms the page into any focused field whose text is under 16px
+ * and leaves it zoomed. Touch devices get 16px fields; this sits outside the
+ * layers so it outranks the text-size utilities on each input.
+ */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
 @layer components {
   /* Condensed display type, the identity's loudest voice */
   .display {
