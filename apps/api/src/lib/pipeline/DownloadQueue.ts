@@ -26,7 +26,7 @@ import { Episode } from "../db/models/Episode";
 import { SettingsStore } from "../db/models/SettingsStore";
 import { Title } from "../db/models/Title";
 import type { Downloader } from "../downloader/Downloader";
-import { WebTorrentDownloader } from "../downloader/WebTorrentDownloader";
+import { TinyTorrentDownloader } from "../downloader/TinyTorrentDownloader";
 import SelfManagedSingleton from "../other/SelfManagedSingleton";
 import VpnGuard from "../vpn/VpnGuard";
 import { AttemptRunner } from "./AttemptRunner";
@@ -47,7 +47,7 @@ export class QueueError extends Error {
 // ---------- Queue ---------- //
 
 export default class DownloadQueue extends SelfManagedSingleton {
-  private downloader: Downloader = new WebTorrentDownloader();
+  private downloader: Downloader = new TinyTorrentDownloader();
   private attempts = new AttemptRunner(this.downloader);
 
   /** Download ids waiting for a slot, oldest first. */
@@ -124,10 +124,12 @@ export default class DownloadQueue extends SelfManagedSingleton {
       if (stopped.isFinished) return stopped;
     }
 
-    // A queued download never started, so there is nothing to clean up
+    // A queued download has nothing running, but one the killswitch paused
+    // may have kept a partial transfer to resume
     if (!download.isFinished) {
       this.waiting = this.waiting.filter((waiting) => waiting !== id);
       download.setStatus("cancelled", "Cancelled");
+      await this.removeScratch(id);
     }
     return download;
   }
@@ -272,14 +274,18 @@ export default class DownloadQueue extends SelfManagedSingleton {
       if (!id || !download || download.isFinished) continue;
 
       // Run it, then free the slot and start the next. A download the
-      // killswitch paused is still unfinished and goes back to the front
+      // killswitch paused is still unfinished and goes back to the front,
+      // keeping its partial transfer; a finished one needs no scratch files
       const controller = new AbortController();
       const runner = new DownloadRunner(download, this.attempts, controller.signal);
-      const done = runner.run().finally(() => {
-        this.running.delete(id);
-        if (Download.find(id)?.isFinished === false && !this.waiting.includes(id)) this.waiting.unshift(id);
-        this.drain();
-      });
+      const done = runner
+        .run()
+        .then(() => this.clearFinishedScratch(id))
+        .finally(() => {
+          this.running.delete(id);
+          if (Download.find(id)?.isFinished === false && !this.waiting.includes(id)) this.waiting.unshift(id);
+          this.drain();
+        });
       this.running.set(id, { controller, done });
     }
   }
@@ -290,6 +296,14 @@ export default class DownloadQueue extends SelfManagedSingleton {
     const download = Download.find(id);
     if (!download) throw new QueueError("not_found", "Download not found");
     return download;
+  }
+
+  /** Deletes a finished download's scratch directory, such as a paused transfer a different release then beat. Never throws. */
+  private async clearFinishedScratch(id: string): Promise<void> {
+    if (!Download.find(id)?.isFinished) return;
+    await this.removeScratch(id).catch((error: unknown) => {
+      console.warn(`[Queue] Could not clear scratch files for ${id}:`, error instanceof Error ? error.message : error);
+    });
   }
 
   /** Deletes a download's scratch directory, if the downloads root is configured. */

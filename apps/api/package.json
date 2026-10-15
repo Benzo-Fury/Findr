@@ -11,11 +11,10 @@
     "@findr/types": "workspace:*",
     "better-auth": "^1.6.27",
     "hono": "^4.13.1",
-    "webtorrent": "^3.0.21",
+    "tinytorrent": "^0.1.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "@types/webtorrent": "^3.0.0"
+    "@types/bun": "latest"
   }
 }

@@ -26,25 +26,20 @@ Four layers, every one of which must hold.
 
 ### 1. Binding
 
-Every socket the torrent client opens is bound to the VPN interface's address:
+Every socket the torrent engine opens is bound to the VPN interface's address:
 
 - outgoing peer connections (TCP), from the VPN address of the peer's family;
 - the incoming peer listener, which listens on the VPN address only;
-- the DHT and UDP tracker sockets.
+- UDP for the DHT, UDP trackers and port mapping;
+- HTTP(S) trackers and UPnP requests.
 
 The address is looked up again **for every new socket**, so a connection can only be opened from an address the VPN interface holds at that moment. No timer is involved. If the tunnel drops, its address disappears: new connections fail straight away, and existing ones can no longer send.
 
-WebTorrent has no option for this, so Findr wraps Node's `net` and `dgram` socket constructors in the process (`lib/vpn/VpnSockets.ts`). Connections to loopback, and everything while the killswitch is off, pass through untouched.
+Findr's torrent engine, TinyTorrent, opens every one of these through a single transport (`lib/vpn/VpnTransport.ts`), which picks the address; while the VPN counts as down it opens nothing at all. While the killswitch is off, sockets follow the system's routes.
 
-What can't be bound is turned off while the killswitch is on:
+Because port mapping goes through the same transport, behind the VPN it only ever asks the VPN's gateway to forward a port (useful with VPNs that forward ports on request, such as ProtonVPN), never your home router. The engine has no local peer discovery or web seeds, so nothing announces on your LAN or fetches outside the transport.
 
-| Off | Why |
-|---|---|
-| HTTP(S) trackers | They are fetched with `fetch`, which can't be bound. UDP trackers, the DHT and peer exchange still find peers. |
-| Web seeds | Also HTTP. |
-| Magnet `xs` metadata URLs | Also HTTP. The file list still arrives from peers. |
-| Local peer discovery | It announces on your LAN. |
-| UPnP / NAT-PMP | They ask your router to open a port on your home connection. |
+The VPN already encrypts, so behind it peers are tried in plaintext first, and BitTorrent's own obfuscation is used only for peers that insist on it. That saves about a fifth of the CPU per gigabyte.
 
 ### 2. Interface and routes
 
@@ -68,15 +63,15 @@ This is the only check that proves where traffic actually leaves the internet, s
 
 ### 4. Failing closed
 
-With the killswitch on, torrents don't run unless every check has positively passed: before the first check, without an interface configured, while the interface has no address, when a route goes elsewhere, and when the public IP lookup fails. If the installed WebTorrent ever changes so that HTTP trackers can't be turned off, downloads fail rather than run unprotected.
+With the killswitch on, torrents don't run unless every check has positively passed: before the first check, without an interface configured, while the interface has no address, when a route goes elsewhere, and when the public IP lookup fails.
 
 ### When it trips
 
-1. The torrent client is destroyed at once: every peer connection, the listener, the DHT and the tracker sockets.
-2. Transfers in progress pause. Their release isn't blamed, partial files are deleted, and the download goes back to the front of the queue with *Paused until the VPN is back: …*. A transfer that had already finished keeps its files and is saved.
-3. When the VPN is back, a new client starts bound to its current address, and paused downloads resume, trying the same release again.
+1. The torrent engine is shut down at once: every peer connection, the listener, the DHT and the tracker sockets.
+2. Transfers in progress pause. Their release isn't blamed, their partial files stay on disk, and the download goes back to the front of the queue with *Paused until the VPN is back: …*. A transfer that had already finished keeps its files and is saved.
+3. When the VPN is back, a new engine starts bound to its current address, and paused downloads resume the same release from where they stopped. The engine re-checks the kept files by hash first (shown as *checking*), so nothing damaged or incomplete is trusted. Cancelling or deleting a paused download, or its finishing some other way, removes the kept files.
 
-If the VPN reconnects with a **different address**, or the killswitch is turned on while torrents are running, the client is rebuilt the same way, so nothing stays bound to an old address or runs without protection.
+If the VPN reconnects with a **different address**, or the killswitch is turned on while torrents are running, the engine is restarted the same way, so nothing stays bound to an old address or runs without protection.
 
 ## What it can't cover
 

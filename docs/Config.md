@@ -162,7 +162,7 @@ An optional pass that asks Claude which of the best-scoring releases are clearly
 
 | Field | Default | Description |
 |---|---|---|
-| `enabled` | `false` | Run torrents only through the VPN: every torrent socket is bound to the VPN interface's address, and the client is cut off whenever a check fails. Also turns off HTTP trackers, web seeds, local peer discovery and router port mapping. |
+| `enabled` | `false` | Run torrents only through the VPN: every torrent socket is bound to the VPN interface's address, and the engine is cut off whenever a check fails. Port mapping then only asks the VPN's gateway, and peers are tried in plaintext first, since the VPN already encrypts. |
 | `interfaceName` | - | The VPN's network interface, such as `wg0` or `tun0`; a trailing `*` matches a prefix (`utun*` on macOS). Required while `enabled`: with it empty, torrents stay blocked. Internet traffic must also be routed through it. |
 | `homeIps` | - | Optional. Your home connection's public IPv4/IPv6 addresses, comma separated. When set, the public address is looked up and torrents stop if it is one of these or the lookup fails. |
 

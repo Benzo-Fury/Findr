@@ -4,8 +4,8 @@
  *
  * - `AttemptFailure` — this release is bad (stalled, dangerous files, broken
  *   container). Reject it and move on to the next candidate.
- * - `FatalDownloadError` — the environment is broken (the torrent client
- *   cannot listen, library paths unset). Trying another release would fail the same way, so
+ * - `FatalDownloadError` — the environment is broken (library paths unset,
+ *   mkvmerge missing). Trying another release would fail the same way, so
  *   stop without blaming the candidate.
  * - `SuspendedError` — the VPN killswitch cut torrent traffic. Put the
  *   candidate back and leave the download queued, to resume once the VPN is up.

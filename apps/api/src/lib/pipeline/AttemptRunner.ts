@@ -6,7 +6,9 @@
  * However the attempt ends — success, a bad release, cancellation, a crash in
  * a dependency — the torrent is removed from the client and the workspace is
  * deleted before this returns or throws, each given a minute so a hung
- * teardown cannot hold the download. Removal waits until the files are saved,
+ * teardown cannot hold the download. The one exception is a pause by the VPN
+ * killswitch: the workspace stays, so the candidate's next attempt resumes
+ * the transfer instead of starting over. Removal waits until the files are saved,
  * since torrent teardown depends on the client and saving does not. The
  * library only ever receives complete files, via the saver's atomic placement.
  *
@@ -28,7 +30,7 @@ import { TorrentSession } from "../downloader/TorrentSession";
 import { LibrarySaver, type TitleNaming } from "../media/LibrarySaver";
 import { Sterilizer } from "../media/Sterilizer";
 import Prowlarr from "../prowlarr/Prowlarr";
-import { throwIfCancelled } from "./errors";
+import { SuspendedError, throwIfCancelled } from "./errors";
 import { Heartbeat } from "./Heartbeat";
 
 // ---------- Types ---------- //
@@ -75,15 +77,21 @@ export class AttemptRunner {
     const session = new TorrentSession(this.downloader, this.inspector, settings.watchdog);
     const heartbeat = new Heartbeat(request.signal, { limitMs: settings.watchdog.stuckTimeoutMinutes * MINUTE });
 
+    let paused = false;
     try {
       // Give up on the work the moment it is cancelled or stops showing signs of life
       return await heartbeat.guard(this.work(request, workspace, session, heartbeat));
+    } catch (error) {
+      paused = error instanceof SuspendedError;
+      throw error;
     } finally {
-      // Always leave nothing behind, whatever happened above. Each step is
-      // time-limited, so a hung teardown cannot hold the download or a cancel
+      // Leave nothing behind, whatever happened above, except the files of a
+      // transfer the killswitch paused. The client already let go of those, so
+      // discarding its torrent cannot delete them. Each step is time-limited,
+      // so a hung teardown cannot hold the download or a cancel
       heartbeat.dispose();
       await this.settle(`remove the torrent for attempt ${request.attempt.id}`, session.discard());
-      await this.settle(`remove workspace ${workspace.root}`, workspace.dispose());
+      if (!paused) await this.settle(`remove workspace ${workspace.root}`, workspace.dispose());
     }
   }
 

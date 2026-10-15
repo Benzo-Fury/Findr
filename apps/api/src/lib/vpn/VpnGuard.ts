@@ -1,12 +1,12 @@
 /**
- * The VPN killswitch. Decides whether torrent traffic is allowed, binds the
- * torrent client's sockets to the VPN, and tells the download queue the
- * moment either changes.
+ * The VPN killswitch. Decides whether torrent traffic is allowed, which
+ * address the torrent engine's sockets are bound to, and tells the download
+ * queue the moment either changes.
  *
  * Its defences, every one of which must hold:
  *
  *   binding    every torrent socket is bound to the VPN interface's address,
- *              resolved again for each one (see `VpnSockets`), so traffic
+ *              resolved again for each one (see `VpnTransport`), so traffic
  *              cannot leave from any other address even between checks
  *   interface  the VPN's interface exists and holds an address that is not
  *              link-local
@@ -22,6 +22,7 @@
  * address cannot be looked up.
  */
 
+import dgram from "node:dgram";
 import { isIPv4, isIPv6 } from "node:net";
 import { networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 import type { VpnSettings } from "@findr/types/settings";
@@ -29,9 +30,14 @@ import type { VpnStatus } from "@findr/types/vpn";
 import { SettingsStore } from "../db/models/SettingsStore";
 import SelfManagedSingleton from "../other/SelfManagedSingleton";
 import { SuspendedError } from "../pipeline/errors";
-import VpnSockets, { type VpnBinding } from "./VpnSockets";
 
 // ---------- Types ---------- //
+
+/** The addresses torrent sockets are bound to, one per family the VPN carries. */
+export interface VpnBinding {
+  ipv4: string | null;
+  ipv6: string | null;
+}
 
 /** A running watch on the routing table. */
 export interface RouteWatch {
@@ -99,7 +105,7 @@ const SYSTEM_PROBES: VpnProbes = {
   // Connecting a UDP socket sends nothing; it only makes the OS pick a route and a source address
   route: (destination) =>
     new Promise((resolve) => {
-      const socket = VpnSockets.createUnboundSocket(isIPv6(destination) ? "udp6" : "udp4");
+      const socket = dgram.createSocket(isIPv6(destination) ? "udp6" : "udp4");
       const finish = (source: string | null) => {
         try {
           socket.close();
@@ -212,11 +218,6 @@ export default class VpnGuard extends SelfManagedSingleton {
     this.record(status);
     if (status.state !== "up") throw new SuspendedError(status.reason ?? "The VPN is down");
     return { ipv4: status.addresses.find((address) => isIPv4(address)) ?? null, ipv6: status.addresses.find((address) => isIPv6(address)) ?? null };
-  }
-
-  /** Binds the process's torrent sockets to `binding()` from now on. Safe to call repeatedly. */
-  public bindSockets(): void {
-    VpnSockets.install(() => this.binding());
   }
 
   /**

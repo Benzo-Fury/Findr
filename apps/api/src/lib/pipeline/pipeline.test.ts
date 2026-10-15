@@ -108,13 +108,15 @@ function mockNetwork(): void {
  * `freeze` makes status polls never return, like a wedged client;
  * `unavailable` makes every add fail as if the client were down. After
  * `disconnect()`, polling a torrent throws as the real client does, until the
- * next add starts a fresh client.
+ * next add starts a fresh client. A hanging transfer leaves a partial file,
+ * and `resumedFrom` records every add that found files already in its directory.
  */
 class FakeDownloader implements Downloader {
   public hang = false;
   public freeze = false;
   public unavailable = false;
   public suspended: string | null = null;
+  public readonly resumedFrom: string[] = [];
   public readonly live = new Map<string, { hash: string; directory: string; tag: string; started: boolean }>();
   private next = 0;
 
@@ -124,6 +126,8 @@ class FakeDownloader implements Downloader {
     this.suspended = null;
     const hash = input.kind === "magnet" ? (input.uri.split("btih:")[1] ?? "") : "file";
     const handle = `h${this.next++}`;
+    const kept = await readdir(options.directory, { recursive: true }).catch(() => []);
+    if (kept.length > 0) this.resumedFrom.push(options.directory);
     this.live.set(handle, { hash, directory: options.directory, tag: options.tag, started: false });
     return handle;
   }
@@ -139,13 +143,14 @@ class FakeDownloader implements Downloader {
     const files = (await this.files(handle)) ?? [];
     if (!torrent) return;
     torrent.started = true;
-    if (this.hang) return;
 
-    // Materialise each selected file as a real, playable Matroska file
+    // Materialise each selected file as a real, playable Matroska file, or
+    // only a partial one while transfers hang
     for (const file of files.filter((entry) => indexes.includes(entry.index))) {
       const target = join(torrent.directory, file.path);
       await mkdir(dirname(target), { recursive: true });
-      await copyFile(fixture, target);
+      if (this.hang) await Bun.write(target, "partial");
+      else await copyFile(fixture, target);
     }
   }
 
@@ -378,8 +383,11 @@ describe.skipIf(!hasTools)("download pipeline", () => {
     expect(await readdir(join(root, "downloads"))).toEqual([]);
   });
 
-  test("the killswitch pauses a transfer without blaming the release, and resumes it when the VPN is back", async () => {
-    // A VPN tunnel the test can pull
+  /**
+   * Starts a movie download behind a VPN the test can pull, and pulls it once
+   * the transfer is under way. Returns with the download paused by the killswitch.
+   */
+  async function pauseDownloadByKillswitch() {
     let tunnel = true;
     const vpn = VpnGuard.getInstance().useProbes({
       interfaces: () =>
@@ -402,24 +410,52 @@ describe.skipIf(!hasTools)("download pipeline", () => {
     await queue.recover();
     await waitFor(() => Attempt.activeFor(download.id)?.phase === "downloading");
 
-    // The tunnel drops: the transfer stops and the download waits, its release untouched
+    // The tunnel drops
     tunnel = false;
     await vpn.check();
     await queue.idle();
+
+    const restore = async () => {
+      tunnel = true;
+      await vpn.check();
+    };
+    return { downloader, queue, download, restore };
+  }
+
+  test("the killswitch pauses a transfer without blaming the release, and resumes it from the kept files when the VPN is back", async () => {
+    const { downloader, queue, download, restore } = await pauseDownloadByKillswitch();
+
+    // The transfer stopped and the download waits, its release untouched
     const paused = Download.find(download.id);
     expect(paused?.status).toBe("queued");
     expect(paused?.toSummary().statusMessage).toBe("Paused until the VPN is back: The VPN interface wg0 is not up");
     expect(candidateStatuses(download.id)["The.Matrix.1999.1080p.WEBRip.x264-GRP"]).toBe("pending");
     expect(Attempt.forDownload(download.id).map((attempt) => attempt.toRecord().outcome)).toContain("interrupted");
-    expect(await readdir(join(root, "downloads"))).toEqual([]);
 
-    // The tunnel returns: the same release is tried again and saved
+    // Its partial files are still on disk
+    const payload = join(root, "downloads", download.id, Candidate.pendingFor(download.id, null)[0]?.id ?? "", "payload");
+    expect((await readdir(payload, { recursive: true })).length).toBeGreaterThan(0);
+
+    // The tunnel returns: the same release carries on from those files and is saved
     downloader.hang = false;
-    tunnel = true;
-    await vpn.check();
+    await restore();
     await waitFor(() => Download.find(download.id)?.isFinished === true);
     await queue.idle();
     expect(Download.find(download.id)?.status).toBe("completed");
     expect(candidateStatuses(download.id)["The.Matrix.1999.1080p.WEBRip.x264-GRP"]).toBe("succeeded");
+    expect(downloader.resumedFrom).toEqual([payload]);
+
+    // Nothing is left behind once it finishes
+    expect(await readdir(join(root, "downloads"))).toEqual([]);
+  });
+
+  test("cancelling a download the killswitch paused deletes the files it kept", async () => {
+    const { queue, download, restore } = await pauseDownloadByKillswitch();
+    expect(await readdir(join(root, "downloads"))).toEqual([download.id]);
+
+    await queue.cancel(download.id);
+    expect(Download.find(download.id)?.status).toBe("cancelled");
+    expect(await readdir(join(root, "downloads"))).toEqual([]);
+    await restore();
   });
 });

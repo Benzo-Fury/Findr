@@ -140,6 +140,12 @@ export const TorrentSettingsSchema = z.object({
    * Read when the client starts, so a change applies after a restart.
    */
   port: z.number().int().min(0).max(65535).default(6881),
+  /**
+   * Most peers each torrent connects to at once. More peers find more
+   * bandwidth, at some CPU cost per connection. Applies from the next
+   * download that starts.
+   */
+  maxConnections: z.number().int().min(10).max(500).default(150),
 });
 
 /** The port Findr serves the web app and API on unless the settings say otherwise. */
@@ -179,7 +185,7 @@ const addressList = z
  * The VPN killswitch. While it is on, every torrent connection is bound to the
  * VPN interface's address, and the torrent client runs only while the VPN
  * checks pass: the moment one fails every torrent connection is cut, and
- * downloads wait until the VPN is back.
+ * downloads wait until the VPN is back, then resume from the data they kept.
  */
 export const VpnSettingsSchema = z.object({
   enabled: z.boolean().default(false),

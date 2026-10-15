@@ -39,7 +39,12 @@ export interface TorrentFile {
  * files, so a torrent with unwanted extras still reaches 100%.
  */
 export interface TorrentStatus {
-  state: "metadata" | "downloading" | "complete" | "error";
+  /**
+   * `checking` means the file list is known and data already on disk — left
+   * by an attempt the VPN killswitch paused — is being verified before the
+   * transfer carries on from it.
+   */
+  state: "metadata" | "checking" | "downloading" | "complete" | "error";
   downloadedBytes: number;
   totalBytes: number;
   /** 0–1 over the selected files. */
@@ -76,10 +81,11 @@ export interface Downloader {
   managed(): Promise<Map<string, string>>;
 
   /**
-   * Cuts every network connection at once, for the VPN killswitch. Torrents
-   * still transferring are destroyed with their data, and any later call on
-   * one throws `SuspendedError` with the reason. Stopped torrents keep their
-   * files, so an attempt already processing them can finish. Torrents added
+   * Cuts every network connection at once, for the VPN killswitch. Every
+   * torrent is destroyed but keeps its files on disk: one still transferring
+   * resumes from them when its attempt is retried in the same directory, and
+   * one already stopped can still be processed. Any later call on a
+   * transferring one throws `SuspendedError` with the reason. Torrents added
    * afterwards start a fresh client.
    */
   disconnect(reason: string): Promise<void>;

@@ -13,9 +13,9 @@
  *    `windows-x64`, `darwin-arm64`) to cross-compile `dist/findr-<target>`
  *    instead.
  *
- * Both outputs replace WebTorrent's optional native addons with stubs (see
- * `scripts/native-stubs.ts`), so the build is pure JavaScript, behaves the
- * same on every machine, and cross-compiles to any platform Bun targets.
+ * Nothing in the build is native code — the torrent engine, TinyTorrent, is
+ * pure TypeScript — so it behaves the same on every machine and
+ * cross-compiles to any platform Bun targets.
  *
  * `process.env.NODE_ENV` is inlined as `"production"` in both outputs so the
  * dev-only route glob and Vite proxy are dead-code eliminated, and
@@ -33,7 +33,6 @@ import { $ } from "bun"
 import { basename } from "node:path"
 import { parseArgs } from "node:util"
 import { version as packageVersion } from "../../../package.json"
-import { nativeStubsForBuild } from "./native-stubs"
 
 // ---------- Paths ---------- //
 
@@ -96,7 +95,6 @@ const bundle = await build({
   target: "bun",
   minify: true,
   define,
-  plugins: [nativeStubsForBuild],
   naming: { asset: "web/[name]-[hash].[ext]" },
 })
 
@@ -121,7 +119,6 @@ for (const { target, name, outfile } of compiles) {
     entrypoints: [entry],
     minify: true,
     define: { ...define, "process.env.FINDR_TARGET": JSON.stringify(name) },
-    plugins: [nativeStubsForBuild],
     compile: { outfile, ...(target ? { target } : {}) },
   })
   console.log(`Build: compiled standalone executable → dist/${basename(outfile)}`)

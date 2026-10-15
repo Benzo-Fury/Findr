@@ -66,7 +66,7 @@ If any step fails because of the release, it is rejected with the reason, its fi
 | [Anthropic API key](https://console.anthropic.com/) *(optional)* | The wrong-title filter |
 | [Bun](https://bun.sh) 1.4+ | Only needed to build from source |
 
-Torrents are downloaded by Findr itself ([WebTorrent](https://webtorrent.io), built in), so Prowlarr is the only service to run. It can run in Docker: [`docker/`](docker/README.md) has a Compose file (plus optional FlareSolverr) and a step-by-step setup guide. Findr itself is published as a container image too, `ghcr.io/benzo-fury/findr`, with every release ([running it in Docker](docker/README.md#running-findr-in-docker)).
+Torrents are downloaded by Findr itself (TinyTorrent, a pure TypeScript engine, built in), so Prowlarr is the only service to run. It can run in Docker: [`docker/`](docker/README.md) has a Compose file (plus optional FlareSolverr) and a step-by-step setup guide. Findr itself is published as a container image too, `ghcr.io/benzo-fury/findr`, with every release ([running it in Docker](docker/README.md#running-findr-in-docker)).
 
 ## Installation
 
@@ -129,7 +129,7 @@ Locked out? Stop Findr, delete the rows from the `user`, `account`, `session` an
 
 ### Torrent client
 
-Findr downloads with a built-in BitTorrent client, so there is nothing to install. It listens on the port set under **Settings → Torrent client** (default `6881`, TCP for peers and UDP for the DHT; a change applies after a restart); forward that port on your router for better speeds, and allow incoming connections if your OS firewall asks. Peers connect over TCP - uTP is not supported. Each torrent is removed when its attempt ends; Findr does not seed.
+Findr downloads with a built-in BitTorrent client, so there is nothing to install. It listens on the port set under **Settings → Torrent client** (default `6881`, TCP for peers and UDP for the DHT; a change applies after a restart); Findr asks your router to forward it (NAT-PMP or UPnP); if the router doesn't support that, forward it yourself for better speeds, and allow incoming connections if your OS firewall asks. Peers connect over TCP - uTP is not supported. Each torrent is removed when its attempt ends; Findr does not seed.
 
 ### VPN killswitch
 
@@ -168,7 +168,7 @@ To cross-compile, pass one or more targets; each produces `dist/findr-<target>`:
 bun run build --target linux-x64 --target linux-arm64 --target windows-x64
 ```
 
-Targets: `linux-x64`, `linux-arm64` (add `-musl` for Alpine), `darwin-x64`, `darwin-arm64`, `windows-x64`. The build contains no native code - WebTorrent's optional native addons are replaced with stubs (`apps/api/scripts/native-stubs.ts`) - so every target works the same way. The only external program Findr calls at runtime is `mkvmerge`, which must be installed on the machine that runs it.
+Targets: `linux-x64`, `linux-arm64` (add `-musl` for Alpine), `darwin-x64`, `darwin-arm64`, `windows-x64`. The build contains no native code - the torrent engine, TinyTorrent, is pure TypeScript - so every target works the same way. The only external program Findr calls at runtime is `mkvmerge`, which must be installed on the machine that runs it.
 
 ## Development
 
@@ -204,7 +204,7 @@ apps/
       lib/
         db/             SQLite client, migrations, models (all SQL lives here)
         pipeline/       queue, download runner, search, attempts, relevance filter
-        downloader/     Downloader interface, built-in WebTorrent client, inspection, watchdog
+        downloader/     Downloader interface, built-in TinyTorrent engine, inspection, watchdog
         media/          Sterilizer (mkvmerge), LibrarySaver
         releases/       release title parser and scorer
         updates/        Updater: checks GitHub releases, installs a new executable

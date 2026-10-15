@@ -3,6 +3,11 @@
  * Everything an attempt writes — the torrent payload and the sterilized
  * output — lives under it, so cleaning up after any outcome is one recursive
  * delete.
+ *
+ * An attempt the VPN killswitch paused skips that delete, and the same
+ * candidate's next attempt finds its payload here and resumes it. The torrent
+ * client verifies every piece by hash, so a payload is only ever a head
+ * start, never trusted as is.
  */
 
 import { mkdir, readdir, rm, rmdir } from "node:fs/promises";
@@ -36,9 +41,12 @@ export class AttemptWorkspace {
     }
   }
 
-  /** Starts from an empty directory, discarding anything a previous try left. */
+  /**
+   * Readies the directories: an empty output directory, and the payload a
+   * paused attempt left behind, if any, so its download carries on.
+   */
   public async prepare(): Promise<void> {
-    await this.dispose();
+    await rm(this.outputDir, { recursive: true, force: true });
     await mkdir(this.payloadDir, { recursive: true });
     await mkdir(this.outputDir, { recursive: true });
   }
