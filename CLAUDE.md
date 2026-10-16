@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Development
-bun run dev              # API (port 34571, restarts on change) and Vite (port 5173) together
+bun run dev              # API (port 34571, restarts on change) and Vite (port 5173) together; open :34571
 bun run dev:api          # API only; proxies non-API requests to Vite
 bun run dev:web          # Vite only
 
@@ -18,6 +18,8 @@ bun run start            # Run dist/index.js (serves API + web on PORT)
 
 # Tests (bun test; a preload pins the database to :memory:)
 cd apps/api && bun test
+cd apps/api && bun test src/lib/releases/ReleaseParser.test.ts   # one file
+cd apps/api && bun test -t "pattern"                             # tests whose name matches
 
 # Type checking — generate the build maps first on a fresh checkout
 cd apps/api && bun run scripts/cartographer.ts && bun run scripts/assetmap.ts --allow-empty && bunx tsc --noEmit
@@ -46,18 +48,18 @@ Bun monorepo: `apps/api` (Hono on Bun), `apps/web` (React 19 + react-router-dom 
 
 ### Packages
 
-- `@findr/types` — Zod schemas and inferred types shared by API and web. Import by subpath (`@findr/types/downloads`, `/settings`, `/account`, `/release`, `/media`); new modules get their own file, not a re-export from the index.
+- `@findr/types` — Zod schemas and inferred types shared by API and web. Import by subpath (`@findr/types/downloads`, `/settings`, `/account`, `/release`, `/media`, `/tmdb`, `/updates`, `/vpn`); new modules get their own file, not a re-export from the index.
 - `@findr/config` — code-level constants (`@findr/config/scoring`: the rank tables the scorer scales; the weights themselves are the `scoring` settings section).
 
 ### API (`apps/api/src`)
 
 - **Routing** — each file in `routes/` exports one `factory()` Route; the URL is derived from its path under `/api/` (`downloads/[id]/cancel.ts` → `/api/downloads/:id/cancel`, `downloads/index.ts` → `/api/downloads`). Methods are bare handlers or `MethodConfig` (`{ handler, body?, query? }`); read validated input with `bodyOf(c, Schema)` / `queryOf(c, Schema)` from `lib/routing/input.ts`.
-- **Route options** — `authenticated` (default **true**), `admin` (admins only), `allowPendingReset` (lets in an account that still has to replace its initial credentials), `rateLimit` (default 600/min; public routes use `PUBLIC_RATE_LIMIT` or their own). `Server.constructRoutes` runs `requireLocal` on every request, then builds each chain: rate limit → auth → pending-reset block → admin → query/body validation → middleware → handler.
+- **Route options** — `authenticated` (default **true**), `admin` (admins only), `allowPendingReset` (lets in an account that still has to replace its initial credentials), `rateLimit` (default 600/min; public routes use `PUBLIC_RATE_LIMIT` or their own). `Server.constructRoutes` runs `requireLocal` on every request, then builds each chain: rate limit → auth → pending-reset block → admin → query/body validation → middleware → handler. The built-in steps live in `src/middleware/`.
 - **Auth** — BetterAuth (email + password, `admin` plugin) on the shared SQLite connection. Sign-up is disabled. A fresh install seeds one admin (`seedRoot`) stored as `admin@findr.local` with password `admin`; a BetterAuth before-hook maps the bare `admin` login onto that address. It carries the `mustReset` user field, and until `POST /api/account/credentials` replaces its email and password, every other route and BetterAuth endpoint refuses it with `reset_required`. Admins create further accounts through the admin plugin.
 - **Remote access** — `requireLocal` refuses anything not from loopback unless the `access.allowRemote` setting is on (only reachable after the reset). `ClientAddress` decides: the socket must be loopback, and forwarding headers from a local proxy count as remote unless `TRUST_PROXY` is set and the forwarded client is loopback.
 - **Database** — raw `bun:sqlite` (`lib/db/client.ts`). Schema changes are append-only entries in `lib/db/migrations.ts`, applied by `Migrator` using `PRAGMA user_version`. BetterAuth migrates its own tables.
 - **Models** (`lib/db/models/`) — the only code that writes SQL. Static finders return class instances with typed camelCase fields and mutation methods; instances serialise to `@findr/types` records (`toSummary()`, `toRecord()`, `toDetail()`). Tables: `titles`, `downloads`, `episodes`, `candidates`, `attempts`, `settings`, `app_state` (internal state such as DHT nodes).
-- **Configuration** — no `.env` is required. Optional deployment overrides (database path, mkvmerge path, `TRUST_PROXY`, a `PORT` escape hatch) come from the environment, validated in `lib/env/Env.ts`. The BetterAuth secret is generated on first run into `auth.secret` beside the database (`lib/auth/AuthSecret.ts`, owner-only file, deliberately not in the database that holds the session tokens). The port (default 34571) and an optional public URL are `access` settings read once at startup by `lib/server/ServerAddress.ts`, which derives BetterAuth's base URL and trusted origins (localhost, the public URL, and same-origin requests to a bare IP — never an arbitrary hostname, which would open DNS rebinding). Everything else lives in the database (`SettingsStore`, schema in `@findr/types/settings`) and is edited on the web Settings page: paths, naming, preferences, scoring weights, queue, watchdog, wrong-title filter, service URLs and API keys, ports and remote access. Hot paths read one section with `SettingsStore.section()`. There is no JSON config file.
+- **Configuration** — no `.env` is required. Optional deployment overrides (database path, mkvmerge path, `TRUST_PROXY`, a `PORT` escape hatch) come from the environment, validated in `lib/env/Env.ts`. The BetterAuth secret is generated on first run into `auth.secret` beside the database (`lib/auth/AuthSecret.ts`, owner-only file, deliberately not in the database that holds the session tokens). The port (default 34571) and an optional public URL are `access` settings read once at startup by `lib/server/ServerAddress.ts`, which derives BetterAuth's base URL and trusted origins (localhost, the public URL, and same-origin requests to a bare IP — never an arbitrary hostname, which would open DNS rebinding). Everything else lives in the database (`SettingsStore`, schema in `@findr/types/settings`) and is edited on the web Settings page: paths, naming, preferences, scoring weights, queue, watchdog, wrong-title filter, service URLs and API keys, ports and remote access. Hot paths read one section with `SettingsStore.section()`. There is no JSON config file. `docs/Config.md` documents every environment variable and setting, so update it when you add one.
 - **Pipeline** (`lib/pipeline/`)
   - `DownloadQueue` — singleton owning enqueue/cancel/retry/delete, concurrency, and startup `recover()` (closes interrupted attempts, rejects their candidates, deletes their scratch dirs, sweeps leftover torrents, resumes unfinished downloads).
   - `DownloadRunner` — one download: movie unit, or season pack then per-episode units; the attempt loop.
@@ -83,6 +85,8 @@ Bun monorepo: `apps/api` (Hono on Bun), `apps/web` (React 19 + react-router-dom 
 The build contains no native code (TinyTorrent is pure TypeScript), so it cross-compiles to every target; keep it that way.
 
 Both generated files are gitignored. In production the server imports them; in development it globs `routes/` and proxies to Vite instead. Anything new that must ship — routes, assets — has to reach the bundle through static imports; no runtime filesystem discovery in production code paths.
+
+The `Dockerfile` does not compile anything. It packages executables that are already built (`dist/findr-linux-{x64,arm64}`) along with mkvmerge, ffmpeg and `ip`, and sets `FINDR_CONTAINER`. `.github/workflows/release.yml` cross-compiles every target, then builds the multi-arch image from those executables and pushes it to ghcr.io.
 
 ### Web (`apps/web/src`)
 
