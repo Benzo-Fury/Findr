@@ -1,6 +1,7 @@
 {
   "name": "findr",
   "private": true,
+  "license": "Apache-2.0",
   "version": "3.0.0",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {

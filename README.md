@@ -118,4 +118,4 @@ Inspired by [Roundup](https://github.com/0xlunar/roundup) by [0xlunar](https://g
 
 ## License
 
-_License to be decided._
+Findr is licensed under the [Apache License 2.0](LICENSE).
