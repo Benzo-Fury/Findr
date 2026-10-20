@@ -1,7 +1,7 @@
 <div align="center">
   <img src="apps/web/public/findr-banner-rounded.png" width="900px"/>
   <h1>Find. Anything.</h1>
-  <h4>Download any movie or TV show and stream it for free.</h4>
+  <h4>Download any movie or TV show, ready for Plex or Jellyfin.</h4>
 </div>
 
 ## What is Findr?
