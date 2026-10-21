@@ -52,6 +52,8 @@ export interface AttemptResult {
   files: string[];
   /** Episodes covered, for season packs and episode releases. */
   episodes: number[];
+  /** Each saved file with the episodes it holds, in the same order as `files`. */
+  saved: Array<{ path: string; episodes: number[] }>;
 }
 
 /** Progress changes smaller than this are not worth a database write. */
@@ -160,7 +162,11 @@ export class AttemptRunner {
       },
     );
 
-    return { files, episodes: [...new Set(sterilized.flatMap((item) => item.episodes))].sort((a, b) => a - b) };
+    return {
+      files,
+      episodes: [...new Set(sterilized.flatMap((item) => item.episodes))].sort((a, b) => a - b),
+      saved: files.map((path, index) => ({ path, episodes: sterilized[index]?.episodes ?? [] })),
+    };
   }
 
   /** Waits for a cleanup step, but no longer than the cleanup limit. Never throws. */

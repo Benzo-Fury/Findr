@@ -126,4 +126,47 @@ export const migrations: Migration[] = [
       )`,
     ],
   },
+  {
+    name: "playback",
+    statements: [
+      // A library file that can be played, probed once when it is saved
+      `CREATE TABLE media_items (
+        id           TEXT PRIMARY KEY NOT NULL,
+        title_id     TEXT NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+        download_id  TEXT REFERENCES downloads(id) ON DELETE SET NULL,
+        season       INTEGER,
+        episode      INTEGER,
+        path         TEXT NOT NULL UNIQUE,
+        size         INTEGER NOT NULL,
+        mtime        INTEGER NOT NULL,
+        duration_ms  INTEGER NOT NULL,
+        probe        TEXT NOT NULL,
+        keyframes    BLOB NOT NULL,
+        indexed_at   INTEGER NOT NULL
+      )`,
+      "CREATE INDEX media_items_title_idx ON media_items (title_id, season, episode)",
+
+      // How far each user got through each item
+      `CREATE TABLE playback_progress (
+        user_id        TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+        title_id       TEXT NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+        season         INTEGER NOT NULL DEFAULT -1,
+        episode        INTEGER NOT NULL DEFAULT -1,
+        position_ms    INTEGER NOT NULL DEFAULT 0,
+        duration_ms    INTEGER NOT NULL DEFAULT 0,
+        played         INTEGER NOT NULL DEFAULT 0,
+        play_count     INTEGER NOT NULL DEFAULT 0,
+        audio_language TEXT,
+        last_played_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, title_id, season, episode)
+      )`,
+
+      // Each user's playback preferences, one JSON document per user
+      `CREATE TABLE playback_prefs (
+        user_id    TEXT PRIMARY KEY NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+        value      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+    ],
+  },
 ];

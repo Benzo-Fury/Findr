@@ -14,8 +14,11 @@ FROM debian:trixie-slim
 
 ARG TARGETARCH
 
+# VA-API drivers let ffmpeg encode on Intel (Quick Sync) and AMD graphics once
+# /dev/dri is passed through; Intel's is only built for amd64
 RUN apt-get update \
- && apt-get install -y --no-install-recommends mkvtoolnix ffmpeg iproute2 ca-certificates curl tzdata \
+ && apt-get install -y --no-install-recommends mkvtoolnix ffmpeg iproute2 ca-certificates curl tzdata mesa-va-drivers \
+ && if [ "$TARGETARCH" = amd64 ]; then apt-get install -y --no-install-recommends intel-media-va-driver; fi \
  && rm -rf /var/lib/apt/lists/*
 
 # Pick the executable built for this platform (Docker's amd64 is Bun's x64)

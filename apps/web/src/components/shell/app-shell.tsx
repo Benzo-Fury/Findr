@@ -1,8 +1,9 @@
 import * as React from "react"
-import { Outlet } from "react-router-dom"
+import { Outlet, useLocation } from "react-router-dom"
 import type { Session } from "@/lib/auth"
 import { useLibrary } from "@/lib/library"
 import { useTitleRoute } from "@/lib/title-route"
+import { CastButton } from "@/components/playback/cast-button"
 import { BottomTabs } from "@/components/shell/bottom-tabs"
 import { CommandPalette } from "@/components/shell/command-palette"
 import { TopBar } from "@/components/shell/top-bar"
@@ -23,8 +24,9 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 /**
- * The frame around every signed-in page: navigation, the search palette and
- * the title sheet, which any page can open through the URL.
+ * The frame around every signed-in page: navigation, the search palette,
+ * the title sheet, which any page can open through the URL, and the Cast
+ * button (always on the Library, elsewhere while a TV plays something).
  *
  * Shortcuts: ⌘K or Ctrl+K opens search anywhere. `/` focuses the page's own
  * search field when it has one (marked `data-page-search`), and opens the
@@ -33,6 +35,7 @@ function isTyping(target: EventTarget | null): boolean {
 export function AppShell({ session }: AppShellProps) {
   const { active } = useLibrary()
   const { open, openTitle, closeTitle } = useTitleRoute()
+  const { pathname } = useLocation()
   const [searchOpen, setSearchOpen] = React.useState(false)
   const openSearch = React.useCallback(() => setSearchOpen(true), [])
 
@@ -66,6 +69,7 @@ export function AppShell({ session }: AppShellProps) {
       <main id="main" className="pb-[calc(var(--tabs-height)+env(safe-area-inset-bottom)+2rem)] md:pb-16">
         <Outlet />
       </main>
+      <CastButton pinned={pathname === "/"} />
       <BottomTabs activeCount={active.length} onSearch={openSearch} />
       <CommandPalette open={searchOpen} onClose={() => setSearchOpen(false)} onPick={openTitle} />
       <TitleSheet titleRef={open} onClose={closeTitle} onOpenTitle={openTitle} />

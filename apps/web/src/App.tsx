@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-
 import { MotionConfig } from "motion/react"
 import { isAdmin, mustReset, useSession } from "@/lib/auth"
 import { LibraryProvider } from "@/lib/library"
+import { PlaybackProvider } from "@/lib/playback"
 import { AppShell } from "@/components/shell/app-shell"
 import { Brand } from "@/components/shell/brand"
 import { ToastProvider } from "@/components/ui/toast"
@@ -14,6 +15,8 @@ const DownloadsPage = React.lazy(() => import("@/pages/downloads").then((module)
 const SettingsPage = React.lazy(() => import("@/pages/settings").then((module) => ({ default: module.SettingsPage })))
 const LoginPage = React.lazy(() => import("@/pages/login").then((module) => ({ default: module.LoginPage })))
 const CredentialsPage = React.lazy(() => import("@/pages/credentials").then((module) => ({ default: module.CredentialsPage })))
+// The player is its own chunk, so Video.js loads only when something plays
+const WatchPage = React.lazy(() => import("@/pages/watch").then((module) => ({ default: module.WatchPage })))
 
 /**
  * Routing, split by whether there is a session.
@@ -22,7 +25,7 @@ const CredentialsPage = React.lazy(() => import("@/pages/credentials").then((mod
  * admin, so there is no registration route. The initial admin, still on
  * `admin` / `admin`, sees only the screen that replaces those credentials.
  * Signed in, every page shares the shell, and any page can show a title
- * through the `?t=` parameter. Motion honours the system's reduced-motion
+ * through the `?t=` parameter; the player takes the whole screen instead. Motion honours the system's reduced-motion
  * setting everywhere.
  */
 function App() {
@@ -45,6 +48,7 @@ function App() {
       ) : (
         <BrowserRouter>
           <LibraryProvider>
+            <PlaybackProvider>
             <ToastProvider>
               <Routes>
                 <Route element={<AppShell session={session} />}>
@@ -55,10 +59,12 @@ function App() {
                   <Route path="/downloads/:id" element={<DownloadsPage />} />
                   {isAdmin(session) && <Route path="/settings" element={<SettingsPage />} />}
                 </Route>
+                <Route path="/watch/:titleId" element={<WatchPage />} />
                 <Route path="/login" element={<Navigate to="/" replace />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </ToastProvider>
+            </PlaybackProvider>
           </LibraryProvider>
         </BrowserRouter>
       )}

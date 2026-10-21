@@ -37,6 +37,7 @@ If a torrent is fake, dead, too slow or contains something dodgy, Findr throws i
 - **Clean output** - every file is remuxed to video and audio only.
 - **Full seasons** - grabs a season pack when there is one, otherwise downloads each episode separately.
 - **Never stuck** - stalled or slow torrents are dropped and the next one is tried.
+- **Watch in the browser** *(optional)* - play your library without a media server, with resume, continue watching, next episode and scrubbing thumbnails, and cast it to a TV with Chromecast, AirPlay or DLNA. Files are sent as they are when the device can play them, and converted when it can't, on the CPU or a hardware encoder. See [docs/Playback.md](docs/Playback.md).
 - **VPN killswitch** *(optional)* - torrent traffic only goes through your VPN, and downloads pause if it drops. See [docs/VPN.md](docs/VPN.md).
 - **Wrong-title filter** *(optional)* - uses Claude to weed out releases for a different movie or show.
 - **Single binary** - one executable for Linux, macOS and Windows, or a Docker image.
@@ -45,6 +46,7 @@ If a torrent is fake, dead, too slow or contains something dodgy, Findr throws i
 
 - **[Prowlarr](https://prowlarr.com/)** - to search your torrent indexers. There's a ready-made Docker setup in [`docker/`](docker/README.md).
 - **[MKVToolNix](https://mkvtoolnix.download/)** (`mkvmerge`) - to clean the files.
+- **[ffmpeg](https://ffmpeg.org/)** (`ffmpeg`, `ffprobe`) - optional, to watch your library in the browser. See [Playback](docs/Playback.md).
 - **A [TMDB API key](https://developer.themoviedb.org/)** - free; used for titles, posters and episode lists.
 - **An [Anthropic API key](https://console.anthropic.com/)** *(optional)* - only for the wrong-title filter.
 
@@ -65,7 +67,7 @@ Findr stores its data in a `data/` folder next to wherever you run it.
 
 ### Docker
 
-The image `ghcr.io/benzo-fury/findr` comes with mkvmerge included. Follow [running Findr in Docker](docker/README.md#running-findr-in-docker) for the Compose file and the first sign-in (which works a little differently in a container).
+The image `ghcr.io/benzo-fury/findr` comes with mkvmerge and ffmpeg included. Follow [running Findr in Docker](docker/README.md#running-findr-in-docker) for the Compose file and the first sign-in (which works a little differently in a container).
 
 ### From source
 

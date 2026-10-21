@@ -26,6 +26,8 @@ None is required, so Findr starts without a `.env`. Startup fails with a list of
 | `DATABASE_PATH` | No | `data/findr.db` | SQLite file (the folder is created on first run). Relative paths resolve from the repo root in development, and from the working directory for the compiled binary. |
 | `TRUST_PROXY` | No | `false` | Believe the first `X-Forwarded-For` address, for rate limiting and for the remote access check. Only enable behind a reverse proxy you control. |
 | `MKVMERGE_PATH` | No | `mkvmerge` | mkvmerge binary, from [MKVToolNix](https://mkvtoolnix.download/). An env var on purpose - an executable path should not be editable from a browser. |
+| `FFMPEG_PATH` | No | `ffmpeg` | ffmpeg binary, used to package library files for [playback](#playback--playback). An env var for the same reason as `MKVMERGE_PATH`. Without it nothing can be played; downloading is unaffected. |
+| `FFPROBE_PATH` | No | `ffprobe` | ffprobe binary, used to read each library file's streams and keyframes for playback. |
 | `UPDATES_URL` | No | `https://api.github.com/repos/Benzo-Fury/Findr/releases/latest` | Where new versions are looked for: a GitHub API "latest release" URL. Point a fork at its own releases. See [Updates](#updates--updates). |
 | `FINDR_CONTAINER` | No | detected | Whether Findr runs in a container, which only notifies of updates. Unset means detect it from `/.dockerenv` (Docker) or `/run/.containerenv` (Podman); set `true` or `false` to decide. See [Updates](#updates--updates). |
 
@@ -167,6 +169,37 @@ An optional pass that asks Claude which of the best-scoring releases are clearly
 | `homeIps` | - | Optional. Your home connection's public IPv4/IPv6 addresses, comma separated. When set, the public address is looked up and torrents stop if it is one of these or the lookup fails. |
 
 How each check works, what it can't cover, and how to add a killswitch outside Findr: **[VPN.md](VPN.md)**.
+
+### Playback - `playback`
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Let signed-in users watch library files in Findr. Turning it off at once ends every session, stops their ffmpeg runs and hides playback in the web app; what was indexed and watched is kept for when it comes back on. |
+| `transcoding` | `true` | Re-encode video a device can't play as it is. Off means such files fail with `transcode_required`; audio is still converted. |
+| `transcodesPath` | - | Scratch folder for prepared segments. Empty uses `.transcodes` inside the downloads path. Cleared when Findr starts. |
+| `maxConcurrentTranscodes` | `2` | Video transcodes at once. Sessions that copy the video are cheap and not counted. |
+| `remoteMaxBitrateMbps` | `0` | Bitrate cap for clients outside the local network (anything not loopback, private, link-local or unique-local). `0` means none. |
+| `maxTranscodeResolution` | `1080p` | The tallest picture a transcode produces. |
+| `hardwareAcceleration` | `none` | Encoder for transcodes: `none` (x264 on the CPU), `videotoolbox` (Apple), `nvenc` (NVIDIA), `qsv` (Intel Quick Sync), `vaapi` (Intel or AMD on Linux), `amf` (AMD on Windows) or `rkmpp` (Rockchip). Decoding and scaling stay on the CPU. **Test encoder** on the Settings page checks the saved choice. |
+| `vaapiDevice` | `/dev/dri/renderD128` | The render node VA-API encodes on. A container needs it passed through. |
+| `encoderPreset` | `veryfast` | x264 preset for transcodes. CPU encoder only. |
+| `h264Crf` | `23` | Quality for transcodes; lower is better and larger. Hardware encoders take it as their constant-quality level, except VideoToolbox, which encodes to a target bitrate. A device's bitrate choice caps it further. |
+| `threads` | `0` | ffmpeg threads per transcode; `0` lets ffmpeg decide. CPU encoder only. |
+| `toneMapping` | `true` | Map HDR to SDR when transcoding for a screen without HDR, and in scrubbing thumbnails. Needs ffmpeg's `zscale` filter (the Docker image has it); without it HDR is converted as it is and looks washed out. |
+| `casting` | `true` | Offer Google Cast, AirPlay and DLNA TVs. While on, a device on the local network may fetch media with the token in its URL even when `access.allowRemote` is off; nothing else is opened. |
+| `castBaseUrl` | - | The address TVs fetch media from. Empty uses this machine's private IPv4 address and Findr's port. Set it when that address isn't reachable from the TV, as in a container on a bridge network or behind a proxy. |
+| `trickplay` | `true` | Make scrubbing thumbnails for every library file in the background, kept beside the database. |
+| `trickplayIntervalSeconds` | `10` | Seconds between thumbnails. Changing it makes them again. |
+| `trickplayWidth` | `320` | Thumbnail width in pixels. Changing it makes them again. |
+| `throttleTranscodes` | `true` | Stop producing segments once `throttleAheadSeconds` ahead of the player. |
+| `throttleAheadSeconds` | `180` | How far ahead segments are prepared before pausing. |
+| `segmentSeconds` | `6` | Target segment length. Copied video cuts on its own keyframes, so its segments can run longer. |
+| `segmentKeepSeconds` | `600` | Segments further behind the player than this are deleted. |
+| `minResumePercent` | `5` | Stopping before this share of the runtime keeps no resume point. |
+| `maxResumePercent` | `90` | Stopping after this share marks the item watched. |
+| `minResumeDurationSeconds` | `300` | Items shorter than this always start from the beginning. |
+
+How playback works and what each decision means: **[Playback.md](Playback.md)**.
 
 ### Access - `access`
 

@@ -16,6 +16,21 @@ import type {
   TitleSummary,
 } from "@findr/types/downloads"
 import type { CredentialsReset } from "@findr/types/account"
+import type {
+  CreateSession,
+  EncoderTestResult,
+  MarkPlayed,
+  NowPlayingRecord,
+  PlaybackCapabilities,
+  PlaybackLibrary,
+  PlaybackPrefs,
+  PlaybackSessionRecord,
+  RendererCommand,
+  RendererPlay,
+  RendererRecord,
+  RendererStatus,
+  ReportProgress,
+} from "@findr/types/playback"
 import type { SettingsPatch, SettingsResponse } from "@findr/types/settings"
 import type { UpdateStatus } from "@findr/types/updates"
 import type { VpnStatus } from "@findr/types/vpn"
@@ -60,6 +75,18 @@ const ERROR_MESSAGES: Record<string, string> = {
   no_asset: "This release has no build for this platform.",
   not_writable: "Findr cannot replace its own executable here.",
   downloads_active: "Wait until no downloads are queued or running.",
+  playback_disabled: "Playback is turned off on this server.",
+  not_playable: "This file is not ready to play yet.",
+  ffmpeg_missing: "ffmpeg is not installed on the server, so nothing can be played.",
+  transcode_required: "This device can't play the file as it is, and transcoding is turned off.",
+  transcode_limit: "Too many videos are being converted right now. Try again shortly.",
+  transcodes_path_unset: "Set a downloads path in Settings so playback has somewhere to work.",
+  session_not_found: "Playback stopped. Press play to start again.",
+  casting_disabled: "Casting is turned off on this server.",
+  cast_address_unknown: "Findr can't tell what address your TV should use. Set one under Settings, Playback.",
+  renderer_not_found: "That TV is no longer on the network.",
+  renderer_failed: "The TV didn't accept the video. It may not support this file.",
+  renderer_busy: "Someone else is playing on that TV.",
 }
 
 /** Raised for any non-2xx response, carrying the API's error code when present. */
@@ -98,7 +125,7 @@ async function send(url: string, init: RequestInit): Promise<void> {
 }
 
 /** Serialises a JSON body with the header the validation middleware expects. */
-function json(body: unknown, method: "POST" | "PATCH" = "POST"): RequestInit {
+function json(body: unknown, method: "POST" | "PATCH" | "PUT" = "POST"): RequestInit {
   return {
     method,
     headers: { "Content-Type": "application/json" },
@@ -289,6 +316,103 @@ export function checkForUpdates(): Promise<UpdateStatus> {
 /** Starts installing the available update; Findr restarts when it is done. Admins only. */
 export function installUpdate(): Promise<UpdateStatus> {
   return request("/api/updates/install", { method: "POST" })
+}
+
+/* -------------------------------------------------------------------------- */
+/* Playback                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** Whether playback is on, and whether the server can transcode. Answers even while playback is off. */
+export function fetchPlaybackCapabilities(init?: RequestInit): Promise<PlaybackCapabilities> {
+  return request("/api/playback/capabilities", init)
+}
+
+/** Everything playable with the signed-in user's progress, plus what to continue and watch next. */
+export function fetchPlaybackLibrary(init?: RequestInit): Promise<PlaybackLibrary> {
+  return request("/api/playback/library", init)
+}
+
+/** Starts playing a movie or episode on this device. */
+export function createPlaybackSession(body: CreateSession): Promise<PlaybackSessionRecord> {
+  return request("/api/playback/sessions", json(body))
+}
+
+/** Ends a playback session, freeing its work on the server. */
+export function endPlaybackSession(id: string): Promise<void> {
+  return send(`/api/playback/sessions/${id}`, { method: "DELETE" })
+}
+
+/**
+ * Reports where the player is. `keepalive` lets the last report of a closing
+ * page still reach the server.
+ */
+export function reportPlaybackProgress(body: ReportProgress, keepalive = false): Promise<void> {
+  return send("/api/playback/progress", { ...json(body), keepalive })
+}
+
+/** Marks a movie or episode played or unplayed. */
+export function markPlayed(body: MarkPlayed): Promise<void> {
+  return send("/api/playback/played", json(body))
+}
+
+/** The signed-in user's playback preferences. */
+export function fetchPlaybackPrefs(): Promise<PlaybackPrefs> {
+  return request("/api/playback/prefs")
+}
+
+/** Replaces the signed-in user's playback preferences. */
+export function updatePlaybackPrefs(prefs: PlaybackPrefs): Promise<PlaybackPrefs> {
+  return request("/api/playback/prefs", json(prefs, "PUT"))
+}
+
+/** DLNA TVs on the local network; `refresh` searches again rather than reusing a recent search. */
+export function fetchRenderers(refresh = false): Promise<RendererRecord[]> {
+  return request(`/api/playback/renderers${refresh ? "?refresh=1" : ""}`)
+}
+
+/** What a TV Findr is driving is doing. */
+/** The TVs playing something the signed-in user started. */
+export function fetchCasts(init?: RequestInit): Promise<RendererStatus[]> {
+  return request("/api/playback/casts", init)
+}
+
+export function fetchRendererStatus(id: string, init?: RequestInit): Promise<RendererStatus> {
+  return request(`/api/playback/renderers/${encodeURIComponent(id)}`, init)
+}
+
+/** Plays a movie or episode on a TV. */
+export function playOnRenderer(id: string, body: RendererPlay): Promise<RendererStatus> {
+  return request(`/api/playback/renderers/${encodeURIComponent(id)}/play`, json(body))
+}
+
+/** Sends play, pause, seek, stop or volume to a TV. */
+export function commandRenderer(id: string, command: RendererCommand): Promise<RendererStatus> {
+  return request(`/api/playback/renderers/${encodeURIComponent(id)}/command`, json(command))
+}
+
+/** Shows Findr's splash on a TV picked to cast to. */
+export function showRendererSplash(id: string): Promise<void> {
+  return send(`/api/playback/renderers/${encodeURIComponent(id)}/splash`, { method: "POST" })
+}
+
+/** Clears the splash from a TV that is no longer picked. */
+export function hideRendererSplash(id: string): Promise<void> {
+  return send(`/api/playback/renderers/${encodeURIComponent(id)}/splash`, { method: "DELETE" })
+}
+
+/** Every session playing right now (admins only). */
+export function fetchNowPlaying(init?: RequestInit): Promise<NowPlayingRecord[]> {
+  return request("/api/playback/admin/sessions", init)
+}
+
+/** Stops anyone's session (admins only). */
+export function stopNowPlaying(id: string): Promise<void> {
+  return send(`/api/playback/admin/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+/** Encodes a test picture with the saved encoder settings (admins only). */
+export function testEncoder(): Promise<EncoderTestResult> {
+  return request("/api/playback/admin/encoder-test", { method: "POST" })
 }
 
 /* -------------------------------------------------------------------------- */

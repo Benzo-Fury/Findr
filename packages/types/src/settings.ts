@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ReleaseTypeSchema, ResolutionSchema } from "./media";
+import { PlaybackSettingsSchema } from "./playback";
 
 /**
  * User-tunable settings, stored in the database and edited by admins from the
@@ -233,6 +234,7 @@ export const SettingsSchema = z.object({
   access: AccessSettingsSchema.prefault({}),
   vpn: VpnSettingsSchema.prefault({}),
   updates: UpdatesSettingsSchema.prefault({}),
+  playback: PlaybackSettingsSchema.prefault({}),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -283,6 +285,7 @@ export const SettingsPatchSchema = z
     access: patchOf(AccessSettingsSchema),
     vpn: patchOf(VpnSettingsSchema),
     updates: patchOf(UpdatesSettingsSchema),
+    playback: patchOf(PlaybackSettingsSchema),
   })
   .partial()
   .strict();

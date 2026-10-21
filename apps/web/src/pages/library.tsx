@@ -37,6 +37,7 @@ import { Segmented } from "@/components/ui/segmented"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StatusLabel } from "@/components/ui/status-label"
 import { UpdateBanner } from "@/components/updates/update-banner"
+import { ContinueWatchingRow } from "@/components/playback/continue-watching-row"
 
 /**
  * Everything Findr has fetched or tried to fetch. The whole library is held
@@ -185,7 +186,7 @@ export function LibraryPage() {
   const signature = `${words.join(" ")}|${type}|${status}|${genre}|${prefs.sort}|${prefs.view}`
 
   return (
-    <div className="mx-auto max-w-[1600px] px-4 md:px-8">
+    <div className="mx-auto max-w-[1600px] px-4 pb-16 md:px-8">
       <PageHeader title="Library" count={loading ? undefined : entries.length}>
         <Segmented
           label="Layout"
@@ -200,6 +201,7 @@ export function LibraryPage() {
 
       <UpdateBanner updates={updates} dismissible className="mt-5" />
       <ActivityRibbon count={active.length} progress={active[0]?.activeAttempt?.progress} onOpen={() => navigate("/downloads")} />
+      <ContinueWatchingRow className="mt-8" />
 
       {/* Sticky toolbar: search, facets, sort */}
       <div className="bleed-band z-[2] mt-6 pb-3 pt-3 md:sticky md:top-[var(--chrome-height)]">

@@ -27,6 +27,7 @@ import { Episode } from "../db/models/Episode";
 import { SettingsStore } from "../db/models/SettingsStore";
 import type { InspectionTarget } from "../downloader/FileInspector";
 import type { TitleNaming } from "../media/LibrarySaver";
+import MediaIndexer from "../playback/MediaIndexer";
 import type { TitleQuery } from "../prowlarr/Prowlarr";
 import type { ScoreTarget } from "../releases/ReleaseScorer";
 import TMDB, { type SeasonEpisode, type TitleFacts } from "../tmdb/TMDB";
@@ -298,6 +299,7 @@ export class DownloadRunner {
       candidate.markSucceeded();
       attempt.finish("succeeded");
       this.download.recordSavedFiles(result.files);
+      MediaIndexer.getInstance().enqueue(this.download.id, result.saved);
       return { ok: true, result };
     } catch (error) {
       // The release was bad; move on to the next one

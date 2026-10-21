@@ -10,6 +10,7 @@ import {
   FolderIcon,
   GaugeIcon,
   GlobeIcon,
+  PlayCircleIcon,
   PlugsIcon,
   QueueIcon,
   RankingIcon,
@@ -22,6 +23,7 @@ import {
   type Icon,
 } from "@phosphor-icons/react"
 import { ReleaseTypeSchema, ResolutionSchema } from "@findr/types/media"
+import { EncoderPresetSchema, HardwareAccelerationSchema, TranscodeResolutionSchema } from "@findr/types/playback"
 import type { Settings, SettingsSection } from "@findr/types/settings"
 
 /** How a field is edited. */
@@ -32,6 +34,7 @@ export type FieldControl =
   | { kind: "toggle" }
   | { kind: "order"; options: readonly string[] }
   | { kind: "multi"; options: readonly string[] }
+  | { kind: "choice"; options: readonly string[]; labels?: Record<string, string> }
 
 /** One field of one settings section. */
 export interface FieldDef<S extends SettingsSection = SettingsSection> {
@@ -64,6 +67,7 @@ export const SECTIONS: readonly SectionDef[] = [
   { id: "llmFilter", title: "Wrong-title filter", description: "Uses Claude to drop releases that are clearly for a different title before anything downloads. Falls back to no filtering on any error.", icon: RobotIcon, keywords: "ai claude llm anthropic model" },
   { id: "torrent", title: "Torrent client", description: "The built-in BitTorrent client. Forward the port on your router for better speeds.", icon: GaugeIcon, keywords: "bittorrent port network dht peers" },
   { id: "vpn", title: "VPN killswitch", description: "Torrents run only while your VPN is connected, and every torrent connection is bound to its address. The moment a check fails every connection is cut, and downloads wait until the VPN is back, then carry on where they left off. For a hard guarantee, also run Findr inside the VPN's network.", icon: ShieldCheckIcon, keywords: "vpn killswitch kill switch leak privacy wireguard openvpn tunnel ip" },
+  { id: "playback", title: "Playback", description: "Watch what you have downloaded, in the browser. Files the device can play as they are are sent untouched; anything else is converted on the fly with ffmpeg. Turning playback off stops everyone watching and hides it everywhere.", icon: PlayCircleIcon, keywords: "watch stream player transcode ffmpeg video jellyfin resume" },
   { id: "access", title: "Access", description: "Where Findr is served, and who may reach it. It only answers requests from this machine unless remote access is on. Behind a reverse proxy on the same machine, also set TRUST_PROXY on the server.", icon: GlobeIcon, keywords: "remote network lan proxy security url address" },
   { id: "updates", title: "Updates", description: "Findr looks for a new release on GitHub when it starts and every six hours. A standalone executable can install it and restart itself; settings, accounts and your library carry over.", icon: ArrowCircleUpIcon, keywords: "update upgrade version release github restart" },
   { id: "accounts", title: "Accounts", description: "Sign-up is disabled. Create an account here for anyone who should have access.", icon: UsersIcon, keywords: "users people password email admin role" },
@@ -140,6 +144,32 @@ export const FIELDS: readonly FieldDef[] = [
   field({ section: "vpn", key: "enabled", label: "Require a VPN for torrents", help: "Binds every torrent connection, tracker request and port-mapping request to the VPN, and tries peers in plaintext first since the VPN already encrypts.", keywords: "killswitch block", control: { kind: "toggle" } }),
   field({ section: "vpn", key: "interfaceName", label: "VPN interface", help: "The network interface your VPN creates, such as wg0 or tun0. End with * to match a prefix, such as utun* on macOS. Required: torrents are bound to its address, and stop if internet traffic would leave through any other interface.", keywords: "wireguard openvpn tun utun wg0 adapter network", control: { kind: "text", placeholder: "wg0", mono: true } }),
   field({ section: "vpn", key: "homeIps", label: "Home public IP", help: "Your connection's public IPv4 and IPv6 addresses, comma separated. Torrents stop if traffic leaves from one of them, or if the public IP cannot be looked up. Leave empty to skip this check.", keywords: "address leak ipv4 ipv6 isp", control: { kind: "text", placeholder: "198.51.100.7, 2001:db8::1", mono: true } }),
+
+  // Playback
+  field({ section: "playback", key: "enabled", label: "Allow playback", help: "Lets signed-in users watch library files in Findr.", keywords: "off disable stream watch", control: { kind: "toggle" } }),
+  field({ section: "playback", key: "transcoding", label: "Allow transcoding", help: "Re-encodes video a device can't play as it is. Off means such files won't play; audio is still converted.", keywords: "convert encode cpu", control: { kind: "toggle" } }),
+  field({ section: "playback", key: "maxConcurrentTranscodes", label: "Transcodes at once", help: "Video conversions running together. Playing a file as it is doesn't count.", keywords: "cpu concurrent limit", control: { kind: "number", min: 1, max: 16, step: 1 } }),
+  field({ section: "playback", key: "maxTranscodeResolution", label: "Largest transcode", help: "Converted video is never taller than this.", keywords: "resolution 1080p 720p 4k", control: { kind: "choice", options: TranscodeResolutionSchema.options } }),
+  field({ section: "playback", key: "remoteMaxBitrateMbps", label: "Bitrate limit outside your network", help: "Caps playback for devices that aren't on your local network. Zero means no limit.", keywords: "bandwidth remote internet", control: { kind: "number", min: 0, step: 1, unit: "Mbps" } }),
+  field({ section: "playback", key: "hardwareAcceleration", label: "Hardware encoder", help: "Converts video on the graphics chip instead of the CPU. Use Test encoder above after saving to check it works on this machine.", keywords: "gpu nvenc nvidia quicksync qsv intel vaapi amd amf videotoolbox apple rockchip rkmpp acceleration", control: { kind: "choice", options: HardwareAccelerationSchema.options, labels: { none: "CPU", videotoolbox: "Apple", nvenc: "NVIDIA", qsv: "Intel QSV", vaapi: "VA-API", amf: "AMD", rkmpp: "Rockchip" } } }),
+  field({ section: "playback", key: "vaapiDevice", label: "VA-API device", help: "The render node used when the hardware encoder is vaapi.", keywords: "gpu dri render node intel amd linux", control: { kind: "text", placeholder: "/dev/dri/renderD128", mono: true } }),
+  field({ section: "playback", key: "encoderPreset", label: "Encoder speed", help: "Faster presets use less CPU for slightly larger video. Applies to the CPU encoder only.", keywords: "x264 preset cpu quality", control: { kind: "choice", options: EncoderPresetSchema.options } }),
+  field({ section: "playback", key: "h264Crf", label: "Transcode quality", help: "Lower is better and larger. 23 suits most screens.", keywords: "crf quality", control: { kind: "number", min: 15, max: 35, step: 1 } }),
+  field({ section: "playback", key: "threads", label: "Threads per transcode", help: "Zero lets ffmpeg decide. Applies to the CPU encoder only.", keywords: "cpu cores", control: { kind: "number", min: 0, max: 64, step: 1 } }),
+  field({ section: "playback", key: "toneMapping", label: "Tone map HDR", help: "Converts HDR video to look right on screens without HDR, instead of washed out. Needs an ffmpeg with the zscale filter, which the Docker image has.", keywords: "hdr sdr dolby vision washed colours colors", control: { kind: "toggle" } }),
+  field({ section: "playback", key: "casting", label: "Allow casting", help: "Offers Chromecast, AirPlay and DLNA TVs in the player. TVs on your local network can then fetch the video they are sent, even with remote access off.", keywords: "chromecast google cast airplay apple tv dlna upnp smart tv", control: { kind: "toggle" } }),
+  field({ section: "playback", key: "castBaseUrl", label: "Address for TVs", help: "Where TVs reach Findr. Empty uses this machine's address on your network. Set it when Findr runs in a container or behind a proxy.", keywords: "cast chromecast dlna lan ip url", control: { kind: "text", placeholder: "http://192.168.1.20:34571", mono: true } }),
+  field({ section: "playback", key: "trickplay", label: "Scrubbing thumbnails", help: "Makes small previews of every file in the background, shown while dragging along the timeline.", keywords: "trickplay preview seek storyboard", control: { kind: "toggle" } }),
+  field({ section: "playback", key: "trickplayIntervalSeconds", label: "Thumbnail every", keywords: "trickplay preview interval", control: { kind: "number", min: 2, max: 60, step: 1, unit: "s" } }),
+  field({ section: "playback", key: "trickplayWidth", label: "Thumbnail width", keywords: "trickplay preview size", control: { kind: "number", min: 160, max: 640, step: 40, unit: "px" } }),
+  field({ section: "playback", key: "throttleTranscodes", label: "Pause when far ahead", help: "Stops converting once enough is ready ahead of the viewer, to spare the CPU.", keywords: "throttle", control: { kind: "toggle" } }),
+  field({ section: "playback", key: "throttleAheadSeconds", label: "Prepare ahead", keywords: "throttle buffer", control: { kind: "number", min: 30, max: 1800, step: 30, unit: "s" } }),
+  field({ section: "playback", key: "segmentSeconds", label: "Segment length", help: "Shorter segments start and seek faster.", keywords: "hls chunk", control: { kind: "number", min: 2, max: 10, step: 1, unit: "s" } }),
+  field({ section: "playback", key: "segmentKeepSeconds", label: "Keep behind the viewer", help: "Prepared video further back than this is deleted.", keywords: "disk cleanup", control: { kind: "number", min: 60, max: 7200, step: 60, unit: "s" } }),
+  field({ section: "playback", key: "transcodesPath", label: "Scratch folder", help: "Where prepared video is kept while it plays. Empty uses a .transcodes folder in the downloads path.", keywords: "temp path disk", control: { kind: "text", placeholder: "/srv/findr/transcodes", mono: true } }),
+  field({ section: "playback", key: "minResumePercent", label: "Remember position after", help: "Stopping earlier than this keeps no resume point.", keywords: "resume progress", control: { kind: "number", min: 0, max: 50, step: 1, unit: "%" } }),
+  field({ section: "playback", key: "maxResumePercent", label: "Count as watched after", keywords: "resume played finished credits", control: { kind: "number", min: 50, max: 100, step: 1, unit: "%" } }),
+  field({ section: "playback", key: "minResumeDurationSeconds", label: "Shortest item to resume", help: "Anything shorter always starts from the beginning.", keywords: "resume", control: { kind: "number", min: 0, step: 30, unit: "s" } }),
 
   // Access
   field({ section: "access", key: "port", label: "Port", help: "Where the web app and API are served. Applies after Findr restarts.", keywords: "http web restart", control: { kind: "number", min: 1, max: 65535, step: 1 } }),

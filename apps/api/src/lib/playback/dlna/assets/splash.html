@@ -1,0 +1,158 @@
+<!doctype html>
+<!--
+  The design source of splash.jpg, the still a DLNA TV shows while it is
+  picked to cast to. Dark and low in brightness, since TVs are often watched
+  in dark rooms. After editing, render it at 1920x1080 from this folder:
+
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new \
+      --hide-scrollbars --force-device-scale-factor=1 --window-size=1920,1080 \
+      --screenshot=splash.png splash.html
+    ffmpeg -y -i splash.png -q:v 2 splash.jpg && rm splash.png
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ready to cast</title>
+<style>
+  @font-face {
+    font-family: "Bricolage Grotesque Variable";
+    font-weight: 200 800;
+    font-stretch: 75% 100%;
+    src: url("../../../../../../web/src/assets/fonts/bricolage-grotesque-latin-standard-normal.woff2") format("woff2-variations");
+  }
+  @font-face {
+    font-family: "Geist Variable";
+    font-weight: 100 900;
+    src: url("../../../../../../web/node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2") format("woff2-variations");
+  }
+
+  /* Findr's tokens, taken into the dark: the ink hue as the ground, the one amber accent */
+  :root {
+    --ground: oklch(0.155 0.012 265);
+    --ground-deep: oklch(0.12 0.01 265);
+    --text: oklch(0.93 0.006 255);
+    --text-2: oklch(0.7 0.012 260);
+    --line: oklch(1 0 0 / 0.08);
+    --signal: oklch(0.8 0.158 74);
+    --display: "Bricolage Grotesque Variable", "Geist Variable", sans-serif;
+    --sans: "Geist Variable", ui-sans-serif, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+
+  html, body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: var(--ground-deep);
+  }
+
+  body {
+    position: relative;
+    font-family: var(--sans);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    /* A faint warm light from behind the mark, falling off into the ink */
+    background:
+      radial-gradient(1000px 860px at 82% 50%, oklch(0.8 0.158 74 / 0.075), transparent 70%),
+      radial-gradient(1600px 1200px at 20% 110%, var(--ground), transparent 75%),
+      var(--ground-deep);
+  }
+
+  /* The Findr mask alone (the logo art also carries the wordmark), large and cropped by the right edge, barely lit */
+  .mark {
+    position: absolute;
+    left: 145px;
+    top: -236px;
+    width: 3000px;
+    clip-path: inset(18% 37% 40.5% 34%);
+    opacity: 0.09;
+  }
+
+  /* Grain, so the gradients don't band once compressed */
+  .grain {
+    position: absolute;
+    inset: 0;
+    opacity: 0.22;
+    mix-blend-mode: overlay;
+  }
+
+  /* The logo as the app's top bar shows it */
+  .brand {
+    position: absolute;
+    left: 112px;
+    top: 80px;
+    height: 128px;
+    width: 192px;
+    object-fit: contain;
+  }
+
+  .message {
+    position: absolute;
+    left: 128px;
+    bottom: 136px;
+    max-width: 1000px;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-variation-settings: "wdth" 78, "opsz" 96;
+    font-weight: 720;
+    font-size: 184px;
+    line-height: 0.92;
+    letter-spacing: -0.04em;
+  }
+
+  p {
+    margin-top: 36px;
+    font-size: 42px;
+    line-height: 1.35;
+    color: var(--text-2);
+    max-width: 22ch;
+  }
+
+  .status {
+    margin-top: 64px;
+    display: inline-flex;
+    align-items: center;
+    gap: 20px;
+    height: 88px;
+    padding: 0 40px 0 16px;
+    border-radius: 999px;
+    background: oklch(1 0 0 / 0.05);
+    box-shadow: inset 0 0 0 1px var(--line), inset 0 1px 0 oklch(1 0 0 / 0.06);
+    font-size: 32px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .status i {
+    display: grid;
+    place-items: center;
+    width: 60px;
+    height: 60px;
+    border-radius: 999px;
+    background: var(--signal);
+    color: oklch(0.2 0.014 265);
+  }
+</style>
+</head>
+<body>
+  <img class="mark" src="../../../../../../web/public/findr-logo.svg" alt="">
+  <svg class="grain" xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" aria-hidden="true">
+    <filter id="noise"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter>
+    <rect width="100%" height="100%" filter="url(#noise)"/>
+  </svg>
+
+  <img class="brand" src="../../../../../../web/public/findr-logo.svg" alt="Findr">
+
+  <main class="message">
+    <h1>Ready to cast</h1>
+    <p>Pick a movie or show in Findr and it plays here.</p>
+    <div class="status">
+      <!-- Phosphor TelevisionSimple, fill -->
+      <i><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="currentColor" viewBox="0 0 256 256"><path d="M216,64H147.31l34.35-34.34a8,8,0,1,0-11.32-11.32L128,60.69,85.66,18.34A8,8,0,0,0,74.34,29.66L108.69,64H40A16,16,0,0,0,24,80V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V80A16,16,0,0,0,216,64Zm0,136H40V80H216V200ZM200,100v80a4,4,0,0,1-4,4H60a4,4,0,0,1-4-4V100a4,4,0,0,1,4-4H196A4,4,0,0,1,200,100Z"/></svg></i>
+      Connected to Findr
+    </div>
+  </main>
+</body>
+</html>

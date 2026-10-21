@@ -2,13 +2,14 @@
  * Application entry point. Brings BetterAuth's schema up to date, registers
  * every route, starts listening, checks the VPN killswitch, then recovers
  * the download queue — closing out anything a previous process left
- * mid-flight and resuming unfinished downloads — and starts checking for
- * updates.
+ * mid-flight and resuming unfinished downloads — then starts playback and
+ * checking for updates.
  */
 
 import { Server } from "./lib/server/Server"
 import { migrateAuth, seedRoot } from "./lib/auth/client"
 import DownloadQueue from "./lib/pipeline/DownloadQueue"
+import PlaybackService from "./lib/playback/PlaybackService"
 import Updater from "./lib/updates/Updater"
 import VpnGuard from "./lib/vpn/VpnGuard"
 
@@ -35,9 +36,13 @@ await VpnGuard.getInstance().start()
 // Resume work only once the server is up, so a slow client never delays it
 await DownloadQueue.getInstance().recover()
 
+// Start playback, if enabled, which indexes any library files not yet probed
+await PlaybackService.getInstance().start()
+
 // Look for a new release now and every few hours. Before restarting into
 // one, stop the route watch and free the port for the new process
 Updater.getInstance().start(async () => {
   VpnGuard.getInstance().stop()
+  await PlaybackService.getInstance().stop()
   await server.stop()
 })

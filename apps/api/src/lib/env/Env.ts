@@ -2,7 +2,7 @@
  * Application-level configuration read from the process environment.
  *
  * Only settings that belong to the deployment rather than the user live here:
- * the database location, proxy trust, the mkvmerge binary, a port override,
+ * the database location, proxy trust, the mkvmerge and ffmpeg binaries, a port override,
  * and where updates come from. None is required, so Findr starts with no `.env` at all.
  * Everything an admin tunes while running Findr — library paths, naming,
  * preferences, the watchdog, service URLs and API keys, the ports, remote
@@ -48,6 +48,12 @@ const EnvSchema = z.object({
    * session run arbitrary programs on the server.
    */
   MKVMERGE_PATH: z.string().default("mkvmerge"),
+
+  /** The ffmpeg binary, used to package library files for playback. An env var for the same reason as mkvmerge's. */
+  FFMPEG_PATH: z.string().default("ffmpeg"),
+
+  /** The ffprobe binary, used to read a library file's streams and keyframes for playback. */
+  FFPROBE_PATH: z.string().default("ffprobe"),
 
   /** Where new versions are looked for: a GitHub API "latest release" URL. Lets a fork follow its own releases. */
   UPDATES_URL: z.url().default("https://api.github.com/repos/Benzo-Fury/Findr/releases/latest"),

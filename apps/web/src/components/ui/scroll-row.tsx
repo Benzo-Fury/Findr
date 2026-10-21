@@ -51,9 +51,12 @@ export function ScrollRow({ label, children, trackClassName, className }: Scroll
   return (
     <div role="region" aria-label={label} className={cn("group/row relative", className)}>
       <div ref={trackRef} className={cn("scroll-x -my-3 flex snap-x py-3 snap-mandatory scroll-px-4 md:scroll-px-8", trackClassName)}>
-        <span ref={startRef} aria-hidden className="w-px shrink-0" />
-        {children}
-        <span ref={endRef} aria-hidden className="w-px shrink-0" />
+        {/* Items share the track's gap; the sentinels sit on top so they add no space of their own */}
+        <div className="relative flex shrink-0 [gap:inherit]">
+          <span ref={startRef} aria-hidden className="absolute inset-y-0 left-0 w-px" />
+          {children}
+          <span ref={endRef} aria-hidden className="absolute inset-y-0 right-0 w-px" />
+        </div>
       </div>
       <EdgeButton side="left" hidden={atStart} onClick={() => page(-1)} />
       <EdgeButton side="right" hidden={atEnd} onClick={() => page(1)} />
