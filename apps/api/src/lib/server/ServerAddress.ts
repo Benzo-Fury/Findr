@@ -29,7 +29,7 @@ export class ServerAddress {
   public static readonly localUrl = `http://localhost:${this.port}`
 
   /** The configured public URL's origin, or null when none is set. */
-  private static readonly publicOrigin: string | null = this.startup.publicUrl ? new URL(this.startup.publicUrl).origin : null
+  public static readonly publicOrigin: string | null = this.startup.publicUrl ? new URL(this.startup.publicUrl).origin : null
 
   /** The origin BetterAuth builds its URLs and cookie policy from. */
   public static readonly baseUrl: string = this.publicOrigin ?? this.localUrl

@@ -76,6 +76,8 @@ export interface RendererTarget {
   transportStreamType: string;
   /** The MIME type it lists for Matroska. */
   matroskaType: string;
+  /** Whether it is on the server's network; one reached through a cast bridge gets the remote bitrate cap. */
+  local: boolean;
 }
 
 /**
@@ -152,16 +154,17 @@ export default class PlaybackService extends SelfManagedSingleton {
     const session = await this.openHls(prepared, client.userId, "browser");
     const { item, plan, audio, startMs, settings } = prepared;
 
-    // Other devices on the network get absolute URLs: the same stream for AirPlay, a ticket for Cast
+    // TVs beside the client get absolute URLs: the same stream for AirPlay, a ticket for Cast. A TV
+    // away from the server's network fetches over the internet, so its ticket keeps the remote cap
     const playlistUrl = `/api/playback/stream/${StreamToken.issue(session.id)}/index.m3u8`;
-    const base = settings.casting ? CastAddress.baseUrl() : null;
+    const base = settings.casting ? CastAddress.forClient(client.local) : null;
     const ticket = CastTicket.issue({
       userId: client.userId,
       titleId: item.titleId,
       season: item.season,
       episode: item.episode,
       audioTrack: request.audioTrack,
-      maxBitrate: request.maxBitrate,
+      maxBitrate: this.bitrateCap(request.maxBitrate, settings, client.local),
     });
 
     return {
@@ -200,7 +203,7 @@ export default class PlaybackService extends SelfManagedSingleton {
 
   /** Starts a progressive session for a DLNA renderer, returning it with its stream path. */
   public async createProgressive(request: RendererPlay, renderer: RendererTarget, userId: string): Promise<{ session: ProgressiveSession; path: string }> {
-    const prepared = await this.prepare({ ...request, maxBitrate: null }, renderer.profile, { userId, local: true });
+    const prepared = await this.prepare({ ...request, maxBitrate: null }, renderer.profile, { userId, local: renderer.local });
     const { item, plan, audio, startMs, settings } = prepared;
     const direct = renderer.acceptsMatroska && plan.mode === "remux";
     this.checkTranscodeLimit(!direct && plan.video === "encode", settings);
@@ -345,12 +348,8 @@ export default class PlaybackService extends SelfManagedSingleton {
     const remembered = PlaybackProgress.lastAudioLanguage(client.userId, item.titleId);
     const audio = this.chooseAudio(item.probe, request.audioTrack, remembered ?? prefs.audioLanguage);
 
-    // Cap the bitrate by the device's choice and, off the local network, the server's
-    const remoteCap = !client.local && settings.remoteMaxBitrateMbps > 0 ? Math.round(settings.remoteMaxBitrateMbps * 1_000_000) : null;
-    const caps = [request.maxBitrate, remoteCap].filter((cap): cap is number => cap !== null);
-    const maxBitrate = caps.length > 0 ? Math.min(...caps) : null;
-
     let plan: PlaybackPlan;
+    const maxBitrate = this.bitrateCap(request.maxBitrate, settings, client.local);
     try {
       plan = PlaybackDecider.decide({ probe: item.probe, audioStream: audio.index, profile, maxBitrate, settings });
     } catch (error) {
@@ -410,6 +409,13 @@ export default class PlaybackService extends SelfManagedSingleton {
     if (settings.transcodesPath) return settings.transcodesPath;
     const downloads = SettingsStore.section("paths").downloads;
     return downloads && isAbsolute(downloads) ? join(downloads, ".transcodes") : null;
+  }
+
+  /** The lower of the device's own bitrate cap and, off the local network, the server's; null for none. */
+  private bitrateCap(requested: number | null, settings: PlaybackSettings, local: boolean): number | null {
+    const remoteCap = !local && settings.remoteMaxBitrateMbps > 0 ? Math.round(settings.remoteMaxBitrateMbps * 1_000_000) : null;
+    const caps = [requested, remoteCap].filter((cap): cap is number => cap !== null);
+    return caps.length > 0 ? Math.min(...caps) : null;
   }
 
   /** Picks the audio track to send. */

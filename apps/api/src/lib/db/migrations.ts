@@ -169,4 +169,17 @@ export const migrations: Migration[] = [
       )`,
     ],
   },
+  {
+    name: "cast bridges",
+    statements: [
+      // Findr run on another network to reach the TVs there; only a hash of its token is kept
+      `CREATE TABLE cast_bridges (
+        id           TEXT PRIMARY KEY NOT NULL,
+        name         TEXT NOT NULL,
+        token_hash   TEXT NOT NULL UNIQUE,
+        created_at   INTEGER NOT NULL,
+        last_seen_at INTEGER
+      )`,
+    ],
+  },
 ];

@@ -1,9 +1,11 @@
 /**
  * The two pieces of UPnP Findr needs to drive a renderer: reading its device
- * description, and calling actions on its services over SOAP. Renderers'
- * XML is small and regular, so it is read with a handful of patterns rather
- * than a parser.
+ * description, and calling actions on its services over SOAP. Requests go
+ * through the network the renderer was found on. Renderers' XML is small and
+ * regular, so it is read with a handful of patterns rather than a parser.
  */
+
+import type { RendererNetwork } from "./RendererNetwork";
 
 /** A service a device offers, with its absolute control URL. */
 export interface UpnpService {
@@ -41,12 +43,12 @@ const REQUEST_TIMEOUT_MS = 4000;
 
 export class Upnp {
   /** Reads a device description; null when it can't be fetched or isn't a device. */
-  public static async describe(location: string): Promise<DeviceDescription | null> {
+  public static async describe(network: RendererNetwork, location: string): Promise<DeviceDescription | null> {
     let xml: string;
     try {
-      const response = await fetch(location, { redirect: "error", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-      if (!response.ok) return null;
-      xml = await response.text();
+      const reply = await network.request({ url: location, method: "GET", headers: {}, body: null, timeoutMs: REQUEST_TIMEOUT_MS });
+      if (reply.status < 200 || reply.status > 299) return null;
+      xml = reply.body;
     } catch {
       return null;
     }
@@ -90,6 +92,7 @@ export class Upnp {
    * that gets no answer in `timeoutMs` throws a `UpnpError` without a code.
    */
   public static async call(
+    network: RendererNetwork,
     service: UpnpService,
     action: string,
     args: Record<string, string | number>,
@@ -103,23 +106,23 @@ export class Upnp {
       '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">' +
       `<s:Body><u:${action} xmlns:u="${service.serviceType}">${fields}</u:${action}></s:Body></s:Envelope>`;
 
-    let response: Response;
+    let xml: string;
     try {
-      response = await fetch(service.controlUrl, {
+      const reply = await network.request({
+        url: service.controlUrl,
         method: "POST",
         headers: { "Content-Type": 'text/xml; charset="utf-8"', SOAPACTION: `"${service.serviceType}#${action}"` },
         body,
-        redirect: "error",
-        signal: AbortSignal.timeout(timeoutMs),
+        timeoutMs,
       });
+      xml = reply.body;
+      if (reply.status < 200 || reply.status > 299) {
+        const code = Number(this.text(xml, "errorCode")) || null;
+        throw new UpnpError(action, code, this.text(xml, "errorDescription") || `HTTP ${reply.status}`);
+      }
     } catch (error) {
+      if (error instanceof UpnpError) throw error;
       throw new UpnpError(action, null, error instanceof Error ? error.message : "no answer", false);
-    }
-
-    const xml = await response.text().catch(() => "");
-    if (!response.ok) {
-      const code = Number(this.text(xml, "errorCode")) || null;
-      throw new UpnpError(action, code, this.text(xml, "errorDescription") || `HTTP ${response.status}`);
     }
 
     // The fields of `<u:ActionResponse>`

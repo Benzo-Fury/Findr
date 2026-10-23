@@ -31,6 +31,17 @@ None is required, so Findr starts without a `.env`. Startup fails with a list of
 | `UPDATES_URL` | No | `https://api.github.com/repos/Benzo-Fury/Findr/releases/latest` | Where new versions are looked for: a GitHub API "latest release" URL. Point a fork at its own releases. See [Updates](#updates--updates). |
 | `FINDR_CONTAINER` | No | detected | Whether Findr runs in a container, which only notifies of updates. Unset means detect it from `/.dockerenv` (Docker) or `/run/.containerenv` (Podman); set `true` or `false` to decide. See [Updates](#updates--updates). |
 
+### Cast bridge
+
+Read only by `findr bridge`, which runs Findr as a [cast bridge](Playback.md#tvs-on-another-network) on another network. Each stands in for the command-line option of the same name, which wins when both are given. A bridge uses no database and none of the variables above.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `FINDR_SERVER` | Yes | - | Findr's address, as the browser opens it (`--server`). |
+| `FINDR_BRIDGE_TOKEN` | Yes | - | The token shown when the bridge was added under **Settings → Playback** (`--token`). |
+| `FINDR_BRIDGE_PORT` | No | `34572` | The port TVs fetch video from (`--port`). |
+| `FINDR_BRIDGE_MEDIA_URL` | No | this machine's address | The address TVs fetch video from, when the bridge's own address on its network isn't it (`--media-url`). |
+
 ---
 
 ## Session secret
@@ -187,7 +198,7 @@ How each check works, what it can't cover, and how to add a killswitch outside F
 | `threads` | `0` | ffmpeg threads per transcode; `0` lets ffmpeg decide. CPU encoder only. |
 | `toneMapping` | `true` | Map HDR to SDR when transcoding for a screen without HDR, and in scrubbing thumbnails. Needs ffmpeg's `zscale` filter (the Docker image has it); without it HDR is converted as it is and looks washed out. |
 | `casting` | `true` | Offer Google Cast, AirPlay and DLNA TVs. While on, a device on the local network may fetch media with the token in its URL even when `access.allowRemote` is off; nothing else is opened. |
-| `castBaseUrl` | - | The address TVs fetch media from. Empty uses this machine's private IPv4 address and Findr's port. Set it when that address isn't reachable from the TV, as in a container on a bridge network or behind a proxy. |
+| `castBaseUrl` | - | The address TVs on the server's network fetch media from. Empty uses this machine's private IPv4 address and Findr's port. Set it when that address isn't reachable from the TV, as in a container on a bridge network. Chromecast and AirPlay TVs cast to from a browser outside that network use `access.publicUrl` instead, or this when it is a public address. See [Casting](Playback.md#casting). |
 | `trickplay` | `true` | Make scrubbing thumbnails for every library file in the background, kept beside the database. |
 | `trickplayIntervalSeconds` | `10` | Seconds between thumbnails. Changing it makes them again. |
 | `trickplayWidth` | `320` | Thumbnail width in pixels. Changing it makes them again. |

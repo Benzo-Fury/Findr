@@ -9,6 +9,7 @@ import type { PlaybackCapabilities } from "@findr/types/playback"
 import { SettingsStore } from "../../lib/db/models/SettingsStore"
 import { CastAddress } from "../../lib/playback/CastAddress"
 import { Ffmpeg } from "../../lib/playback/Ffmpeg"
+import { LocalNetwork } from "../../lib/playback/LocalNetwork"
 import { factory } from "../../lib/routing/factory"
 
 export default factory({
@@ -19,7 +20,7 @@ export default factory({
       transcoding: settings.transcoding,
       ffmpeg: await Ffmpeg.available(),
       casting: settings.enabled && settings.casting,
-      castBaseUrl: settings.casting ? CastAddress.baseUrl() : null,
+      castBaseUrl: settings.casting ? CastAddress.forClient(LocalNetwork.includes(c)) : null,
     }
     return c.json(capabilities)
   },

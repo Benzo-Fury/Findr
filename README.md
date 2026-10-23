@@ -37,7 +37,7 @@ If a torrent is fake, dead, too slow or contains something dodgy, Findr throws i
 - **Clean output** - every file is remuxed to video and audio only.
 - **Full seasons** - grabs a season pack when there is one, otherwise downloads each episode separately.
 - **Never stuck** - stalled or slow torrents are dropped and the next one is tried.
-- **Watch in the browser** *(optional)* - play your library without a media server, with resume, continue watching, next episode and scrubbing thumbnails, and cast it to a TV with Chromecast, AirPlay or DLNA. Files are sent as they are when the device can play them, and converted when it can't, on the CPU or a hardware encoder. See [docs/Playback.md](docs/Playback.md).
+- **Watch in the browser** *(optional)* - play your library without a media server, with resume, continue watching, next episode and scrubbing thumbnails, and cast it to a TV with Chromecast, AirPlay or DLNA, on the server's network or yours (a small bridge reaches DLNA TVs away from the server). Files are sent as they are when the device can play them, and converted when it can't, on the CPU or a hardware encoder. See [docs/Playback.md](docs/Playback.md).
 - **VPN killswitch** *(optional)* - torrent traffic only goes through your VPN, and downloads pause if it drops. See [docs/VPN.md](docs/VPN.md).
 - **Wrong-title filter** *(optional)* - uses Claude to weed out releases for a different movie or show.
 - **Single binary** - one executable for Linux, macOS and Windows, or a Docker image.

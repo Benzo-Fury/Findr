@@ -7,7 +7,7 @@ import type { RendererCommand, RendererRecord, RendererStatus } from "@findr/typ
 import { commandRenderer, hideRendererSplash, showRendererSplash } from "@/lib/api"
 import { EASE_OUT, SPRING_SNAP } from "@/lib/motion"
 import { castActive, formatClock, usePlayback, watchPath } from "@/lib/playback"
-import { useRenderers } from "@/lib/renderers"
+import { rendererDetail, useRenderers } from "@/lib/renderers"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { ProgressBar } from "@/components/ui/progress-bar"
@@ -215,7 +215,7 @@ function CastTargets({ target, onPick }: CastTargetsProps) {
             key={renderer.id}
             icon={TelevisionSimpleIcon}
             name={renderer.name}
-            detail={[renderer.manufacturer, renderer.model].filter(Boolean).join(" ") || null}
+            detail={rendererDetail(renderer)}
             selected={target?.id === renderer.id}
             onClick={() => onPick(renderer)}
           />

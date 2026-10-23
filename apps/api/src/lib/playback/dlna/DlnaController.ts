@@ -1,6 +1,6 @@
 /**
- * Findr as a DLNA control point. It finds renderers on the local network,
- * hands one a URL to play, and from then on is the remote: the web app sends
+ * Findr as a DLNA control point. It finds renderers on the server's network
+ * and on every connected cast bridge's, hands one a URL to play, and from then on is the remote: the web app sends
  * play, pause, seek, volume and stop through Findr, and Findr polls the
  * renderer for its state, saving the viewer's progress as it goes.
  *
@@ -14,13 +14,14 @@
 
 import type { PlaybackItemKey, RendererCommand, RendererPlay, RendererRecord, RendererState, RendererStatus } from "@findr/types/playback";
 import SelfManagedSingleton from "../../other/SelfManagedSingleton";
+import BridgeHub from "../bridge/BridgeHub";
 import { CastAccess } from "../CastAccess";
-import { CastAddress } from "../CastAddress";
 import PlaybackService, { PlaybackError } from "../PlaybackService";
 import { ProgressiveSession } from "../ProgressiveSession";
 import { WatchHistory } from "../WatchHistory";
 import { DlnaRenderer } from "./DlnaRenderer";
-import { Ssdp } from "./Ssdp";
+import { LocalRendererNetwork } from "./LocalRendererNetwork";
+import type { RendererNetwork } from "./RendererNetwork";
 import { Upnp, UpnpError } from "./Upnp";
 
 /** A renderer Findr is driving. */
@@ -104,23 +105,50 @@ export default class DlnaController extends SelfManagedSingleton {
   private readonly active = new Map<string, Active>();
   /** Renderers showing the splash, with the user who picked each. */
   private readonly splashes = new Map<string, string>();
-  private lastSearch = 0;
-  private searching: Promise<void> | null = null;
+  /** When each network was last searched, by network id. */
+  private readonly lastSearch = new Map<string, number>();
+  /** The search running on each network, by network id. */
+  private readonly searching = new Map<string, Promise<void>>();
 
   // ---------- Discovery ---------- //
 
-  /** The renderers on the network, searching again when the last search is stale or `refresh` is set. */
+  /**
+   * The renderers on every network that can be reached, searching again
+   * where the last search is stale or `refresh` is set. Networks are searched
+   * together, so a slow bridge holds up the answer only as long as its own
+   * search may take.
+   */
   public async list(refresh = false): Promise<RendererRecord[]> {
-    if (refresh || Date.now() - this.lastSearch > SEARCH_REUSE_MS) await this.search();
-    return [...this.renderers.values()].map((renderer) => renderer.toRecord()).sort((a, b) => a.name.localeCompare(b.name));
+    const networks = [LocalRendererNetwork.instance, ...BridgeHub.getInstance().networks().filter((network) => network.connected)];
+    const stale = networks.filter((network) => refresh || Date.now() - (this.lastSearch.get(network.id) ?? 0) > SEARCH_REUSE_MS);
+    await Promise.all(stale.map((network) => this.search(network)));
+
+    // A removed bridge's renderers go, unless one is still being driven
+    const hub = BridgeHub.getInstance();
+    for (const [id, renderer] of this.renderers) {
+      if (!renderer.network.local && !hub.get(renderer.network.id) && !this.active.has(id)) this.renderers.delete(id);
+    }
+
+    return [...this.renderers.values()]
+      .filter((renderer) => renderer.network.connected)
+      .map((renderer) => renderer.toRecord())
+      .sort((a, b) => a.name.localeCompare(b.name) || (a.place ?? "").localeCompare(b.place ?? ""));
   }
 
-  /** One search at a time; callers during a search share it. */
-  private search(): Promise<void> {
-    this.searching ??= (async () => {
+  /** How many renderers were last found on a network. */
+  public countOn(networkId: string): number {
+    return [...this.renderers.values()].filter((renderer) => renderer.network.id === networkId).length;
+  }
+
+  /** One search at a time on each network; callers during a search share it. */
+  private search(network: RendererNetwork): Promise<void> {
+    const running = this.searching.get(network.id);
+    if (running) return running;
+    const search = (async () => {
       try {
-        const locations = await Ssdp.search(CastAddress.lanAddress());
-        const known = new Map([...this.renderers.values()].map((renderer) => [renderer.location, renderer]));
+        const locations = await network.search();
+        const ours = [...this.renderers.values()].filter((renderer) => renderer.network === network);
+        const known = new Map(ours.map((renderer) => [renderer.location, renderer]));
 
         // Describe what is new; mark what answered again as seen
         await Promise.all(
@@ -131,21 +159,22 @@ export default class DlnaController extends SelfManagedSingleton {
               return;
             }
             // One device answering badly mustn't hide the others
-            const renderer = await DlnaRenderer.open(location).catch(() => null);
+            const renderer = await DlnaRenderer.open(location, network).catch(() => null);
             if (renderer) this.renderers.set(renderer.id, renderer);
           }),
         );
 
-        // Forget renderers long gone, unless one is being driven
-        for (const [id, renderer] of this.renderers) {
-          if (Date.now() - renderer.lastSeen > FORGET_MS && !this.active.has(id)) this.renderers.delete(id);
+        // Forget this network's renderers long gone, unless one is being driven
+        for (const renderer of ours) {
+          if (Date.now() - renderer.lastSeen > FORGET_MS && !this.active.has(renderer.id)) this.renderers.delete(renderer.id);
         }
-        this.lastSearch = Date.now();
+        this.lastSearch.set(network.id, Date.now());
       } finally {
-        this.searching = null;
+        this.searching.delete(network.id);
       }
     })();
-    return this.searching;
+    this.searching.set(network.id, search);
+    return search;
   }
 
   // ---------- Playing ---------- //
@@ -153,8 +182,8 @@ export default class DlnaController extends SelfManagedSingleton {
   /** Plays a movie or episode on a renderer, replacing whatever Findr had it playing. */
   public async play(rendererId: string, request: RendererPlay, userId: string): Promise<RendererStatus> {
     const renderer = this.renderers.get(rendererId);
-    if (!renderer) throw new PlaybackError("renderer_not_found", 404);
-    const base = CastAddress.baseUrl();
+    if (!renderer?.network.connected) throw new PlaybackError("renderer_not_found", 404);
+    const base = renderer.network.mediaBase();
     if (!base) throw new PlaybackError("cast_address_unknown", 503);
 
     await this.release(rendererId, false);
@@ -279,8 +308,8 @@ export default class DlnaController extends SelfManagedSingleton {
    */
   public async showSplash(rendererId: string, userId: string): Promise<void> {
     const renderer = this.renderers.get(rendererId);
-    if (!renderer) throw new PlaybackError("renderer_not_found", 404);
-    const base = CastAddress.baseUrl();
+    if (!renderer?.network.connected) throw new PlaybackError("renderer_not_found", 404);
+    const base = renderer.network.mediaBase();
     if (!base || this.active.has(rendererId) || !renderer.acceptsJpeg) return;
 
     const url = `${base}${CastAccess.SPLASH_PATH}`;
@@ -343,7 +372,14 @@ export default class DlnaController extends SelfManagedSingleton {
     const service = PlaybackService.getInstance();
     const { session, path } = await service.createProgressive(
       request,
-      { name: renderer.name, profile: renderer.profile, acceptsMatroska: renderer.acceptsMatroska, transportStreamType: renderer.transportStreamType, matroskaType: renderer.matroskaType },
+      {
+        name: renderer.name,
+        profile: renderer.profile,
+        acceptsMatroska: renderer.acceptsMatroska,
+        transportStreamType: renderer.transportStreamType,
+        matroskaType: renderer.matroskaType,
+        local: renderer.network.local,
+      },
       userId,
     );
     const url = `${base}${path}`;
@@ -363,7 +399,7 @@ export default class DlnaController extends SelfManagedSingleton {
    * offering it files. The remote keeps showing it as starting meanwhile.
    */
   private async fallBack(rendererId: string, active: Active): Promise<void> {
-    const base = CastAddress.baseUrl();
+    const base = active.renderer.network.mediaBase();
     console.warn(`[Playback] ${active.renderer.name} took the file but didn't play it; sending a stream instead`);
     active.renderer.refuseMatroska();
     active.busy = true;

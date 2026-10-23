@@ -19,6 +19,7 @@ import { Accounts } from "@/components/settings/accounts"
 import { FieldRow } from "@/components/settings/field-row"
 import { FIELDS, SECTIONS, WEIGHT_KEYS, type FieldDef, type SectionDef } from "@/components/settings/registry"
 import { SaveDock } from "@/components/settings/save-dock"
+import { CastBridgesPanel } from "@/components/settings/cast-bridges"
 import { PlaybackStatusPanel } from "@/components/settings/playback-status"
 import { UpdateStatusPanel } from "@/components/settings/update-status"
 import { VpnStatusPanel } from "@/components/settings/vpn-status"
@@ -289,8 +290,9 @@ export function SettingsPage() {
                             </div>
                           )}
                           {section.id === "playback" && words.length === 0 && server.settings.playback.enabled && (
-                            <div className="pt-5">
+                            <div className="space-y-3 pt-5">
                               <PlaybackStatusPanel />
+                              {server.settings.playback.casting && <CastBridgesPanel />}
                             </div>
                           )}
                           {/* Alone in the card (a container or source checkout, or a search matching only the section), it is inset below too */}

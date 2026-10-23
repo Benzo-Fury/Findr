@@ -11,6 +11,7 @@ import { Title } from "../db/models/Title";
 import { CastAccess } from "./CastAccess";
 import { CastTicket } from "./CastTicket";
 import { DlnaRenderer } from "./dlna/DlnaRenderer";
+import { LocalRendererNetwork } from "./dlna/LocalRendererNetwork";
 import { Upnp, UpnpError } from "./dlna/Upnp";
 import { Ffmpeg } from "./Ffmpeg";
 import { type ProbeInfo, MediaProbe } from "./MediaProbe";
@@ -224,7 +225,7 @@ describe("DlnaRenderer", () => {
 
   test("reads a renderer's description and the formats it takes", async () => {
     const renderer = await DlnaRenderer.open(location);
-    expect(renderer?.toRecord()).toEqual({ id: "1234-abcd", name: "Living Room TV & Sound", manufacturer: "Acme", model: "Screen 9000", direct: true });
+    expect(renderer?.toRecord()).toEqual({ id: "1234-abcd", name: "Living Room TV & Sound", manufacturer: "Acme", model: "Screen 9000", direct: true, place: null });
     expect(renderer?.transportStreamType).toBe("video/vnd.dlna.mpeg-tts");
     expect(renderer?.matroskaType).toBe("video/x-matroska");
     expect(renderer?.profile).toEqual({ videoCodecs: ["h264", "hevc"], audioCodecs: ["aac", "mp3", "ac3"], maxHeight: 1080, hdr: false });
@@ -264,7 +265,7 @@ describe("DlnaRenderer", () => {
     expect((refused as UpnpError).answered).toBe(true);
 
     const slow = { serviceType: "urn:schemas-upnp-org:service:AVTransport:1", controlUrl: location.replace("description.xml", "slow") };
-    const silent = await Upnp.call(slow, "Play", { InstanceID: 0, Speed: 1 }, 50).catch((error: unknown) => error);
+    const silent = await Upnp.call(LocalRendererNetwork.instance, slow, "Play", { InstanceID: 0, Speed: 1 }, 50).catch((error: unknown) => error);
     expect(silent).toBeInstanceOf(UpnpError);
     expect((silent as UpnpError).answered).toBe(false);
   });

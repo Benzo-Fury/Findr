@@ -17,6 +17,9 @@ import type {
 } from "@findr/types/downloads"
 import type { CredentialsReset } from "@findr/types/account"
 import type {
+  CastBridgeRecord,
+  CreateCastBridge,
+  CreatedCastBridge,
   CreateSession,
   EncoderTestResult,
   MarkPlayed,
@@ -398,6 +401,21 @@ export function showRendererSplash(id: string): Promise<void> {
 /** Clears the splash from a TV that is no longer picked. */
 export function hideRendererSplash(id: string): Promise<void> {
   return send(`/api/playback/renderers/${encodeURIComponent(id)}/splash`, { method: "DELETE" })
+}
+
+/** The cast bridges added to this server (admins only). */
+export function fetchCastBridges(init?: RequestInit): Promise<CastBridgeRecord[]> {
+  return request("/api/playback/bridges", init)
+}
+
+/** Adds a cast bridge; the token in the answer is never shown again (admins only). */
+export function createCastBridge(body: CreateCastBridge): Promise<CreatedCastBridge> {
+  return request("/api/playback/bridges", json(body))
+}
+
+/** Removes a cast bridge, disconnecting it (admins only). */
+export function deleteCastBridge(id: string): Promise<void> {
+  return send(`/api/playback/bridges/${encodeURIComponent(id)}`, { method: "DELETE" })
 }
 
 /** Every session playing right now (admins only). */

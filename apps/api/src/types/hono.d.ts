@@ -8,11 +8,14 @@
  */
 
 import type { AuthSession } from "../lib/auth/client"
+import type { CastBridge } from "../lib/db/models/CastBridge"
 
 declare module "hono" {
   interface ContextVariableMap {
     session: AuthSession
     body: unknown
     query: unknown
+    /** The cast bridge a connecting bridge's token belongs to. */
+    castBridge: CastBridge
   }
 }

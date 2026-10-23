@@ -262,6 +262,8 @@ export interface RendererRecord {
   model: string | null;
   /** Whether it accepts library files (Matroska) as they are; otherwise Findr sends MPEG-TS. */
   direct: boolean;
+  /** The cast bridge it was found through, by name; null for the server's own network. */
+  place: string | null;
 }
 
 /** `POST /api/playback/renderers/:id/play`. */
@@ -300,6 +302,41 @@ export interface RendererStatus {
   volume: number | null;
   muted: boolean;
   mode: PlaybackMode | "direct" | null;
+}
+
+// ---------- Cast bridges ---------- //
+
+/**
+ * A cast bridge: Findr run as `findr bridge` on another network, finding and
+ * driving the DLNA TVs there for the server.
+ */
+export interface CastBridgeRecord {
+  id: string;
+  name: string;
+  /** Whether it is connected now. */
+  online: boolean;
+  /** The Findr version it runs, while connected. */
+  version: string | null;
+  /** The address its TVs fetch media from, while connected. */
+  address: string | null;
+  /** TVs last found through it. */
+  renderers: number;
+  /** When it last connected or spoke, or null if it never has. */
+  lastSeenAt: number | null;
+  createdAt: number;
+}
+
+/** `POST /api/playback/bridges`. */
+export const CreateCastBridgeSchema = z.object({
+  /** Where it is, shown beside its TVs, such as `Home`. */
+  name: z.string().trim().min(1).max(40),
+});
+export type CreateCastBridge = z.infer<typeof CreateCastBridgeSchema>;
+
+/** A new bridge with its token, which is shown this once and never again. */
+export interface CreatedCastBridge {
+  bridge: CastBridgeRecord;
+  token: string;
 }
 
 // ---------- Administration ---------- //

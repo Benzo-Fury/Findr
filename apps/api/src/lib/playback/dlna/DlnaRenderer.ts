@@ -10,6 +10,8 @@
  */
 
 import type { DeviceProfile, PlaybackAudioCodec, PlaybackVideoCodec, RendererRecord, RendererState } from "@findr/types/playback";
+import { LocalRendererNetwork } from "./LocalRendererNetwork";
+import type { RendererNetwork } from "./RendererNetwork";
 import { type DeviceDescription, Upnp, type UpnpService } from "./Upnp";
 
 /** Service types, without their version. */
@@ -41,11 +43,14 @@ export interface PositionInfo {
 }
 
 export class DlnaRenderer {
+  /** Its UDN, prefixed with the bridge's id when found through one, so the same TV seen twice stays apart. */
   public readonly id: string;
   public readonly name: string;
   public readonly manufacturer: string | null;
   public readonly model: string | null;
   public readonly location: string;
+  /** The network it was found on, which every request to it goes through. */
+  public readonly network: RendererNetwork;
   /** Last time it answered a search. */
   public lastSeen = Date.now();
 
@@ -56,8 +61,10 @@ export class DlnaRenderer {
   private sinks: string[] = [];
   private matroskaRefused = false;
 
-  private constructor(description: DeviceDescription, location: string, transport: UpnpService) {
-    this.id = description.udn.replace(/^uuid:/i, "");
+  private constructor(network: RendererNetwork, description: DeviceDescription, location: string, transport: UpnpService) {
+    const udn = description.udn.replace(/^uuid:/i, "");
+    this.id = network.local ? udn : `${network.id}:${udn}`;
+    this.network = network;
     this.name = description.name;
     this.manufacturer = description.manufacturer;
     this.model = description.model;
@@ -67,13 +74,13 @@ export class DlnaRenderer {
     this.connection = description.services.find((service) => service.serviceType.startsWith(CONNECTION_MANAGER)) ?? null;
   }
 
-  /** Reads a renderer from its description URL; null for anything that can't be driven. */
-  public static async open(location: string): Promise<DlnaRenderer | null> {
-    const description = await Upnp.describe(location);
+  /** Reads a renderer from its description URL on a network; null for anything that can't be driven. */
+  public static async open(location: string, network: RendererNetwork = LocalRendererNetwork.instance): Promise<DlnaRenderer | null> {
+    const description = await Upnp.describe(network, location);
     const transport = description?.services.find((service) => service.serviceType.startsWith(AV_TRANSPORT));
     if (!description || !transport) return null;
 
-    const renderer = new DlnaRenderer(description, location, transport);
+    const renderer = new DlnaRenderer(network, description, location, transport);
     await renderer.readFormats();
     // Speakers are renderers too; skip anything that lists formats but no video
     if (renderer.sinks.length > 0 && !renderer.sinks.some((sink) => /:video\//i.test(sink))) return null;
@@ -82,7 +89,7 @@ export class DlnaRenderer {
 
   /** As the web app lists it. */
   public toRecord(): RendererRecord {
-    return { id: this.id, name: this.name, manufacturer: this.manufacturer, model: this.model, direct: this.acceptsMatroska };
+    return { id: this.id, name: this.name, manufacturer: this.manufacturer, model: this.model, direct: this.acceptsMatroska, place: this.network.place };
   }
 
   // ---------- Formats ---------- //
@@ -139,7 +146,7 @@ export class DlnaRenderer {
   private async readFormats(): Promise<void> {
     if (!this.connection) return;
     try {
-      const result = await Upnp.call(this.connection, "GetProtocolInfo", {});
+      const result = await Upnp.call(this.network, this.connection, "GetProtocolInfo", {});
       this.sinks = (result.Sink ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
     } catch {
       this.sinks = [];
@@ -150,25 +157,25 @@ export class DlnaRenderer {
 
   /** Loads a URL with DIDL-Lite metadata describing it. Some TVs fetch the URL before answering. */
   public async load(url: string, metadata: string): Promise<void> {
-    await Upnp.call(this.transport, "SetAVTransportURI", { InstanceID: 0, CurrentURI: url, CurrentURIMetaData: metadata }, START_TIMEOUT_MS);
+    await Upnp.call(this.network, this.transport, "SetAVTransportURI", { InstanceID: 0, CurrentURI: url, CurrentURIMetaData: metadata }, START_TIMEOUT_MS);
   }
 
   /** Starts or resumes. Sony and others answer only once the stream has begun, so this may take a while. */
   public async play(): Promise<void> {
-    await Upnp.call(this.transport, "Play", { InstanceID: 0, Speed: 1 }, START_TIMEOUT_MS);
+    await Upnp.call(this.network, this.transport, "Play", { InstanceID: 0, Speed: 1 }, START_TIMEOUT_MS);
   }
 
   public async pause(): Promise<void> {
-    await Upnp.call(this.transport, "Pause", { InstanceID: 0 });
+    await Upnp.call(this.network, this.transport, "Pause", { InstanceID: 0 });
   }
 
   public async stop(): Promise<void> {
-    await Upnp.call(this.transport, "Stop", { InstanceID: 0 });
+    await Upnp.call(this.network, this.transport, "Stop", { InstanceID: 0 });
   }
 
   /** Seeks within what is loaded. */
   public async seek(positionMs: number): Promise<void> {
-    await Upnp.call(this.transport, "Seek", { InstanceID: 0, Unit: "REL_TIME", Target: DlnaRenderer.clock(positionMs) });
+    await Upnp.call(this.network, this.transport, "Seek", { InstanceID: 0, Unit: "REL_TIME", Target: DlnaRenderer.clock(positionMs) });
   }
 
   public async state(): Promise<RendererState> {
@@ -177,12 +184,12 @@ export class DlnaRenderer {
 
   /** Its state, and whether it reports an error with what it was given. */
   public async transportInfo(): Promise<{ state: RendererState; failed: boolean }> {
-    const result = await Upnp.call(this.transport, "GetTransportInfo", { InstanceID: 0 });
+    const result = await Upnp.call(this.network, this.transport, "GetTransportInfo", { InstanceID: 0 });
     return { state: TRANSPORT_STATES[result.CurrentTransportState ?? ""] ?? "idle", failed: result.CurrentTransportStatus === "ERROR_OCCURRED" };
   }
 
   public async position(): Promise<PositionInfo> {
-    const result = await Upnp.call(this.transport, "GetPositionInfo", { InstanceID: 0 });
+    const result = await Upnp.call(this.network, this.transport, "GetPositionInfo", { InstanceID: 0 });
     return { positionMs: DlnaRenderer.parseClock(result.RelTime), durationMs: DlnaRenderer.parseClock(result.TrackDuration) };
   }
 
@@ -192,19 +199,19 @@ export class DlnaRenderer {
   public async volume(): Promise<{ volume: number | null; muted: boolean }> {
     if (!this.rendering) return { volume: null, muted: false };
     const [volume, mute] = await Promise.all([
-      Upnp.call(this.rendering, "GetVolume", { InstanceID: 0, Channel: "Master" }).catch(() => null),
-      Upnp.call(this.rendering, "GetMute", { InstanceID: 0, Channel: "Master" }).catch(() => null),
+      Upnp.call(this.network, this.rendering, "GetVolume", { InstanceID: 0, Channel: "Master" }).catch(() => null),
+      Upnp.call(this.network, this.rendering, "GetMute", { InstanceID: 0, Channel: "Master" }).catch(() => null),
     ]);
     const level = Number(volume?.CurrentVolume);
     return { volume: Number.isFinite(level) ? level : null, muted: mute?.CurrentMute === "1" || mute?.CurrentMute === "true" };
   }
 
   public async setVolume(volume: number): Promise<void> {
-    if (this.rendering) await Upnp.call(this.rendering, "SetVolume", { InstanceID: 0, Channel: "Master", DesiredVolume: Math.round(volume) });
+    if (this.rendering) await Upnp.call(this.network, this.rendering, "SetVolume", { InstanceID: 0, Channel: "Master", DesiredVolume: Math.round(volume) });
   }
 
   public async setMuted(muted: boolean): Promise<void> {
-    if (this.rendering) await Upnp.call(this.rendering, "SetMute", { InstanceID: 0, Channel: "Master", DesiredMute: muted ? 1 : 0 });
+    if (this.rendering) await Upnp.call(this.network, this.rendering, "SetMute", { InstanceID: 0, Channel: "Master", DesiredMute: muted ? 1 : 0 });
   }
 
   // ---------- Times ---------- //

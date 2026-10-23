@@ -11,7 +11,7 @@ import { createPlaybackSession, endPlaybackSession, reportPlaybackProgress, upda
 import { deviceProfile } from "@/lib/device-profile"
 import { FADE } from "@/lib/motion"
 import { usePlayback } from "@/lib/playback"
-import { useRenderers } from "@/lib/renderers"
+import { rendererDetail, useRenderers } from "@/lib/renderers"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
@@ -539,9 +539,7 @@ function TvPicker({ onPick, onClose }: TvPickerProps) {
               <TelevisionSimpleIcon aria-hidden weight="duotone" className="size-5 shrink-0 text-signal" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[0.875rem] font-medium">{renderer.name}</span>
-                {(renderer.manufacturer || renderer.model) && (
-                  <span className="block truncate text-micro text-surface/55">{[renderer.manufacturer, renderer.model].filter(Boolean).join(" ")}</span>
-                )}
+                {rendererDetail(renderer) && <span className="block truncate text-micro text-surface/55">{rendererDetail(renderer)}</span>}
               </span>
             </button>
           ))}
