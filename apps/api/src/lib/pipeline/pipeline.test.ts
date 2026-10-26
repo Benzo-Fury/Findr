@@ -1,7 +1,7 @@
 /**
  * End-to-end tests of the download pipeline: TMDB and Prowlarr are mocked at
  * the HTTP layer, the torrent client is an in-memory fake that writes a real
- * Matroska fixture, and sterilizing runs the real mkvmerge.
+ * Matroska fixture, and sterilizing runs the real ffmpeg.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -24,7 +24,7 @@ import { ReleaseParser } from "../releases/ReleaseParser";
 import { FatalDownloadError, SuspendedError } from "./errors";
 import VpnGuard from "../vpn/VpnGuard";
 
-const hasTools = Bun.which("mkvmerge") !== null && Bun.which("ffmpeg") !== null;
+const hasTools = Bun.which("ffmpeg") !== null && Bun.which("ffprobe") !== null;
 const GB = 1024 ** 3;
 
 // ---------- Fixtures ---------- //

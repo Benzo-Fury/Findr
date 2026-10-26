@@ -32,6 +32,16 @@ describe("FileInspector", () => {
     expect(result).toEqual({ accepted: false, reason: "Archive-only release with no video file" });
   });
 
+  test("rejects releases whose only video is in a container Findr doesn't take", () => {
+    const result = inspector.inspect(files(["Movie/Movie.avi", 4 * GB], ["Movie/Movie.nfo", 1000]), { kind: "movie" });
+    expect(result).toEqual({ accepted: false, reason: "Video is in a container Findr doesn't take (.avi)" });
+  });
+
+  test("prefers a supported video over an unsupported one beside it", () => {
+    const result = inspector.inspect(files(["M/M.ts", 6 * GB], ["M/M.mkv", 4 * GB]), { kind: "movie" });
+    expect(result).toEqual({ accepted: true, files: [{ index: 1, path: "M/M.mkv", episodes: [] }] });
+  });
+
   test("picks the feature and skips samples and extras", () => {
     const result = inspector.inspect(
       files(["M/Sample/m-sample.mkv", 50_000_000], ["M/M.mkv", 4 * GB], ["M/M.nfo", 1000], ["M/Featurette.mkv", 300_000_000]),

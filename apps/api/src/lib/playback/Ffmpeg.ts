@@ -6,13 +6,18 @@
  * through one builder, so x264 and every hardware encoder take the same
  * scaling, tone mapping and keyframe placement.
  *
- * The binaries come from the environment (`FFMPEG_PATH`, `FFPROBE_PATH`),
- * never from a setting, so a browser session can't point Findr at another
- * program.
+ * Library files are always Matroska written by the sterilizer, so every
+ * input is opened as Matroska from a local file only (`MediaInput`), never
+ * left to ffmpeg to guess.
+ *
+ * The binaries are found by `FfmpegLocator` (the environment, the copy
+ * inside the executable, or `PATH`), never from a setting, so a browser
+ * session can't point Findr at another program.
  */
 
 import type { HardwareAcceleration, PlaybackSettings } from "@findr/types/playback";
-import { env } from "../env/Env";
+import { FfmpegLocator } from "../media/FfmpegLocator";
+import { MediaInput } from "../media/MediaInput";
 import type { PlaybackPlan } from "./PlaybackDecider";
 
 /** What a finished process printed and how it exited. */
@@ -75,43 +80,30 @@ const TONE_MAP_FILTERS = [
 export const TRICKPLAY_TILE = 10;
 
 export class Ffmpeg {
-  /** Whether both binaries answered, once asked; null until then. */
-  private static found: boolean | null = null;
-  /** ffmpeg's filter names, read once after it is found. */
-  private static filters = new Set<string>();
+  /** ffmpeg's filter names, read once after it is found; null until then. */
+  private static filters: Set<string> | null = null;
 
-  /** Whether ffmpeg and ffprobe are installed, checked once per process. */
+  /** Whether ffmpeg and ffprobe are installed (`FfmpegLocator`), and which filters ffmpeg has. */
   public static async available(): Promise<boolean> {
-    if (this.found !== null) return this.found;
-
-    // Both must answer `-version`; a missing binary throws on spawn
-    try {
-      const [ffmpeg, ffprobe] = await Promise.all([
-        this.run(env.FFMPEG_PATH, ["-hide_banner", "-version"]),
-        this.run(env.FFPROBE_PATH, ["-hide_banner", "-version"]),
-      ]);
-      this.found = ffmpeg.exitCode === 0 && ffprobe.exitCode === 0;
-    } catch {
-      this.found = false;
-    }
-    if (!this.found) {
-      console.warn("[Playback] ffmpeg or ffprobe was not found; nothing can be played");
-      return false;
-    }
+    // The locator logs a missing binary itself, once
+    if (!(await FfmpegLocator.available())) return false;
+    if (this.filters) return true;
 
     // Lines read like ` .S tonemap   V->V   Conversion…`
-    const listed = await this.run(env.FFMPEG_PATH, ["-hide_banner", "-filters"]).catch(() => null);
+    const filters = new Set<string>();
+    const listed = await this.run(FfmpegLocator.path("ffmpeg"), ["-hide_banner", "-filters"]).catch(() => null);
     for (const line of listed?.stdout.split("\n") ?? []) {
       const name = /^\s*\S+\s+(\w+)\s/.exec(line)?.[1];
-      if (name) this.filters.add(name);
+      if (name) filters.add(name);
     }
+    this.filters = filters;
     if (!this.canToneMap) console.warn("[Playback] ffmpeg has no zscale filter, so HDR is converted without tone mapping");
-    return this.found;
+    return true;
   }
 
   /** Whether this ffmpeg can tone map HDR to SDR. */
   public static get canToneMap(): boolean {
-    return this.filters.has("zscale") && this.filters.has("tonemap");
+    return this.filters !== null && this.filters.has("zscale") && this.filters.has("tonemap");
   }
 
   /** The H.264 encoder a hardware acceleration setting uses. */
@@ -165,7 +157,7 @@ export class Ffmpeg {
     if (plan.video === "copy") args.push("-noaccurate_seek");
     args.push("-copyts");
     if (startSeconds > 0) args.push("-ss", start);
-    args.push("-i", path);
+    args.push(...MediaInput.args("matroska", path));
     args.push(...this.mapArgs(plan));
 
     // Video: copied as it is, or re-encoded to H.264 with keyframes on every segment boundary
@@ -198,7 +190,7 @@ export class Ffmpeg {
     const encode = plan.video === "encode" ? this.videoEncode(settings, this.encodeFor(plan, 2)) : null;
     if (encode) args.push(...encode.input);
     if (startSeconds > 0) args.push("-ss", startSeconds.toFixed(3));
-    args.push("-i", path);
+    args.push(...MediaInput.args("matroska", path));
     args.push(...this.mapArgs(plan));
     if (encode) args.push(...encode.output);
     else args.push("-c:v", "copy");
@@ -222,7 +214,7 @@ export class Ffmpeg {
     filters.push(`scale=${options.width}:${options.height}`, `tile=${TRICKPLAY_TILE}x${TRICKPLAY_TILE}`);
     return [
       "-hide_banner", "-nostdin", "-nostats", "-loglevel", "error",
-      "-skip_frame", "nokey", "-i", path,
+      "-skip_frame", "nokey", ...MediaInput.args("matroska", path),
       "-map", `0:${videoStream}`, "-an", "-sn", "-dn",
       "-vf", filters.join(","), "-fps_mode", "passthrough", "-q:v", "5",
       "-f", "image2", "-start_number", "1", `${directory}/%d.jpg`,
@@ -242,7 +234,7 @@ export class Ffmpeg {
     args.push("-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=24", "-t", "3", ...encode.output, "-f", "null", "-");
 
     const started = performance.now();
-    const output = await this.run(env.FFMPEG_PATH, args, AbortSignal.timeout(30_000));
+    const output = await this.run(FfmpegLocator.path("ffmpeg"), args, AbortSignal.timeout(30_000));
     const seconds = ((performance.now() - started) / 1000).toFixed(1);
     if (output.exitCode === 0) return { ok: true, message: `Encoded 3 seconds of 1080p to 720p in ${seconds} s` };
     return { ok: false, message: output.stderr.trim().split("\n").slice(-3).join(" ") || `ffmpeg exited with ${output.exitCode}` };

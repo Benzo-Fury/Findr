@@ -1,13 +1,14 @@
 /**
  * Starts the server, as `index.ts` does unless told to run a cast bridge.
  * Brings BetterAuth's schema up to date, registers every route, starts
- * listening, checks the VPN killswitch, then recovers the download queue —
+ * listening, checks the VPN killswitch, finds ffmpeg, then recovers the download queue —
  * closing out anything a previous process left mid-flight and resuming
  * unfinished downloads — then starts playback and checking for updates.
  */
 
 import { Server } from "./lib/server/Server"
 import { migrateAuth, seedRoot } from "./lib/auth/client"
+import { FfmpegLocator } from "./lib/media/FfmpegLocator"
 import DownloadQueue from "./lib/pipeline/DownloadQueue"
 import PlaybackService from "./lib/playback/PlaybackService"
 import Updater from "./lib/updates/Updater"
@@ -32,6 +33,10 @@ server.start()
 
 // Know whether the VPN is up before anything can start a torrent
 await VpnGuard.getInstance().start()
+
+// Find ffmpeg and ffprobe (unpacking the bundled copies on first run) before
+// anything is cleaned or played
+await FfmpegLocator.resolve()
 
 // Resume work only once the server is up, so a slow client never delays it
 await DownloadQueue.getInstance().recover()

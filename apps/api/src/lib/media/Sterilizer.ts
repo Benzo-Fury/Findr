@@ -1,43 +1,70 @@
 /**
  * Rewrites a downloaded video into a clean Matroska file holding only its
  * video and audio streams. Subtitles, attachments (fonts, images, anything
- * else smuggled into the container), chapters, tags, the container title and
- * per-track names are all dropped — none of it survives into the library.
+ * else smuggled into the container), cover art, chapters, tags, the container
+ * title and per-track names are all dropped — none of it survives into the
+ * library. Each audio track keeps only its language.
  *
- * mkvmerge remuxes rather than re-encodes, so this takes seconds rather than
- * hours and is lossless. The output is always `.mkv`.
+ * The file is treated as hostile throughout (`MediaInput`): only Matroska and
+ * MP4/MOV are accepted, identified from their first bytes before ffmpeg ever
+ * opens them, and ffmpeg is held to that demuxer and to local files. Streams
+ * are kept only in codecs on an allowlist of common ones, so a release can't
+ * bring an obscure decoder into play later, when playback converts it.
+ *
+ * ffmpeg remuxes rather than re-encodes (`-c copy`), so this takes seconds
+ * rather than hours and is lossless. The output is always `.mkv`.
  */
 
-import { env } from "../env/Env";
 import { AttemptFailure, CancelledError, FatalDownloadError } from "../pipeline/errors";
+import { FfmpegLocator } from "./FfmpegLocator";
+import { MediaInput, type ContainerFormat } from "./MediaInput";
 
 // ---------- Types ---------- //
 
-/** The subset of `mkvmerge -J` output the sterilizer reads. */
-interface Identification {
-  container?: { recognized?: boolean; supported?: boolean };
-  tracks?: Array<{ id: number; type: "video" | "audio" | "subtitles" | string }>;
+/** The subset of `ffprobe -show_streams -show_format` output the sterilizer reads. */
+interface Probe {
+  streams?: Array<{
+    index: number;
+    codec_type?: string;
+    codec_name?: string;
+    disposition?: { attached_pic?: number };
+    tags?: { language?: string };
+  }>;
+  format?: { duration?: string };
 }
 
-/** The result of running mkvmerge once. */
+/** The result of running a binary once. */
 interface ProcessResult {
   exitCode: number;
   stdout: string;
+  stderr: string;
 }
 
-/** mkvmerge exits 0 on success, 1 on success with warnings, 2 on error. */
-const MKVMERGE_ERROR_EXIT = 2;
+/** A stream that goes into the library file. */
+interface KeptStream {
+  index: number;
+  language: string | null;
+}
 
-/** GUI mode prints progress as `#GUI#progress 42%`. */
-const PROGRESS_LINE = /#GUI#progress (\d+)%/;
-const ERROR_LINE = /#GUI#error (.+)/;
+/** Video codecs a library file may hold, by ffprobe's name. */
+const VIDEO_CODECS = new Set(["h264", "hevc", "av1", "vp9"]);
+
+/** Audio codecs a library file may hold, by ffprobe's name. */
+const AUDIO_CODECS = new Set([
+  "aac", "ac3", "eac3", "dts", "truehd", "flac", "opus", "mp3", "vorbis",
+  "pcm_s16le", "pcm_s24le", "pcm_s32le",
+]);
+
+/** `-progress` reports how far the output has got like `out_time_us=1234567`. */
+const PROGRESS_LINE = /^out_time_us=(\d+)$/;
 
 // ---------- Sterilizer ---------- //
 
 export class Sterilizer {
   /**
    * Writes a sterilized copy of `input` to `output`. Fails the attempt when
-   * the file is not a container mkvmerge supports or holds no video.
+   * the file is not an accepted container, can't be read, or holds no video
+   * (or only audio Findr doesn't take).
    */
   public async sterilize(
     input: string,
@@ -45,67 +72,90 @@ export class Sterilizer {
     signal: AbortSignal,
     onProgress: (progress: number) => void,
   ): Promise<void> {
+    // Identify the container from its bytes, never from its name
+    const format = await MediaInput.sniff(input);
+    if (!format) throw new AttemptFailure("Downloaded file is not a Matroska or MP4 video");
+
     // Inspect the streams before committing to a remux
-    const tracks = await this.identify(input, signal);
-    const kept = tracks.filter((track) => track.type === "video" || track.type === "audio");
-    if (!kept.some((track) => track.type === "video")) {
-      throw new AttemptFailure("Downloaded file contains no video stream");
+    const { streams, durationSeconds } = await this.identify(input, format, signal);
+
+    // Keep every stream of an allowed codec and drop the rest; blank every name, keep audio languages
+    const args = ["-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-y", ...MediaInput.args(format, input)];
+    for (const stream of streams) args.push("-map", `0:${stream.index}`);
+    args.push("-c", "copy", "-map_metadata", "-1", "-map_chapters", "-1", "-fflags", "+bitexact");
+    for (const [position, stream] of streams.entries()) {
+      if (stream.language) args.push(`-metadata:s:${position}`, `language=${stream.language}`);
     }
+    args.push("-progress", "pipe:1", "-f", "matroska", output);
 
-    // Keep audio and video, drop everything else, and blank every name
-    const args = [
-      "--gui-mode",
-      "-o", output,
-      "--title", "",
-      "--no-subtitles",
-      "--no-attachments",
-      "--no-chapters",
-      "--no-global-tags",
-      "--no-track-tags",
-      "--no-buttons",
-      ...kept.flatMap((track) => ["--track-name", `${track.id}:`]),
-      input,
-    ];
-
-    const result = await this.run(args, signal, (line) => {
-      const progress = line.match(PROGRESS_LINE);
-      if (progress?.[1]) onProgress(Number(progress[1]) / 100);
+    const result = await this.run(FfmpegLocator.path("ffmpeg"), args, signal, (line) => {
+      // Without a duration there's no fraction to report, but a report still shows life
+      const time = line.match(PROGRESS_LINE);
+      if (time?.[1]) onProgress(durationSeconds ? Math.min(Number(time[1]) / 1e6 / durationSeconds, 0.99) : 0);
     });
 
-    if (result.exitCode >= MKVMERGE_ERROR_EXIT) {
-      const error = result.stdout.match(ERROR_LINE)?.[1] ?? `mkvmerge exited with code ${result.exitCode}`;
+    if (result.exitCode !== 0) {
+      const error = result.stderr.trim().split("\n").at(-1) || `ffmpeg exited with code ${result.exitCode}`;
       throw new AttemptFailure(`Sterilize failed: ${error}`);
     }
-  }
-
-  /** Lists the file's tracks, failing when mkvmerge cannot read the container. */
-  private async identify(input: string, signal: AbortSignal): Promise<Array<{ id: number; type: string }>> {
-    const result = await this.run(["-J", input], signal);
-
-    let identification: Identification;
-    try {
-      identification = JSON.parse(result.stdout) as Identification;
-    } catch {
-      throw new AttemptFailure("mkvmerge could not read the downloaded file");
-    }
-
-    if (!identification.container?.recognized || !identification.container.supported) {
-      throw new AttemptFailure("Downloaded file is in a container format mkvmerge does not support");
-    }
-    return identification.tracks ?? [];
+    onProgress(1);
   }
 
   /**
-   * Runs mkvmerge to completion, streaming stdout lines to `onLine`. Kills the
-   * process on cancellation. A missing binary is fatal, since no candidate
-   * could be sterilized without it.
+   * Lists the streams to keep, failing when ffprobe can't read the container,
+   * there is no video in an allowed codec, or there is audio but none in an
+   * allowed codec.
    */
-  private async run(args: string[], signal: AbortSignal, onLine?: (line: string) => void): Promise<ProcessResult> {
+  private async identify(input: string, format: ContainerFormat, signal: AbortSignal): Promise<{ streams: KeptStream[]; durationSeconds: number | null }> {
+    const result = await this.run(
+      FfmpegLocator.path("ffprobe"),
+      ["-hide_banner", "-loglevel", "error", "-print_format", "json", "-show_streams", "-show_format", ...MediaInput.args(format, input)],
+      signal,
+    );
+
+    let probe: Probe;
+    try {
+      if (result.exitCode !== 0) throw new Error(result.stderr);
+      probe = JSON.parse(result.stdout) as Probe;
+    } catch {
+      throw new AttemptFailure("ffprobe could not read the downloaded file");
+    }
+
+    // Cover art is a video stream too, flagged as an attached picture
+    const all = probe.streams ?? [];
+    const video = all.filter((stream) => stream.codec_type === "video" && !stream.disposition?.attached_pic);
+    const audio = all.filter((stream) => stream.codec_type === "audio");
+    const keptVideo = video.filter((stream) => VIDEO_CODECS.has(stream.codec_name ?? ""));
+    const keptAudio = audio.filter((stream) => AUDIO_CODECS.has(stream.codec_name ?? ""));
+
+    if (video.length === 0) throw new AttemptFailure("Downloaded file contains no video stream");
+    if (keptVideo.length === 0) throw new AttemptFailure(`Downloaded file's video is in an unsupported codec (${video[0]?.codec_name ?? "unknown"})`);
+    if (audio.length > 0 && keptAudio.length === 0) {
+      throw new AttemptFailure(`Downloaded file's audio is in an unsupported codec (${audio[0]?.codec_name ?? "unknown"})`);
+    }
+
+    const language = (stream: (typeof all)[number]) => {
+      const tag = stream.tags?.language?.trim().toLowerCase();
+      return tag && tag !== "und" && /^[a-z]{2,3}(-[a-z0-9]+)?$/.test(tag) ? tag : null;
+    };
+    const duration = Number(probe.format?.duration);
+    return {
+      streams: [...keptVideo, ...keptAudio].map((stream) => ({ index: stream.index, language: language(stream) })),
+      durationSeconds: Number.isFinite(duration) && duration > 0 ? duration : null,
+    };
+  }
+
+  /**
+   * Runs a binary to completion, streaming stdout lines to `onLine`. Kills
+   * the process on cancellation. A missing binary is fatal, since no
+   * candidate could be sterilized without it.
+   */
+  private async run(binary: string, args: string[], signal: AbortSignal, onLine?: (line: string) => void): Promise<ProcessResult> {
     let child: ReturnType<typeof Bun.spawn<"ignore", "pipe", "pipe">>;
     try {
-      child = Bun.spawn([env.MKVMERGE_PATH, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      child = Bun.spawn([binary, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     } catch (error) {
-      throw new FatalDownloadError(`mkvmerge is not available at "${env.MKVMERGE_PATH}": ${error}`);
+      throw new FatalDownloadError(`${binary} is not available: ${error}`);
     }
 
     // Kill the process if the download is cancelled mid-remux
@@ -129,10 +179,10 @@ export class Sterilizer {
     }
 
     const exitCode = await child.exited;
-    await stderrDrained;
+    const stderr = await stderrDrained;
     signal.removeEventListener("abort", onAbort);
     if (signal.aborted) throw new CancelledError();
 
-    return { exitCode, stdout };
+    return { exitCode, stdout, stderr };
   }
 }

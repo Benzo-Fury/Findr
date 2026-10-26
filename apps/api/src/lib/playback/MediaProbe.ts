@@ -10,7 +10,8 @@
  */
 
 import { z } from "zod";
-import { env } from "../env/Env";
+import { FfmpegLocator } from "../media/FfmpegLocator";
+import { MediaInput } from "../media/MediaInput";
 import { Ffmpeg } from "./Ffmpeg";
 
 // ---------- Types ---------- //
@@ -107,9 +108,13 @@ const HDR_TRANSFERS = new Set(["smpte2084", "arib-std-b67"]);
 export class MediaProbe {
   /** Reads a file's streams and duration. */
   public async probe(path: string, signal?: AbortSignal): Promise<ProbeInfo> {
+    // Library files are Matroska; anything else is never handed to ffprobe
+    const format = await MediaInput.sniff(path).catch(() => null);
+    if (format !== "matroska") throw new ProbeError("Not a Matroska file");
+
     const output = await Ffmpeg.run(
-      env.FFPROBE_PATH,
-      ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", path],
+      FfmpegLocator.path("ffprobe"),
+      ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", ...MediaInput.args("matroska", path)],
       signal,
     );
     if (output.exitCode !== 0) throw new ProbeError(`ffprobe failed: ${output.stderr.trim() || `exit ${output.exitCode}`}`);
@@ -129,8 +134,8 @@ export class MediaProbe {
    */
   public async keyframes(path: string, startTime: number, signal?: AbortSignal): Promise<Float64Array> {
     const output = await Ffmpeg.run(
-      env.FFPROBE_PATH,
-      ["-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", path],
+      FfmpegLocator.path("ffprobe"),
+      ["-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", ...MediaInput.args("matroska", path)],
       signal,
     );
     if (output.exitCode !== 0) throw new ProbeError(`ffprobe keyframe scan failed: ${output.stderr.trim() || `exit ${output.exitCode}`}`);

@@ -1,5 +1,5 @@
 # Findr's container image: the compiled Linux executable plus the tools its
-# pipeline and VPN killswitch run (mkvmerge, ffmpeg, ip).
+# pipeline, playback and VPN killswitch run (ffmpeg, ip).
 #
 # It packages executables that are already built rather than compiling them,
 # so the image runs exactly what the release ships. Build them first, then the
@@ -17,7 +17,7 @@ ARG TARGETARCH
 # VA-API drivers let ffmpeg encode on Intel (Quick Sync) and AMD graphics once
 # /dev/dri is passed through; Intel's is only built for amd64
 RUN apt-get update \
- && apt-get install -y --no-install-recommends mkvtoolnix ffmpeg iproute2 ca-certificates curl tzdata mesa-va-drivers \
+ && apt-get install -y --no-install-recommends ffmpeg iproute2 ca-certificates curl tzdata mesa-va-drivers \
  && if [ "$TARGETARCH" = amd64 ]; then apt-get install -y --no-install-recommends intel-media-va-driver; fi \
  && rm -rf /var/lib/apt/lists/*
 
@@ -41,10 +41,14 @@ WORKDIR /data
 VOLUME /data
 
 # FINDR_CONTAINER makes Findr only announce updates: a new image is pulled
-# instead of the executable replacing itself inside a container
+# instead of the executable replacing itself inside a container. The
+# executable carries its own ffmpeg, but Debian's can use the VA-API drivers
+# above, so the image points Findr at it instead
 ENV NODE_ENV=production \
     DATABASE_PATH=/data/findr.db \
-    FINDR_CONTAINER=true
+    FINDR_CONTAINER=true \
+    FFMPEG_PATH=/usr/bin/ffmpeg \
+    FFPROBE_PATH=/usr/bin/ffprobe
 
 EXPOSE 34571 6881/tcp 6881/udp
 

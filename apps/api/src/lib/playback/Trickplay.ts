@@ -15,7 +15,7 @@ import { join } from "node:path";
 import type { PlaybackSettings } from "@findr/types/playback";
 import { client } from "../db/client";
 import type { MediaItem } from "../db/models/MediaItem";
-import { env } from "../env/Env";
+import { FfmpegLocator } from "../media/FfmpegLocator";
 import { Ffmpeg, TRICKPLAY_TILE } from "./Ffmpeg";
 
 /** What a folder of thumbnails was made with. */
@@ -88,7 +88,7 @@ export class Trickplay {
         height,
         toneMap: item.probe.video.hdr && settings.toneMapping,
       });
-      const output = await Ffmpeg.run(env.FFMPEG_PATH, args, signal);
+      const output = await Ffmpeg.run(FfmpegLocator.path("ffmpeg"), args, signal);
       if (signal.aborted) return;
       if (output.exitCode !== 0) throw new Error(output.stderr.trim().slice(-300) || `ffmpeg exited with ${output.exitCode}`);
 

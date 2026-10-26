@@ -20,9 +20,15 @@ const DANGEROUS_EXTENSIONS = new Set([
   ".js", ".jse", ".wsf", ".hta", ".pif", ".com", ".jar", ".dll", ".apk", ".app", ".dmg",
 ]);
 
-const VIDEO_EXTENSIONS = new Set([
-  ".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".webm", ".mpg", ".mpeg", ".vob", ".flv",
-]);
+/**
+ * Videos in the containers the sterilizer takes (Matroska, WebM, MP4/MOV).
+ * Others — AVI, MPEG-TS, VOB and the rest — would be refused once downloaded,
+ * so a release holding only those is rejected before any of it is fetched.
+ */
+const VIDEO_EXTENSIONS = new Set([".mkv", ".webm", ".mp4", ".m4v", ".mov"]);
+
+/** Videos in containers Findr doesn't take, to say why a release with only these was turned down. */
+const UNSUPPORTED_VIDEO_EXTENSIONS = new Set([".avi", ".wmv", ".ts", ".m2ts", ".mpg", ".mpeg", ".vob", ".flv", ".divx", ".ogm", ".rmvb"]);
 
 const ARCHIVE_EXTENSIONS = new Set([".rar", ".zip", ".7z", ".tar", ".gz", ".iso"]);
 
@@ -71,7 +77,10 @@ export class FileInspector {
     // Archive-only releases are rejected, not unpacked
     if (videos.length === 0) {
       const archived = files.some((file) => ARCHIVE_EXTENSIONS.has(this.extension(file)));
-      return { accepted: false, reason: archived ? "Archive-only release with no video file" : "No video files" };
+      if (archived) return { accepted: false, reason: "Archive-only release with no video file" };
+      const unsupported = files.find((file) => UNSUPPORTED_VIDEO_EXTENSIONS.has(this.extension(file)));
+      if (unsupported) return { accepted: false, reason: `Video is in a container Findr doesn't take (${this.extension(unsupported)})` };
+      return { accepted: false, reason: "No video files" };
     }
 
     switch (target.kind) {

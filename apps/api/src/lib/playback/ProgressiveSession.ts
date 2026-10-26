@@ -9,7 +9,7 @@
 
 import type { PlaybackSettings } from "@findr/types/playback";
 import type { MediaItem } from "../db/models/MediaItem";
-import { env } from "../env/Env";
+import { FfmpegLocator } from "../media/FfmpegLocator";
 import { Ffmpeg } from "./Ffmpeg";
 import type { PlaybackPlan } from "./PlaybackDecider";
 
@@ -175,7 +175,7 @@ export class ProgressiveSession {
     const args = Ffmpeg.transportStreamArgs(this.item.path, this.plan, startMs / 1000, this.settings);
     let child: NonNullable<typeof this.child>;
     try {
-      child = Bun.spawn([env.FFMPEG_PATH, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      child = Bun.spawn([FfmpegLocator.path("ffmpeg"), ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     } catch {
       return new Response(null, { status: 503, headers });
     }

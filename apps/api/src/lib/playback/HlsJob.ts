@@ -14,7 +14,7 @@
 import { rename } from "node:fs/promises";
 import { join } from "node:path";
 import type { PlaybackSettings } from "@findr/types/playback";
-import { env } from "../env/Env";
+import { FfmpegLocator } from "../media/FfmpegLocator";
 import { Ffmpeg } from "./Ffmpeg";
 import { Fmp4Splitter, type Fragment } from "./Fmp4Splitter";
 import type { PlaybackPlan } from "./PlaybackDecider";
@@ -89,7 +89,7 @@ export class HlsJob {
     const args = Ffmpeg.streamArgs(path, plan, segments.start(this.startIndex), settings);
 
     try {
-      this.child = Bun.spawn([env.FFMPEG_PATH, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      this.child = Bun.spawn([FfmpegLocator.path("ffmpeg"), ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     } catch (error) {
       this.finish(new Error(`ffmpeg could not start: ${error instanceof Error ? error.message : error}`));
       return;
