@@ -44,7 +44,7 @@ If a torrent is fake, dead, too slow or contains something dodgy, Findr throws i
 
 ## What you need
 
-- **[Prowlarr](https://prowlarr.com/)** - to search your torrent indexers. There's a ready-made Docker setup in [`docker/`](docker/README.md).
+- **[Prowlarr](https://prowlarr.com/)** - to search your torrent indexers. There's a ready-made Docker setup in [`docker/`](docker/README.md) that runs it alongside Findr.
 - **[MKVToolNix](https://mkvtoolnix.download/)** (`mkvmerge`) - to clean the files.
 - **[ffmpeg](https://ffmpeg.org/)** (`ffmpeg`, `ffprobe`) - optional, to watch your library in the browser. See [Playback](docs/Playback.md).
 - **A [TMDB API key](https://developer.themoviedb.org/)** - free; used for titles, posters and episode lists.
@@ -63,11 +63,9 @@ chmod +x findr-linux-x64
 
 On macOS, run `xattr -d com.apple.quarantine <file>` first.
 
-Findr stores its data in a `data/` folder next to wherever you run it.
-
 ### Docker
 
-The image `ghcr.io/benzo-fury/findr` comes with mkvmerge and ffmpeg included. Follow [running Findr in Docker](docker/README.md#running-findr-in-docker) for the Compose file and the first sign-in (which works a little differently in a container).
+The image `ghcr.io/benzo-fury/findr` comes with mkvmerge and ffmpeg included. The [`docker/`](docker/README.md) folder has a single Compose file that runs Findr with Prowlarr: copy it, edit `.env` and `docker compose up -d`. The first sign-in works a little differently in a container, so follow [running Findr in Docker](docker/README.md#running-findr-in-docker).
 
 ### From source
 
@@ -80,6 +78,9 @@ bun install
 bun run build
 bun run start
 ```
+
+> [!NOTE]
+> Findr stores its data in a `data/` folder next to wherever you run it.
 
 ## Setup
 

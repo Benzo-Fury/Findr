@@ -1,16 +1,43 @@
-# External services Findr depends on: Prowlarr (indexer search), plus
-# FlareSolverr as an opt-in helper for indexers behind Cloudflare. Findr
-# itself runs outside this stack, on the host, and downloads torrents with its
-# own built-in client.
+# The whole Findr stack in one file: Findr itself, Prowlarr (indexer search),
+# and FlareSolverr as an opt-in helper for indexers behind Cloudflare. Findr
+# downloads torrents with its own built-in client, so nothing else is needed.
 #
 #   cp compose.example.yml compose.yml && cp .env.example .env   # then edit .env
 #   docker compose up -d                                         # add --profile flaresolverr to include it
 #
-# See README.md in this folder for first-run setup.
+# Running Findr on the host instead (binary or source)? Start only Prowlarr
+# with `docker compose up -d prowlarr`. See README.md in this folder for
+# first-run setup.
 
-name: findr-services
+name: findr
 
 services:
+  # ---------- Findr ---------- #
+  # The downloader and web app. Open http://localhost:34571 after the
+  # first-sign-in step in README.md. Prowlarr URL in Findr's settings:
+  # http://prowlarr:9696
+  findr:
+    image: ghcr.io/benzo-fury/findr:${FINDR_TAG:-latest}
+    container_name: findr
+    # Must own the library folders on the host
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      - TZ=${TZ:-Etc/UTC}
+    volumes:
+      # Database, session secret, optional .env
+      - ${CONFIG_ROOT:-./config}/findr:/data
+      # Library and scratch folders, at the same path inside and out so the
+      # paths entered under Settings -> Library paths match
+      - ${MEDIA_ROOT:-/srv/media}:${MEDIA_ROOT:-/srv/media}
+    ports:
+      - ${BIND_ADDRESS:-127.0.0.1}:${FINDR_PORT:-34571}:34571
+      # Torrent port (TCP and UDP); forward it on your router for better speeds
+      - ${TORRENT_PORT:-6881}:${TORRENT_PORT:-6881}
+      - ${TORRENT_PORT:-6881}:${TORRENT_PORT:-6881}/udp
+    depends_on:
+      - prowlarr
+    restart: unless-stopped
+
   # ---------- Prowlarr ---------- #
   # Indexer manager. Findr queries its search API with PROWLARR_API_KEY.
   prowlarr:

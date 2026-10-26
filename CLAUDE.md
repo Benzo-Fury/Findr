@@ -31,7 +31,7 @@ The Sterilizer and pipeline tests need `mkvmerge` and `ffmpeg` on PATH and are s
 
 **Default login:** a database with no users is seeded with one admin, `admin` / `admin` (stored as `admin@findr.local`, flagged `mustReset`). It must replace its email and password on first sign-in before anything else works, so a dev database you have already set up will not accept `admin` / `admin`. To reset one, stop the API, delete the rows from `user`, `account`, `session` and `verification` in `data/findr.db` (the repo-root `data/`), and restart the API — hot reload does not re-run `seedRoot`. There is no env-seeded admin.
 
-Prowlarr (and optional FlareSolverr) run from `docker/`: `compose.example.yml` and `.env.example` are committed; `compose.yml`, `.env` and `config/` are personal and gitignored. Setup steps are in `docker/README.md`. Torrents need no external service — Findr embeds TinyTorrent.
+Findr, Prowlarr (and optional FlareSolverr) run together from `docker/`, whose `compose.example.yml` is the users' one-file install (in development, `docker compose up -d prowlarr` is enough): `compose.example.yml` and `.env.example` are committed; `compose.yml`, `.env` and `config/` are personal and gitignored. Setup steps are in `docker/README.md`. Torrents need no external service — Findr embeds TinyTorrent.
 
 **TinyTorrent** (the torrent engine, pure TypeScript, no dependencies) is installed from npm. Its package documentation (`README.md`, `docs/API.md`) is the reference for the engine.
 

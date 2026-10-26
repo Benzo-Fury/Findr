@@ -72,7 +72,7 @@ The same data is available at `GET /api/settings` and `PATCH /api/settings` (adm
 
 | Field | Description |
 |---|---|
-| `prowlarrUrl` | Base URL of your [Prowlarr](https://prowlarr.com/) instance, e.g. `http://localhost:9696`. Required. |
+| `prowlarrUrl` | Base URL of your [Prowlarr](https://prowlarr.com/) instance, e.g. `http://localhost:9696` (`http://prowlarr:9696` in the Docker stack). Required. |
 | `prowlarrApiKey` | Prowlarr API key (Prowlarr → Settings → General; the Docker setup pins it from `docker/.env`). Required. Prowlarr's download links are saved with the key removed, and it is re-attached only when Findr fetches from this URL. |
 | `tmdbApiKey` | [TMDB](https://developer.themoviedb.org/) API key, for browsing, metadata, episode lists and naming. Required. |
 | `anthropicApiKey` | Enables the wrong-title filter (see below). Optional; without it the filter is skipped. |
