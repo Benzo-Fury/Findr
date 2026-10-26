@@ -8,17 +8,20 @@
  * account still on its initial credentials cannot reach, so it never opens
  * before those credentials are replaced.
  *
- * The one exception is a TV on the local network fetching media it was cast,
- * with a valid token in the URL (`CastAccess`).
+ * There are two exceptions: a TV on the local network fetching media it was
+ * cast, with a valid token in the URL (`CastAccess`); and, while a fresh
+ * install is still unclaimed, the web app and the claim route, which only
+ * act with the setup code from the server's log (`SetupCode`).
  */
 
 import type { MiddlewareHandler } from "hono"
 import { SettingsStore } from "../lib/db/models/SettingsStore"
 import { CastAccess } from "../lib/playback/CastAccess"
 import { ClientAddress } from "../lib/server/ClientAddress"
+import { SetupCode } from "../lib/setup/SetupCode"
 
 export const requireLocal: MiddlewareHandler = async (c, next) => {
-  if (ClientAddress.isLocal(c) || SettingsStore.section("access").allowRemote || CastAccess.allows(c)) {
+  if (ClientAddress.isLocal(c) || SettingsStore.section("access").allowRemote || CastAccess.allows(c) || SetupCode.allows(c)) {
     await next()
     return
   }
