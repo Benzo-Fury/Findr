@@ -14,7 +14,7 @@
 import { stat, mkdir, rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type {
-  AudioTrack,
+  CreateCastUrl,
   CreateSession,
   DeviceProfile,
   NowPlayingRecord,
@@ -154,18 +154,9 @@ export default class PlaybackService extends SelfManagedSingleton {
     const session = await this.openHls(prepared, client.userId, "browser");
     const { item, plan, audio, startMs, settings } = prepared;
 
-    // TVs beside the client get absolute URLs: the same stream for AirPlay, a ticket for Cast. A TV
-    // away from the server's network fetches over the internet, so its ticket keeps the remote cap
+    // TVs beside the client get absolute URLs: the same stream for AirPlay, a ticket for Cast
     const playlistUrl = `/api/playback/stream/${StreamToken.issue(session.id)}/index.m3u8`;
     const base = settings.casting ? CastAddress.forClient(client.local) : null;
-    const ticket = CastTicket.issue({
-      userId: client.userId,
-      titleId: item.titleId,
-      season: item.season,
-      episode: item.episode,
-      audioTrack: request.audioTrack,
-      maxBitrate: this.bitrateCap(request.maxBitrate, settings, client.local),
-    });
 
     return {
       id: session.id,
@@ -173,15 +164,47 @@ export default class PlaybackService extends SelfManagedSingleton {
       mode: plan.mode,
       reasons: plan.reasons,
       durationMs: item.durationMs,
-      audioTracks: this.audioTracks(item.probe),
-      audioTrack: item.probe.audio.findIndex((track) => track.index === audio.index),
+      audioTracks: item.audioTracks(),
+      audioTrack: item.audioTrackOf(audio.index),
       startMs,
       height: plan.height,
       bitrate: plan.bitrate,
       remoteUrl: base ? `${base}${playlistUrl}` : null,
-      castUrl: base ? `${base}/api/playback/cast/${ticket}/index.m3u8` : null,
+      castUrl: base ? this.castPlaylist(base, item, request, client) : null,
       trickplayUrl: Trickplay.url(item.id, settings),
     };
+  }
+
+  /**
+   * A Google Cast URL for an item, as a receiver already casting switches to
+   * another audio track or quality. Nothing is started until the receiver
+   * asks for it.
+   */
+  public castUrl(request: CreateCastUrl, client: SessionClient): string {
+    if (!this.running) throw new PlaybackError("playback_disabled", 404);
+    if (!SettingsStore.section("playback").casting) throw new PlaybackError("casting_disabled", 404);
+    const item = MediaItem.findForKey(request);
+    if (!item) throw new PlaybackError("not_playable", 404);
+    if (request.audioTrack !== null && !item.probe.audio[request.audioTrack]) throw new PlaybackError("audio_track_not_found", 404);
+    const base = CastAddress.forClient(client.local);
+    if (!base) throw new PlaybackError("cast_address_unknown", 503);
+    return this.castPlaylist(base, item, request, client);
+  }
+
+  /**
+   * The playlist URL a cast ticket stands for. A TV away from the server's
+   * network fetches over the internet, so its ticket keeps the remote cap.
+   */
+  private castPlaylist(base: string, item: MediaItem, request: Pick<CreateCastUrl, "audioTrack" | "maxBitrate">, client: SessionClient): string {
+    const ticket = CastTicket.issue({
+      userId: client.userId,
+      titleId: item.titleId,
+      season: item.season,
+      episode: item.episode,
+      audioTrack: request.audioTrack,
+      maxBitrate: this.bitrateCap(request.maxBitrate, SettingsStore.section("playback"), client.local),
+    });
+    return `${base}/api/playback/cast/${ticket}/index.m3u8`;
   }
 
   /**
@@ -196,6 +219,13 @@ export default class PlaybackService extends SelfManagedSingleton {
     if (!SettingsStore.section("playback").casting) throw new PlaybackError("casting_disabled", 404);
 
     const prepared = await this.prepare({ ...data, startMs: 0 }, CAST_PROFILE, { userId: data.userId, local: true });
+
+    // A new ticket for the same item replaces the receiver's stream, as when the viewer switches audio
+    // track, so the old one's work stops now rather than counting toward the transcode limit until reaped
+    for (const session of [...this.sessions.values()]) {
+      if (session.device === "cast" && session.userId === data.userId && session.item.id === prepared.item.id) await this.end(session.id, null);
+    }
+
     const created = await this.openHls(prepared, data.userId, "cast");
     this.castSessions.set(ticket, created.id);
     return created;
@@ -205,7 +235,8 @@ export default class PlaybackService extends SelfManagedSingleton {
   public async createProgressive(request: RendererPlay, renderer: RendererTarget, userId: string): Promise<{ session: ProgressiveSession; path: string }> {
     const prepared = await this.prepare({ ...request, maxBitrate: null }, renderer.profile, { userId, local: renderer.local });
     const { item, plan, audio, startMs, settings } = prepared;
-    const direct = renderer.acceptsMatroska && plan.mode === "remux";
+    // A TV given the file as it is plays the track it picks itself, so any other track goes as a stream
+    const direct = renderer.acceptsMatroska && plan.mode === "remux" && audio.index === item.defaultAudioStream;
     this.checkTranscodeLimit(!direct && plan.video === "encode", settings);
 
     const session = new ProgressiveSession({
@@ -428,17 +459,5 @@ export default class PlaybackService extends SelfManagedSingleton {
     const wanted = language.toLowerCase();
     const inLanguage = wanted ? tracks.filter((track) => track.language === wanted) : [];
     return inLanguage.find((track) => track.isDefault) ?? inLanguage[0] ?? tracks.find((track) => track.isDefault) ?? first;
-  }
-
-  /** The audio tracks as the player lists them. */
-  private audioTracks(probe: ProbeInfo): AudioTrack[] {
-    return probe.audio.map((track, index) => ({
-      index,
-      codec: track.codec,
-      channels: track.channels,
-      language: track.language,
-      title: track.title,
-      isDefault: track.isDefault,
-    }));
   }
 }

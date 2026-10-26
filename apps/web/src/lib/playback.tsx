@@ -14,7 +14,7 @@
  */
 
 import * as React from "react"
-import type { PlayableItem, PlaybackCapabilities, PlaybackItemKey, PlaybackLibrary, RendererRecord, RendererStatus } from "@findr/types/playback"
+import type { AudioTrack, PlayableItem, PlaybackCapabilities, PlaybackItemKey, PlaybackLibrary, RendererRecord, RendererStatus } from "@findr/types/playback"
 import { fetchCasts, fetchPlaybackCapabilities, fetchPlaybackLibrary } from "./api"
 import { useLibrary } from "./library"
 
@@ -214,4 +214,45 @@ export function formatClock(ms: number): string {
 export function formatRemaining(item: PlayableItem): string {
   const minutes = Math.max(1, Math.round((item.durationMs - item.positionMs) / 60_000))
   return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m left` : `${minutes}m left`
+}
+
+/** Display names for the audio codecs files usually carry; others are shown in capitals. */
+const AUDIO_CODEC_NAMES: Record<string, string> = {
+  aac: "AAC",
+  ac3: "Dolby Digital",
+  eac3: "Dolby Digital+",
+  truehd: "TrueHD",
+  dts: "DTS",
+  flac: "FLAC",
+  opus: "Opus",
+  mp3: "MP3",
+  vorbis: "Vorbis",
+}
+
+/**
+ * What an audio track is called in a menu: its name, else its language, else
+ * its place in the file. Tracks that would read the same are numbered, since
+ * library files keep no track names.
+ */
+export function audioTrackLabel(track: AudioTrack, tracks: AudioTrack[]): string {
+  const name = (candidate: AudioTrack) => candidate.title ?? (candidate.language ? languageName(candidate.language) : `Track ${candidate.index + 1}`)
+  const label = name(track)
+  const same = tracks.filter((candidate) => name(candidate) === label)
+  return same.length > 1 ? `${label} ${same.indexOf(track) + 1}` : label
+}
+
+/** The codec and channels of an audio track, such as `Dolby Digital 5.1`. */
+export function audioTrackDetail(track: AudioTrack): string {
+  const codec = AUDIO_CODEC_NAMES[track.codec] ?? track.codec.toUpperCase()
+  const channels = track.channels > 2 ? `${track.channels - 1}.1` : track.channels === 1 ? "Mono" : "Stereo"
+  return `${codec} ${channels}`
+}
+
+/** A language's name in the browser's language, from its ISO 639-2 code. */
+function languageName(code: string): string {
+  try {
+    return new Intl.DisplayNames([navigator.language], { type: "language" }).of(code) ?? code
+  } catch {
+    return code
+  }
 }

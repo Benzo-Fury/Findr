@@ -178,6 +178,24 @@ export interface PlaybackSessionRecord {
   trickplayUrl: string | null;
 }
 
+/**
+ * `POST /api/playback/cast`: a Google Cast URL for another audio track or
+ * quality, so a receiver already casting can switch without the browser
+ * starting a session of its own.
+ */
+export const CreateCastUrlSchema = PlaybackItemKeySchema.extend({
+  /** Index into the item's audio tracks; null picks by preference. */
+  audioTrack: z.number().int().nonnegative().nullable().default(null),
+  /** Quality cap in bits per second; null means as good as the receiver takes. */
+  maxBitrate: z.number().int().positive().nullable().default(null),
+});
+export type CreateCastUrl = z.infer<typeof CreateCastUrlSchema>;
+
+/** A playlist URL for a Google Cast receiver. */
+export interface CastUrlRecord {
+  url: string;
+}
+
 // ---------- Progress ---------- //
 
 /** Why the player reports its position. */
@@ -302,6 +320,10 @@ export interface RendererStatus {
   volume: number | null;
   muted: boolean;
   mode: PlaybackMode | "direct" | null;
+  /** The audio tracks of what it plays; empty while it plays nothing of ours. */
+  audioTracks: AudioTrack[];
+  /** Index into `audioTracks` of the one it plays, or null while it plays nothing of ours. */
+  audioTrack: number | null;
 }
 
 // ---------- Cast bridges ---------- //

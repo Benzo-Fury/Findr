@@ -6,7 +6,7 @@
  */
 
 import type { MediaType } from "@findr/types/media";
-import type { PlaybackItemKey } from "@findr/types/playback";
+import type { AudioTrack, PlaybackItemKey } from "@findr/types/playback";
 import type { ProbeInfo } from "../../playback/MediaProbe";
 import { Model } from "./Model";
 
@@ -163,5 +163,30 @@ export class MediaItem extends Model {
   /** Forgets a file, such as one that is no longer on disk. */
   public static remove(id: string): void {
     this.db.query("DELETE FROM media_items WHERE id = $id").run({ id });
+  }
+
+  /** The file's audio tracks as players list them, numbered by their order in the file. */
+  public audioTracks(): AudioTrack[] {
+    return this.probe.audio.map((track, index) => ({
+      index,
+      codec: track.codec,
+      channels: track.channels,
+      language: track.language,
+      title: track.title,
+      isDefault: track.isDefault,
+    }));
+  }
+
+  /** Where an audio stream (by its stream index in the file) sits among the audio tracks; -1 when it isn't one. */
+  public audioTrackOf(streamIndex: number): number {
+    return this.probe.audio.findIndex((track) => track.index === streamIndex);
+  }
+
+  /**
+   * The audio track a device playing the file as it is picks on its own: the
+   * one flagged default, else the first.
+   */
+  public get defaultAudioStream(): number | null {
+    return (this.probe.audio.find((track) => track.isDefault) ?? this.probe.audio[0])?.index ?? null;
   }
 }

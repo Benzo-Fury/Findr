@@ -18,7 +18,9 @@ import type {
 import type { CredentialsReset } from "@findr/types/account"
 import type {
   CastBridgeRecord,
+  CastUrlRecord,
   CreateCastBridge,
+  CreateCastUrl,
   CreatedCastBridge,
   CreateSession,
   EncoderTestResult,
@@ -86,6 +88,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   transcodes_path_unset: "Set a downloads path in Settings so playback has somewhere to work.",
   session_not_found: "Playback stopped. Press play to start again.",
   casting_disabled: "Casting is turned off on this server.",
+  audio_track_not_found: "That audio track is no longer in the file.",
   cast_address_unknown: "Findr can't tell what address your TV should use. Set one under Settings, Playback.",
   renderer_not_found: "That TV is no longer on the network.",
   renderer_failed: "The TV didn't accept the video. It may not support this file.",
@@ -338,6 +341,11 @@ export function fetchPlaybackLibrary(init?: RequestInit): Promise<PlaybackLibrar
 /** Starts playing a movie or episode on this device. */
 export function createPlaybackSession(body: CreateSession): Promise<PlaybackSessionRecord> {
   return request("/api/playback/sessions", json(body))
+}
+
+/** A Google Cast URL for another audio track or quality of what a receiver already casts. */
+export function createCastUrl(body: CreateCastUrl): Promise<CastUrlRecord> {
+  return request("/api/playback/cast", json(body))
 }
 
 /** Ends a playback session, freeing its work on the server. */

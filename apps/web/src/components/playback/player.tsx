@@ -1,33 +1,42 @@
 import * as React from "react"
 import { AnimatePresence, motion } from "motion/react"
-import { ArrowLeftIcon, CheckIcon, GearSixIcon, PlayIcon, TelevisionSimpleIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react"
-import { Container } from "@videojs/react"
+import { ArrowLeftIcon, GearSixIcon, PlayIcon, TelevisionSimpleIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react"
+import { Container, Hotkey } from "@videojs/react"
 import { GoogleCast } from "@videojs/react/extensions/google-cast"
 import { HlsJsVideo } from "@videojs/react/media/hlsjs-video"
 import { VideoPlayer, VideoSkin, usePlayer } from "@videojs/react/video"
 import "@videojs/react/video/skin.css"
 import type { PlaybackItemKey, PlaybackPrefs, PlaybackSessionRecord, RendererRecord } from "@findr/types/playback"
-import { createPlaybackSession, endPlaybackSession, reportPlaybackProgress, updatePlaybackPrefs } from "@/lib/api"
+import { createCastUrl, createPlaybackSession, endPlaybackSession, reportPlaybackProgress, updatePlaybackPrefs } from "@/lib/api"
 import { deviceProfile } from "@/lib/device-profile"
+import { googleCastConnected, loadOnGoogleCast } from "@/lib/google-cast"
 import { FADE } from "@/lib/motion"
-import { usePlayback } from "@/lib/playback"
+import { audioTrackDetail, audioTrackLabel, usePlayback } from "@/lib/playback"
 import { rendererDetail, useRenderers } from "@/lib/renderers"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
+import { Notice, Panel, PanelDetail, PanelGroup, PanelOption } from "@/components/playback/player-panel"
 
 /**
  * The video player for one movie or episode. It starts a session on the
  * server, plays its HLS stream with Video.js, reports progress as it goes,
  * and offers the next episode when one ends. Changing quality or audio starts
  * a fresh session at the same moment, since the server packages one stream
- * per session.
+ * per session, and swaps it into the same video element once it is ready,
+ * so playback carries on (on AirPlay too) rather than starting over.
  *
  * Casting: the skin's Cast button sends a TV its own session through the
  * Google Cast extension, Safari's AirPlay button hands over the stream
  * itself (so Safari plays HLS natively there), and the TV button in the top
- * bar lists DLNA renderers, which Findr then drives from the server.
+ * bar lists DLNA renderers, which Findr then drives from the server. While a
+ * Google Cast receiver plays, a new audio track or quality is loaded on the
+ * receiver directly and the browser's own stream catches up once casting ends.
+ *
+ * Keyboard: the skin's shortcuts (Space or K, M, F, I, the arrows, J and L,
+ * 0 to 9, Home and End, < and >) work anywhere on the page, not only once the
+ * player has focus.
  */
 
 interface PlayerProps {
@@ -48,6 +57,20 @@ interface PlayerProps {
   /** Moves playback to a DLNA TV from where the player is. */
   onPlayOnTv: (renderer: RendererRecord, positionMs: number, audioTrack: number | null) => void
   onExit: () => void
+}
+
+/** What the viewer picked: a quality cap and an audio track, either null to let the server decide. */
+interface Choice {
+  quality: number | null
+  audioTrack: number | null
+}
+
+/** A running session and the choice it was made with. */
+interface Stream {
+  session: PlaybackSessionRecord
+  choice: Choice
+  /** Whether it replaced a paused stream, and so waits to be played rather than autoplaying. */
+  paused: boolean
 }
 
 /** HLS's MIME type, for Cast load requests and native playback. */
@@ -102,6 +125,10 @@ function readQuality(): number | null {
   }
 }
 
+function sameChoice(a: Choice, b: Choice): boolean {
+  return a.quality === b.quality && a.audioTrack === b.audioTrack
+}
+
 function describeMode(session: PlaybackSessionRecord): string {
   if (session.mode === "remux") return "Playing the original stream"
   const reasons = session.reasons.map((reason) => {
@@ -115,60 +142,121 @@ function describeMode(session: PlaybackSessionRecord): string {
 }
 
 export function Player(props: PlayerProps) {
-  const { item, startMs } = props
+  const { item } = props
   const { casting } = usePlayback()
-  const [quality, setQuality] = React.useState<number | null>(readQuality)
-  const [audioTrack, setAudioTrack] = React.useState<number | null>(null)
-  const [session, setSession] = React.useState<PlaybackSessionRecord | null>(null)
+  const [choice, setChoice] = React.useState<Choice>(() => ({ quality: readQuality(), audioTrack: null }))
+  const [stream, setStream] = React.useState<Stream | null>(null)
   const [error, setError] = React.useState<string | null>(null)
-  const [attempt, setAttempt] = React.useState(0)
+  const [notice, setNotice] = React.useState<string | null>(null)
+  const clearNotice = React.useCallback(() => setNotice(null), [])
 
   // The position to restart from when quality or audio changes, kept current by the player
-  const positionRef = React.useRef(startMs)
+  const positionRef = React.useRef(props.startMs)
+  // The stream playing, and a count that lets only the latest request replace it
+  const streamRef = React.useRef<Stream | null>(null)
+  const requestRef = React.useRef(0)
 
-  // One session per item, quality and audio choice; ending the old one frees its work
+  /**
+   * Starts a session for `next` where the viewer is and swaps it in, ending
+   * the one it replaces, paused if what it replaces was. A switch that fails
+   * leaves the old stream playing.
+   */
+  const start = React.useCallback(
+    async (next: Choice, paused = false) => {
+      const request = ++requestRef.current
+      setError(null)
+      try {
+        const session = await createPlaybackSession({
+          ...item,
+          deviceProfile: deviceProfile(),
+          maxBitrate: next.quality,
+          audioTrack: next.audioTrack,
+          startMs: positionRef.current,
+        })
+        // Superseded, or the player closed, while it started
+        if (request !== requestRef.current) {
+          void endPlaybackSession(session.id).catch(() => {})
+          return
+        }
+        const previous = streamRef.current
+        streamRef.current = { session, choice: next, paused }
+        setStream(streamRef.current)
+        if (previous) void endPlaybackSession(previous.session.id).catch(() => {})
+      } catch (reason) {
+        if (request !== requestRef.current) return
+        const message = reason instanceof Error ? reason.message : "Playback could not start."
+        const current = streamRef.current
+        if (current) {
+          setChoice(current.choice)
+          setNotice(message)
+        } else setError(message)
+      }
+    },
+    [item],
+  )
+
+  // The first session; leaving ends whatever plays and abandons anything still starting
+  const initial = React.useRef(choice)
   React.useEffect(() => {
-    let cancelled = false
-    let started: PlaybackSessionRecord | null = null
-    setSession(null)
-    setError(null)
-
-    createPlaybackSession({ ...item, deviceProfile: deviceProfile(), maxBitrate: quality, audioTrack, startMs: positionRef.current })
-      .then((record) => {
-        started = record
-        if (cancelled) void endPlaybackSession(record.id).catch(() => {})
-        else setSession(record)
-      })
-      .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "Playback could not start.")
-      })
-
+    void start(initial.current)
     return () => {
-      cancelled = true
-      if (started) void endPlaybackSession(started.id).catch(() => {})
+      requestRef.current++
+      if (streamRef.current) void endPlaybackSession(streamRef.current.session.id).catch(() => {})
+      streamRef.current = null
     }
-  }, [item, quality, audioTrack, attempt])
+  }, [start])
 
-  function chooseQuality(value: number | null) {
+  /**
+   * Applies a new choice: on the Google Cast receiver when one is playing,
+   * else to the browser's stream.
+   */
+  const choose = React.useCallback(
+    async (next: Choice, paused: boolean) => {
+      const previous = choice
+      setChoice(next)
+      if (!googleCastConnected()) {
+        void start(next, paused)
+        return
+      }
+      try {
+        const { url } = await createCastUrl({ ...item, audioTrack: next.audioTrack, maxBitrate: next.quality })
+        await loadOnGoogleCast(url, { startSeconds: positionRef.current / 1000, autoplay: !paused, poster: props.posterUrl })
+      } catch (reason) {
+        setChoice(previous)
+        setNotice(reason instanceof Error && reason.message !== "Nothing is casting." ? reason.message : "The TV didn't switch.")
+      }
+    },
+    [choice, item, start, props.posterUrl],
+  )
+
+  // Once casting ends, the browser's stream takes up whatever was chosen meanwhile
+  const onRemoteEnded = React.useCallback(() => {
+    const current = streamRef.current
+    if (current && !sameChoice(current.choice, choice)) void start(choice)
+  }, [choice, start])
+
+  function chooseQuality(value: number | null, paused: boolean) {
     try {
       if (value === null) localStorage.removeItem(QUALITY_KEY)
       else localStorage.setItem(QUALITY_KEY, String(value))
     } catch {
       // Remembering is a convenience only
     }
-    setQuality(value)
+    void choose({ ...choice, quality: value }, paused)
   }
 
-  function chooseAudio(index: number) {
-    setAudioTrack(index)
+  function chooseAudio(index: number, paused: boolean) {
+    void choose({ ...choice, audioTrack: index }, paused)
     // Remember the language for everything else this user plays
-    const language = session?.audioTracks[index]?.language
+    const language = stream?.session.audioTracks[index]?.language
     if (language && language !== props.prefs.audioLanguage) {
       const prefs = { ...props.prefs, audioLanguage: language }
       props.onPrefs(prefs)
       void updatePlaybackPrefs(prefs).catch(() => {})
     }
   }
+
+  const session = stream?.session ?? null
 
   return (
     <div className="fixed inset-0 bg-[oklch(0.13_0.01_265)] text-surface">
@@ -177,14 +265,18 @@ export function Player(props: PlayerProps) {
           title="This can't play right now"
           description={error}
           onExit={props.onExit}
-          action={<Button variant="signal" onClick={() => setAttempt((current) => current + 1)}>Try again</Button>}
+          action={
+            <Button variant="signal" onClick={() => void start(choice)}>
+              Try again
+            </Button>
+          }
         />
       ) : !session ? (
         <div className="flex size-full items-center justify-center">
           <Spinner className="size-8 text-signal" />
         </div>
       ) : (
-        <VideoPlayer key={session.id}>
+        <VideoPlayer>
           <Container className="relative size-full">
             <VideoSkin
               className="size-full"
@@ -202,7 +294,7 @@ export function Player(props: PlayerProps) {
                 {...(AIRPLAY
                   ? { source: { src: openedLocally() && session.remoteUrl ? session.remoteUrl : session.playlistUrl, type: HLS_TYPE, preferPlayback: "native" } }
                   : { src: session.playlistUrl })}
-                autoPlay
+                autoPlay={!stream?.paused}
                 playsInline
                 poster={props.posterUrl ?? undefined}
               >
@@ -210,17 +302,19 @@ export function Player(props: PlayerProps) {
               </HlsJsVideo>
             </VideoSkin>
             {casting && session.castUrl && <GoogleCast src={session.castUrl} contentType={HLS_TYPE} streamType="on-demand" />}
+            <PageHotkeys />
             <Session
               {...props}
               casting={casting}
-              audioTrack={audioTrack}
+              choice={choice}
               session={session}
               positionRef={positionRef}
-              quality={quality}
               onQuality={chooseQuality}
               onAudio={chooseAudio}
-              onLost={() => setAttempt((current) => current + 1)}
+              onRemoteEnded={onRemoteEnded}
+              onLost={() => void start(stream?.choice ?? choice)}
             />
+            <Notice message={notice} onDone={clearNotice} />
           </Container>
         </VideoPlayer>
       )}
@@ -232,27 +326,59 @@ export function Player(props: PlayerProps) {
 /* Inside the player                                                          */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The skin's shortcuts again, listening on the whole page. The skin binds
+ * them to the player alone, so they would do nothing until the player is
+ * clicked, or once a panel's button that had focus goes away. While focus is
+ * in the player its own binding acts first and these stand aside.
+ */
+function PageHotkeys() {
+  return (
+    <>
+      <Hotkey target="document" keys="Space" action="togglePaused" />
+      <Hotkey target="document" keys="k" action="togglePaused" />
+      <Hotkey target="document" keys="m" action="toggleMuted" />
+      <Hotkey target="document" keys="f" action="toggleFullscreen" />
+      <Hotkey target="document" keys="i" action="togglePictureInPicture" />
+      <Hotkey target="document" keys="ArrowRight" action="seekStep" />
+      <Hotkey target="document" keys="ArrowLeft" action="seekStep" />
+      <Hotkey target="document" keys="l" action="seekStep" />
+      <Hotkey target="document" keys="j" action="seekStep" />
+      <Hotkey target="document" keys="ArrowUp" action="volumeStep" />
+      <Hotkey target="document" keys="ArrowDown" action="volumeStep" />
+      <Hotkey target="document" keys="0-9" action="seekToPercent" />
+      <Hotkey target="document" keys="Home" action="seekToPercent" value={0} />
+      <Hotkey target="document" keys="End" action="seekToPercent" value={100} />
+      <Hotkey target="document" keys=">" action="speedUp" />
+      <Hotkey target="document" keys="<" action="speedDown" />
+    </>
+  )
+}
+
 interface SessionProps extends PlayerProps {
   casting: boolean
-  audioTrack: number | null
+  choice: Choice
   session: PlaybackSessionRecord
   positionRef: React.RefObject<number>
-  quality: number | null
-  onQuality: (value: number | null) => void
-  onAudio: (index: number) => void
+  /** Picks a quality; `paused` says whether what plays is paused, so a TV switched to it stays so. */
+  onQuality: (value: number | null, paused: boolean) => void
+  onAudio: (index: number, paused: boolean) => void
+  /** Casting or AirPlay ended. */
+  onRemoteEnded: () => void
   /** The stream failed; start a fresh session where it stopped. */
   onLost: () => void
 }
 
 /** Everything drawn over the video: the top bar, settings, and the next-episode offer. */
 function Session(props: SessionProps) {
-  const { session, item, positionRef } = props
+  const { session, item, positionRef, onRemoteEnded } = props
   const store = usePlayer()
   const currentTime = usePlayer((state) => state.currentTime)
   const paused = usePlayer((state) => state.paused)
   const ended = usePlayer((state) => state.ended)
   const controlsVisible = usePlayer((state) => state.controlsVisible)
   const mediaError = usePlayer((state) => state.error)
+  const remote = usePlayer((state) => state.remotePlaybackState)
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   const [tvOpen, setTvOpen] = React.useState(false)
 
@@ -261,13 +387,20 @@ function Session(props: SessionProps) {
     if (currentTime > 0) positionRef.current = Math.round(currentTime * 1000)
   }, [currentTime, positionRef])
 
-  // A stream that fails mid-way, such as one reaped while the tab slept, restarts where it was
-  const lostOnce = React.useRef(false)
+  // A stream that fails mid-way, such as one reaped while the tab slept, restarts where it was, once per stream
+  const lostOnce = React.useRef<string | null>(null)
   React.useEffect(() => {
-    if (!mediaError || lostOnce.current) return
-    lostOnce.current = true
+    if (!mediaError || lostOnce.current === session.id) return
+    lostOnce.current = session.id
     props.onLost()
-  }, [mediaError, props])
+  }, [mediaError, session.id, props])
+
+  // Casting ending hands playback back to this browser
+  const wasRemote = React.useRef(remote)
+  React.useEffect(() => {
+    if (wasRemote.current === "connected" && remote === "disconnected") onRemoteEnded()
+    wasRemote.current = remote
+  }, [remote, onRemoteEnded])
 
   // Report the position on a steady beat, and on pause; the last report ends the session
   const report = React.useCallback(
@@ -297,6 +430,8 @@ function Session(props: SessionProps) {
   }, [ended, report, positionRef, session.durationMs])
 
   const chromeVisible = controlsVisible || paused || settingsOpen || tvOpen
+  const closeSettings = React.useCallback(() => setSettingsOpen(false), [])
+  const closeTv = React.useCallback(() => setTvOpen(false), [])
 
   return (
     <>
@@ -360,21 +495,21 @@ function Session(props: SessionProps) {
         {settingsOpen && (
           <SettingsPanel
             session={session}
-            quality={props.quality}
+            choice={props.choice}
             prefs={props.prefs}
             onQuality={(value) => {
               setSettingsOpen(false)
-              props.onQuality(value)
+              props.onQuality(value, paused)
             }}
             onAudio={(index) => {
               setSettingsOpen(false)
-              props.onAudio(index)
+              props.onAudio(index, paused)
             }}
             onPrefs={(prefs) => {
               props.onPrefs(prefs)
               void updatePlaybackPrefs(prefs).catch(() => {})
             }}
-            onClose={() => setSettingsOpen(false)}
+            onClose={closeSettings}
           />
         )}
       </AnimatePresence>
@@ -385,9 +520,9 @@ function Session(props: SessionProps) {
             onPick={(renderer) => {
               setTvOpen(false)
               store.pause()
-              props.onPlayOnTv(renderer, positionRef.current, props.audioTrack)
+              props.onPlayOnTv(renderer, positionRef.current, props.choice.audioTrack ?? session.audioTrack)
             }}
-            onClose={() => setTvOpen(false)}
+            onClose={closeTv}
           />
         )}
       </AnimatePresence>
@@ -408,23 +543,9 @@ function Session(props: SessionProps) {
   )
 }
 
-/** Closes an overlay panel on Escape before the key reaches the player's shortcuts. */
-function useEscape(onClose: () => void): void {
-  React.useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation()
-        onClose()
-      }
-    }
-    window.addEventListener("keydown", onKey, true)
-    return () => window.removeEventListener("keydown", onKey, true)
-  }, [onClose])
-}
-
 interface SettingsPanelProps {
   session: PlaybackSessionRecord
-  quality: number | null
+  choice: Choice
   prefs: PlaybackPrefs
   onQuality: (value: number | null) => void
   onAudio: (index: number) => void
@@ -433,22 +554,15 @@ interface SettingsPanelProps {
 }
 
 /** Quality, audio track and autoplay, with a line on how the file is being sent. */
-function SettingsPanel({ session, quality, prefs, onQuality, onAudio, onPrefs, onClose }: SettingsPanelProps) {
-  useEscape(onClose)
+function SettingsPanel({ session, choice, prefs, onQuality, onAudio, onPrefs, onClose }: SettingsPanelProps) {
+  // The track picked, else the one the server chose for this session
+  const audioTrack = choice.audioTrack ?? session.audioTrack
 
   return (
-    <motion.div
-      role="dialog"
-      aria-label="Playback settings"
-      initial={{ opacity: 0, y: -6, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -6, scale: 0.98 }}
-      transition={FADE}
-      className={PANEL_CLASS}
-    >
+    <Panel label="Playback settings" onClose={onClose}>
       <PanelGroup label="Quality">
         {QUALITIES.map((option) => (
-          <PanelOption key={option.label} selected={quality === option.value} onClick={() => onQuality(option.value)}>
+          <PanelOption key={option.label} selected={choice.quality === option.value} onClick={() => onQuality(option.value)}>
             {option.label}
           </PanelOption>
         ))}
@@ -457,11 +571,9 @@ function SettingsPanel({ session, quality, prefs, onQuality, onAudio, onPrefs, o
       {session.audioTracks.length > 1 && (
         <PanelGroup label="Audio">
           {session.audioTracks.map((track) => (
-            <PanelOption key={track.index} selected={session.audioTrack === track.index} onClick={() => onAudio(track.index)}>
-              <span className="truncate">{track.title ?? languageName(track.language)}</span>
-              <span className="ml-auto shrink-0 pl-3 font-mono text-micro uppercase text-surface/55">
-                {track.codec} {track.channels > 2 ? `${track.channels - 1}.1` : track.channels === 1 ? "mono" : "stereo"}
-              </span>
+            <PanelOption key={track.index} selected={audioTrack === track.index} onClick={() => onAudio(track.index)}>
+              <span className="truncate">{audioTrackLabel(track, session.audioTracks)}</span>
+              <PanelDetail>{audioTrackDetail(track)}</PanelDetail>
             </PanelOption>
           ))}
         </PanelGroup>
@@ -473,13 +585,9 @@ function SettingsPanel({ session, quality, prefs, onQuality, onAudio, onPrefs, o
       </label>
 
       <p className="border-t border-surface/10 px-3 pb-1.5 pt-2.5 text-micro leading-relaxed text-surface/60">{describeMode(session)}</p>
-    </motion.div>
+    </Panel>
   )
 }
-
-/** Where the TV picker and settings panel sit, under the top bar's buttons. */
-const PANEL_CLASS =
-  "absolute right-4 top-16 w-[min(20rem,calc(100vw-2rem))] origin-top-right overflow-hidden rounded-panel bg-[oklch(0.2_0.012_265/0.92)] p-2 text-surface shadow-float backdrop-blur-xl md:right-6"
 
 interface TvPickerProps {
   onPick: (renderer: RendererRecord) => void
@@ -492,19 +600,10 @@ interface TvPickerProps {
  * buttons in the control bar.
  */
 function TvPicker({ onPick, onClose }: TvPickerProps) {
-  useEscape(onClose)
   const { renderers, error, searching, search } = useRenderers()
 
   return (
-    <motion.div
-      role="dialog"
-      aria-label="Play on a TV"
-      initial={{ opacity: 0, y: -6, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -6, scale: 0.98 }}
-      transition={FADE}
-      className={PANEL_CLASS}
-    >
+    <Panel label="Play on a TV" onClose={onClose}>
       <div className="flex items-center justify-between px-3 pb-1 pt-2">
         <p className="text-micro font-semibold text-surface/55">TVs on your network</p>
         <button
@@ -550,42 +649,8 @@ function TvPicker({ onPick, onClose }: TvPickerProps) {
       <p className="border-t border-surface/10 px-3 pb-1.5 pt-2.5 text-micro leading-relaxed text-surface/60">
         For Chromecast or AirPlay, use the cast buttons in the control bar.
       </p>
-    </motion.div>
+    </Panel>
   )
-}
-
-function PanelGroup({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div role="radiogroup" aria-label={label} className="mb-1 border-b border-surface/10 pb-1">
-      <p className="px-3 pb-1 pt-2 text-micro font-semibold text-surface/55">{label}</p>
-      {children}
-    </div>
-  )
-}
-
-function PanelOption({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      onClick={onClick}
-      className="flex w-full items-center gap-2 rounded-[0.75rem] px-3 py-2 text-left text-[0.875rem] transition-colors hover:bg-surface/10"
-    >
-      <CheckIcon aria-hidden weight="bold" className={cn("size-4 shrink-0 text-signal", !selected && "invisible")} />
-      {children}
-    </button>
-  )
-}
-
-/** A language's name in the browser's language, from its ISO 639-2 code. */
-function languageName(code: string | null): string {
-  if (!code) return "Unknown language"
-  try {
-    return new Intl.DisplayNames([navigator.language], { type: "language" }).of(code) ?? code
-  } catch {
-    return code
-  }
 }
 
 interface UpNextProps {

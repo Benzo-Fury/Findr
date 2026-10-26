@@ -288,6 +288,8 @@ export default class DlnaController extends SelfManagedSingleton {
       volume: active?.volume ?? null,
       muted: active?.muted ?? false,
       mode: active ? (active.session.direct ? "direct" : active.session.plan.mode) : null,
+      audioTracks: active?.session.item.audioTracks() ?? [],
+      audioTrack: active ? active.session.item.audioTrackOf(active.session.plan.audioStream) : null,
     };
   }
 
