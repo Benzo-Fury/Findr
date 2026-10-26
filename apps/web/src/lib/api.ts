@@ -16,6 +16,7 @@ import type {
   TitleSummary,
 } from "@findr/types/downloads"
 import type { CredentialsReset } from "@findr/types/account"
+import type { ClaimStatus, SetupClaim, SetupStatus } from "@findr/types/setup"
 import type {
   CastBridgeRecord,
   CastUrlRecord,
@@ -72,6 +73,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   remote_access_disabled: "Remote access is disabled. Enable it on the Settings page from the server itself.",
   email_unchanged: "Choose your own email address.",
   email_taken: "Another account already uses that email.",
+  invalid_setup_code: "That setup code doesn't match. Copy it again from Findr's log.",
   reset_not_required: "This account already has its own credentials.",
   no_update: "Findr is already up to date.",
   update_in_progress: "An update is already installing.",
@@ -448,6 +450,25 @@ export function testEncoder(): Promise<EncoderTestResult> {
 /** Replaces the initial `admin` / `admin` credentials. The session stays signed in. */
 export function resetCredentials(body: CredentialsReset): Promise<void> {
   return send("/api/account/credentials", json(body))
+}
+
+/* -------------------------------------------------------------------------- */
+/* Setup                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/** What first-run setup still needs. Admins only; `refresh` looks for ffmpeg again. */
+export function fetchSetupStatus(refresh = false): Promise<SetupStatus> {
+  return request(`/api/setup${refresh ? "?refresh=true" : ""}`)
+}
+
+/** Whether this server is still unclaimed, and whether this browser is on the server itself. Public. */
+export function fetchClaimStatus(): Promise<ClaimStatus> {
+  return request("/api/setup/claim")
+}
+
+/** Claims an unclaimed server with the setup code from its log, choosing the admin's email and password. */
+export function claimSetup(body: SetupClaim): Promise<void> {
+  return send("/api/setup/claim", json(body))
 }
 
 /* -------------------------------------------------------------------------- */

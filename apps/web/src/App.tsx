@@ -7,6 +7,7 @@ import { PlaybackProvider } from "@/lib/playback"
 import { AppShell } from "@/components/shell/app-shell"
 import { Brand } from "@/components/shell/brand"
 import { ToastProvider } from "@/components/ui/toast"
+import { SetupGate } from "@/components/setup/setup-gate"
 import { LibraryPage } from "@/pages/library"
 
 // Library is the landing page; the rest load on first visit
@@ -23,7 +24,8 @@ const WatchPage = React.lazy(() => import("@/pages/watch").then((module) => ({ d
  *
  * Signed out, the only reachable page is sign-in; accounts are created by an
  * admin, so there is no registration route. The initial admin, still on
- * `admin` / `admin`, sees only the screen that replaces those credentials.
+ * `admin` / `admin`, sees only setup's account step; an admin then gets the
+ * rest of setup over the app until downloads can work.
  * Signed in, every page shares the shell, and any page can show a title
  * through the `?t=` parameter; the player takes the whole screen instead. Motion honours the system's reduced-motion
  * setting everywhere.
@@ -63,6 +65,7 @@ function App() {
                 <Route path="/login" element={<Navigate to="/" replace />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
+              <SetupGate session={session} />
             </ToastProvider>
             </PlaybackProvider>
           </LibraryProvider>
