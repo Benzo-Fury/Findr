@@ -62,6 +62,8 @@ export interface SearchOptions {
   limit?: number;
   /** Restrict the search to specific indexer ids. Defaults to all enabled. */
   indexerIds?: number[];
+  /** Aborts the search, such as when its download is cancelled. */
+  signal?: AbortSignal;
 }
 
 /** Subset of Prowlarr's `ReleaseResource` that Findr reads. */
@@ -271,9 +273,11 @@ export default class Prowlarr extends SelfManagedSingleton {
       url.searchParams.append("indexerIds", String(id));
     }
 
+    // Give up after the timeout, or as soon as the caller aborts
+    const timeout = AbortSignal.timeout(TIMEOUT_MS * 4);
     const res = await fetch(url, {
       headers: { "X-Api-Key": apiKey },
-      signal: AbortSignal.timeout(TIMEOUT_MS * 4),
+      signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
     }).catch((error: unknown) => {
       throw new ProwlarrError(`Prowlarr request failed: ${error}`);
     });

@@ -342,6 +342,28 @@ describe.skipIf(!hasTools)("download pipeline", () => {
     expect(downloader.live.size).toBe(0);
   });
 
+  test("cancelling escapes an indexer search that never answers", async () => {
+    // Searches hang until their request is aborted
+    const mocked = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(input instanceof Request ? input.url : input);
+        if (url.pathname !== "/api/v1/search") return mocked(input, init);
+        return new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+        });
+      },
+      { preconnect: realFetch.preconnect },
+    );
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 200);
+
+    const download = await runDownload(new FakeDownloader(), 603, "movie", null, controller.signal);
+
+    expect(download.status).toBe("cancelled");
+    expect(Candidate.forDownload(download.id)).toEqual([]);
+  });
+
   test("recovery closes interrupted attempts, removes their files and torrents, and resumes", async () => {
     // Simulate a crash: an open attempt, its scratch dir, and its torrent
     const downloader = new FakeDownloader();

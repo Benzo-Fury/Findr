@@ -86,9 +86,10 @@ export class RelevanceFilter {
 
   /**
    * Returns the candidates to drop. Only the first `maxCandidates` are sent —
-   * pass them best-first. Anything that goes wrong yields an empty result.
+   * pass them best-first. Anything that goes wrong yields an empty result,
+   * as does `signal` firing.
    */
-  public async screen(context: RelevanceContext, candidates: RelevanceCandidate[]): Promise<Drops> {
+  public async screen(context: RelevanceContext, candidates: RelevanceCandidate[], signal?: AbortSignal): Promise<Drops> {
     const drops: Drops = new Map();
     if (!this.active || candidates.length === 0) return drops;
 
@@ -97,7 +98,7 @@ export class RelevanceFilter {
     const byShortId = new Map(screened.map((candidate, index) => [`r${index + 1}`, candidate.id]));
 
     try {
-      const answer = await this.ask(context, screened.map((candidate, index) => ({ id: `r${index + 1}`, title: candidate.title })));
+      const answer = await this.ask(context, screened.map((candidate, index) => ({ id: `r${index + 1}`, title: candidate.title })), signal);
 
       // Map the model's short ids back, ignoring any it invented
       for (const { id, reason } of answer?.drop ?? []) {
@@ -119,7 +120,11 @@ export class RelevanceFilter {
   }
 
   /** Calls the Messages API with a structured-output schema. Null when the answer is unusable. */
-  private async ask(context: RelevanceContext, releases: Array<{ id: string; title: string }>): Promise<FilterAnswer | null> {
+  private async ask(
+    context: RelevanceContext,
+    releases: Array<{ id: string; title: string }>,
+    signal?: AbortSignal,
+  ): Promise<FilterAnswer | null> {
     const wanted = {
       type: context.mediaType === "tv" ? "TV show" : "movie",
       name: context.name,
@@ -128,6 +133,7 @@ export class RelevanceFilter {
       overview: context.overview,
     };
 
+    const timeout = AbortSignal.timeout(this.settings.timeoutSeconds * 1000);
     const response = await fetch(MESSAGES_URL, {
       method: "POST",
       headers: {
@@ -147,7 +153,7 @@ export class RelevanceFilter {
           },
         ],
       }),
-      signal: AbortSignal.timeout(this.settings.timeoutSeconds * 1000),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });
 
     if (!response.ok) throw new Error(`Anthropic API responded with ${response.status}`);

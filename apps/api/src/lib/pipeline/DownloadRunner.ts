@@ -334,6 +334,7 @@ export class DownloadRunner {
       target: unit.target,
       relevance: context.relevance,
       settings,
+      signal: this.signal,
     });
     this.searched.add(this.unitKey(unit));
     console.log(`[Download ${this.download.id}] ${unit.label}: ${summary.found} release(s), ${summary.eligible} eligible`);
