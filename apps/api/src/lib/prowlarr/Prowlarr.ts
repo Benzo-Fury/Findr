@@ -129,6 +129,23 @@ export default class Prowlarr extends SelfManagedSingleton {
   }
 
   /**
+   * Whether Prowlarr answers at the configured URL and accepts the configured
+   * key. Never throws; an unconfigured Prowlarr is simply not reachable.
+   */
+  public async reachable(): Promise<boolean> {
+    try {
+      const { baseUrl, apiKey } = this.credentials();
+      const response = await fetch(new URL("/api/v1/system/status", baseUrl), {
+        headers: { "X-Api-Key": apiKey },
+        signal: AbortSignal.timeout(5_000),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Turns a stored release's links into something a torrent client can add.
    * Prefers a real magnet (it carries trackers), then the `.torrent` file,
    * then a bare info-hash magnet, which relies on DHT alone.

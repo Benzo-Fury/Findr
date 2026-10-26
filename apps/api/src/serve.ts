@@ -9,6 +9,7 @@
 import { Server } from "./lib/server/Server"
 import { migrateAuth, seedRoot } from "./lib/auth/client"
 import { FfmpegLocator } from "./lib/media/FfmpegLocator"
+import { SetupDefaults } from "./lib/setup/SetupDefaults"
 import DownloadQueue from "./lib/pipeline/DownloadQueue"
 import PlaybackService from "./lib/playback/PlaybackService"
 import Updater from "./lib/updates/Updater"
@@ -24,6 +25,9 @@ process.on("uncaughtException", (error) => console.error("[Process] Uncaught exc
 // sure a fresh install has an admin to sign in with
 await migrateAuth()
 await seedRoot()
+
+// Fill in settings a fresh install can work out itself (Prowlarr in the Docker stack, container paths)
+await SetupDefaults.apply()
 
 const server = new Server()
 

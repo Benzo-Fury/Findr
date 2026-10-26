@@ -57,6 +57,19 @@ const EnvSchema = z.object({
   /** The ffprobe binary, which reads a file's streams. Found the same way as ffmpeg, and an env var for the same reason. */
   FFPROBE_PATH: optionalString,
 
+  /**
+   * A Prowlarr URL to start from, such as `http://prowlarr:9696` in the Docker
+   * stack. Only fills the Prowlarr URL setting while it is empty (`SetupDefaults`).
+   */
+  PROWLARR_URL: z.preprocess((value) => (value === "" ? undefined : value), z.url().optional()),
+
+  /**
+   * Prowlarr's `config.xml`, mounted read-only in the Docker stack. Its API
+   * key fills the Prowlarr API key setting while that is empty, so nobody has
+   * to copy it across.
+   */
+  PROWLARR_CONFIG: optionalString,
+
   /** Where new versions are looked for: a GitHub API "latest release" URL. Lets a fork follow its own releases. */
   UPDATES_URL: z.url().default("https://api.github.com/repos/Benzo-Fury/Findr/releases/latest"),
 

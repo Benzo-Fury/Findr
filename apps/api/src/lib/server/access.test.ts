@@ -192,6 +192,21 @@ describe("setup code", () => {
   })
 })
 
+describe("setup status", () => {
+  test("is for admins with their own credentials, and lists what is missing", async () => {
+    const cookie = await signIn("admin", "admin")
+    expect((await call("/api/setup", { cookie: cookie! })).status).toBe(403)
+
+    await call("/api/account/credentials", { cookie: cookie!, body: { email: "me@example.com", password: "a-long-password" } })
+    const status = await (await call("/api/setup", { cookie: cookie! })).json()
+    expect(status.complete).toBe(false)
+    expect(status.tmdb).toEqual({ configured: false })
+    expect(status.prowlarr).toEqual({ configured: false, reachable: null })
+    expect(status.paths.movies).toEqual({ set: false, exists: false, writable: false })
+    expect(status.tools.map((tool: { name: string }) => tool.name)).toEqual(["ffmpeg", "ffprobe"])
+  })
+})
+
 describe("sign-in origin", () => {
   test("is refused from a page on another site, even one pointed at this machine", async () => {
     const host = `evil.example:${ServerAddress.port}`
