@@ -1,21 +1,24 @@
 # The whole Findr stack in one file: Findr itself, Prowlarr (indexer search),
 # and FlareSolverr as an opt-in helper for indexers behind Cloudflare. Findr
 # downloads torrents with its own built-in client, so nothing else is needed.
+# Every setting has a default, so no .env is needed either:
 #
-#   cp compose.example.yml compose.yml && cp .env.example .env   # then edit .env
-#   docker compose up -d                                         # add --profile flaresolverr to include it
+#   mkdir -p findr/config/findr findr/config/prowlarr findr/media && cd findr
+#   curl -fsSL https://github.com/Benzo-Fury/Findr/releases/latest/download/compose.yml -o compose.yml
+#   docker compose up -d                  # add --profile flaresolverr to include it
+#
+# Then open http://localhost:34571 and enter the setup code from
+# `docker compose logs findr`. To change a default, copy .env.example to .env.
 #
 # Running Findr on the host instead (binary or source)? Start only Prowlarr
-# with `docker compose up -d prowlarr`. See README.md in this folder for
-# first-run setup.
+# with `docker compose up -d prowlarr`. See README.md in this folder.
 
 name: findr
 
 services:
   # ---------- Findr ---------- #
-  # The downloader and web app. Open http://localhost:34571 after the
-  # first-sign-in step in README.md. Prowlarr URL in Findr's settings:
-  # http://prowlarr:9696
+  # The downloader and web app. Finds Prowlarr by itself: its address is
+  # given below and its API key is read from Prowlarr's own config file.
   findr:
     image: ghcr.io/benzo-fury/findr:${FINDR_TAG:-latest}
     container_name: findr
@@ -23,12 +26,16 @@ services:
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       - TZ=${TZ:-Etc/UTC}
+      - PROWLARR_URL=http://prowlarr:9696
+      - PROWLARR_CONFIG=/prowlarr/config.xml
     volumes:
-      # Database, session secret, optional .env
+      # Database, session secret, extracted tools
       - ${CONFIG_ROOT:-./config}/findr:/data
-      # Library and scratch folders, at the same path inside and out so the
-      # paths entered under Settings -> Library paths match
-      - ${MEDIA_ROOT:-/srv/media}:${MEDIA_ROOT:-/srv/media}
+      # Library and downloads. Findr starts with /media/movies, /media/tv and
+      # /media/downloads, all on this one mount so saving is a quick rename
+      - ${MEDIA_ROOT:-./media}:/media
+      # Prowlarr's settings, read-only, for its API key
+      - ${CONFIG_ROOT:-./config}/prowlarr:/prowlarr:ro
     ports:
       - ${BIND_ADDRESS:-127.0.0.1}:${FINDR_PORT:-34571}:34571
       # Torrent port (TCP and UDP); forward it on your router for better speeds
@@ -39,7 +46,8 @@ services:
     restart: unless-stopped
 
   # ---------- Prowlarr ---------- #
-  # Indexer manager. Findr queries its search API with PROWLARR_API_KEY.
+  # Indexer manager. Findr queries its search API with the key Prowlarr
+  # generates on first start.
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:${PROWLARR_TAG:-latest}
     container_name: findr-prowlarr
@@ -47,8 +55,6 @@ services:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       - TZ=${TZ:-Etc/UTC}
-      # Pins the API key so Findr's .env and Prowlarr agree from the first start
-      - PROWLARR__AUTH__APIKEY=${PROWLARR_API_KEY:?set PROWLARR_API_KEY in .env}
     volumes:
       - ${CONFIG_ROOT:-./config}/prowlarr:/config
     ports:

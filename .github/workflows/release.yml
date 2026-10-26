@@ -1,11 +1,14 @@
 # Builds the standalone executable for every supported platform and attaches
 # them, with SHA-256 checksums, to the GitHub release that triggered the run,
-# then packages the Linux executables into a multi-platform container image
-# pushed to the GitHub Container Registry (ghcr.io/<owner>/findr).
+# along with the one-file Docker stack (compose.yml) and the notice for the
+# bundled ffmpeg. Then packages the Linux executables into a multi-platform
+# container image pushed to the GitHub Container Registry (ghcr.io/<owner>/findr).
 #
-# The build contains no native code, so a single runner cross-compiles every
-# target. It runs on macOS so the darwin executables can be ad-hoc signed —
-# Apple Silicon refuses to run an unsigned binary.
+# Findr's own code has no native parts, so a single runner cross-compiles
+# every target; each one embeds that platform's pinned ffmpeg build
+# (apps/api/scripts/tools.json), downloaded and hash-checked by the build. It
+# runs on macOS so the darwin executables can be ad-hoc signed; Apple Silicon
+# refuses to run an unsigned binary.
 
 name: Release
 
@@ -52,10 +55,16 @@ jobs:
         working-directory: dist
         run: shasum -a 256 findr-* > SHA256SUMS.txt
 
+      # The Docker quick start downloads compose.yml from the latest release
+      - name: Add the compose file and notices
+        run: |
+          cp docker/compose.example.yml dist/compose.yml
+          cp docs/ThirdParty.md dist/THIRD-PARTY-NOTICES.md
+
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/findr-* dist/SHA256SUMS.txt --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/findr-* dist/SHA256SUMS.txt dist/compose.yml dist/THIRD-PARTY-NOTICES.md --clobber
 
       # The image job packages these exact executables rather than building its own
       - name: Keep the Linux executables for the image

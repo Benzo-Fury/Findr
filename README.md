@@ -34,7 +34,7 @@ If a torrent is fake, dead, too slow or contains something dodgy, Findr throws i
 - **Picks the best release** - ranks every result by resolution, codec, HDR, source, size and seeders, and skips cams, wrong years and wrong seasons.
 - **Built-in torrent client** - no qBittorrent or Transmission needed. Findr doesn't seed.
 - **Safe files** - checks each torrent's file list before downloading and rejects executables, scripts and archives. Only the video files are downloaded.
-- **Clean output** - every file is remuxed to video and audio only.
+- **Clean output** - every file is remuxed to video and audio only, and only common containers and codecs get into your library.
 - **Full seasons** - grabs a season pack when there is one, otherwise downloads each episode separately.
 - **Never stuck** - stalled or slow torrents are dropped and the next one is tried.
 - **Watch in the browser** *(optional)* - play your library without a media server, with resume, continue watching, next episode and scrubbing thumbnails, and cast it to a TV with Chromecast, AirPlay or DLNA, on the server's network or yours (a small bridge reaches DLNA TVs away from the server). Files are sent as they are when the device can play them, and converted when it can't, on the CPU or a hardware encoder. See [docs/Playback.md](docs/Playback.md).
@@ -45,8 +45,7 @@ If a torrent is fake, dead, too slow or contains something dodgy, Findr throws i
 ## What you need
 
 - **[Prowlarr](https://prowlarr.com/)** - to search your torrent indexers. There's a ready-made Docker setup in [`docker/`](docker/README.md) that runs it alongside Findr.
-- **[MKVToolNix](https://mkvtoolnix.download/)** (`mkvmerge`) - to clean the files.
-- **[ffmpeg](https://ffmpeg.org/)** (`ffmpeg`, `ffprobe`) - optional, to watch your library in the browser. See [Playback](docs/Playback.md).
+- **[ffmpeg](https://ffmpeg.org/)** (`ffmpeg`, `ffprobe`) - to clean the files and play them. Already included in the binaries and the Docker image; only running from source needs it installed.
 - **A [TMDB API key](https://developer.themoviedb.org/)** - free; used for titles, posters and episode lists.
 - **An [Anthropic API key](https://console.anthropic.com/)** *(optional)* - only for the wrong-title filter.
 
@@ -65,11 +64,20 @@ On macOS, run `xattr -d com.apple.quarantine <file>` first.
 
 ### Docker
 
-The image `ghcr.io/benzo-fury/findr` comes with mkvmerge and ffmpeg included. The [`docker/`](docker/README.md) folder has a single Compose file that runs Findr with Prowlarr: copy it, edit `.env` and `docker compose up -d`. The first sign-in works a little differently in a container, so follow [running Findr in Docker](docker/README.md#running-findr-in-docker).
+One Compose file runs Findr with Prowlarr, with nothing to edit:
+
+```bash
+mkdir -p findr/config/findr findr/config/prowlarr findr/media && cd findr
+curl -fsSL https://github.com/Benzo-Fury/Findr/releases/latest/download/compose.yml -o compose.yml
+docker compose up -d
+docker compose logs findr    # shows the setup code
+```
+
+Then open http://localhost:34571 and enter the setup code. More in [docker/README.md](docker/README.md).
 
 ### From source
 
-Needs [Bun](https://bun.sh) 1.4+.
+Needs [Bun](https://bun.sh) 1.4+ and [ffmpeg](https://ffmpeg.org/) (with `ffprobe`) on your `PATH`.
 
 ```bash
 git clone https://github.com/Benzo-Fury/Findr.git
@@ -84,17 +92,16 @@ bun run start
 
 ## Setup
 
-1. Open **http://localhost:34571** on the machine Findr runs on.
-2. Sign in with `admin` / `admin`, then set your own email and password.
-3. Go to **Settings → Services** and add your Prowlarr URL, Prowlarr API key and TMDB API key.
-4. Go to **Settings → Library paths** and set where downloads, movies and TV shows go.
-5. Want to use it from your phone or another computer? Turn on **Settings → Access → Allow access from other machines**.
+Open **http://localhost:34571** and setup walks you through it: your own login, your TMDB and Prowlarr keys, where downloads, movies and TV shows go, and a check that ffmpeg is there.
 
-That's it. Search for something and hit **Download**.
+- **On the machine Findr runs on**, sign in with `admin` / `admin` to start.
+- **From another machine** (a headless server, a container), enter the setup code Findr prints in its log when it starts. That also turns on **Settings → Access → Allow access from other machines**.
+
+Then search for something and hit **Download**.
 
 Everything else (naming, quality preferences, VPN, the torrent port, auto-updates) is in Settings. Every option is explained in [docs/Config.md](docs/Config.md).
 
-**Locked out?** Stop Findr, delete `data/findr.db`, and start it again. You'll be back to `admin` / `admin` (and a fresh library list).
+**Locked out?** Stop Findr, delete `data/findr.db`, and start it again. You'll be back to `admin` / `admin` and a new setup code (and a fresh library list).
 
 ## Updates
 
@@ -105,7 +112,7 @@ Findr tells you when a new version is out. The binary can update itself in one c
 ```bash
 bun install
 bun run dev                  # open http://localhost:34571
-cd apps/api && bun test      # tests (some need mkvmerge and ffmpeg)
+cd apps/api && bun test      # tests (some need ffmpeg and ffprobe)
 bun run build --target linux-x64   # cross-compile for another platform
 ```
 

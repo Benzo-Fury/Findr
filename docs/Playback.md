@@ -4,7 +4,7 @@ Findr can play what it has downloaded in the browser, so a separate media server
 
 Playback is on by default and can be switched off under **Settings → Playback** (`playback.enabled`). Turning it off takes effect at once: every running session ends, its ffmpeg process is stopped, its scratch files are deleted, every TV Findr is driving is stopped, every playback route answers `playback_disabled`, and the web app hides Play, Resume and Continue watching. Indexed files and watch history are kept, and come back when it is switched on again; no restart is needed either way.
 
-It needs `ffmpeg` and `ffprobe` on the server (`FFMPEG_PATH`, `FFPROBE_PATH`). The Docker image includes them. Without them nothing plays, and downloading is unaffected.
+It uses the same `ffmpeg` and `ffprobe` as the download pipeline: the copy built into the executables, the Docker image's own, or one you install (see [finding ffmpeg](Config.md#server)). Every library file is opened strictly as Matroska from the local disk, never left to ffmpeg to guess, and a file that isn't Matroska is never indexed. Hardware encoders other than VideoToolbox and NVENC usually need a system ffmpeg built for them; point `FFMPEG_PATH` and `FFPROBE_PATH` at it.
 
 ## Indexing
 
@@ -44,7 +44,7 @@ Media is served under `/api/playback/stream/<token>/`, where the token is signed
 
 Transcodes use x264 on the CPU unless `hardwareAcceleration` names a hardware encoder: VideoToolbox on a Mac, NVENC on NVIDIA, Quick Sync on Intel, VA-API on Linux with Intel or AMD graphics, AMF on AMD under Windows, or Rockchip's MPP. Only encoding moves to the hardware; decoding, scaling and tone mapping stay on the CPU, so every encoder behaves the same way and needs nothing but ffmpeg built with it. **Test encoder** on the Settings page converts a few seconds of a test picture with the saved choice and shows ffmpeg's complaint if it fails. In a container, the device (`/dev/dri` for VA-API and Quick Sync, the NVIDIA runtime for NVENC) has to be passed through; the Docker image includes the VA-API drivers for Intel (on amd64) and AMD graphics, and [docker/README.md](../docker/README.md) shows the setup.
 
-HDR video sent to a screen without HDR is tone mapped to SDR when `toneMapping` is on, using ffmpeg's `zscale` and `tonemap` filters. The Docker image's ffmpeg has them. Without `zscale`, Findr logs a warning at startup and converts HDR without tone mapping, which looks washed out.
+HDR video sent to a screen without HDR is tone mapped to SDR when `toneMapping` is on, using ffmpeg's `zscale` and `tonemap` filters. The Docker image's ffmpeg and the one built into the executables have them. Without `zscale`, Findr logs a warning at startup and converts HDR without tone mapping, which looks washed out.
 
 ## Scrubbing thumbnails
 
