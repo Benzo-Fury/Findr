@@ -39,15 +39,14 @@ If an indexer needs FlareSolverr, start it with `docker compose --profile flares
 1. **Settings → Indexers → Add → FlareSolverr** in Prowlarr, host `http://flaresolverr:8191/`, with a tag such as `flaresolverr`.
 2. Add the same tag to each indexer that sits behind Cloudflare. Untagged indexers don't use it.
 
-## Changing the defaults
+## Changing the container defaults
 
-Every setting in `compose.yml` has a default. To change one, put it in a `.env` file beside `compose.yml`; [`.env.example`](.env.example) lists them all:
+Everything about Findr itself is changed under **Settings**. A few things are decided by Docker before Findr starts, so Settings can't change them. To change one, put it in a `.env` file beside `compose.yml` and run `docker compose up -d` again. [`.env.example`](.env.example) lists them all, including image tags; the ones you're most likely to need:
 
-- `PUID` / `PGID` - the user and group the containers run as (`id -u`, `id -g`); default 1000.
-- `MEDIA_ROOT` - the host folder mounted at `/media` in Findr; default `./media`.
-- `BIND_ADDRESS` - `127.0.0.1` keeps the web UIs private to this machine. Use `0.0.0.0` to reach them from other devices, behind a firewall or VPN.
-- `TORRENT_PORT` - Findr's torrent port (default 6881). If you change it, set the same value under **Settings → Torrent client**.
-- `FINDR_TAG`, `PROWLARR_TAG`, `FLARESOLVERR_TAG` - pin image versions.
+- `BIND_ADDRESS` - `127.0.0.1` (the default) keeps the web UIs private to this machine, even with **Allow remote access** on. Use `0.0.0.0` to reach them from other devices, behind a firewall or VPN.
+- `PUID` / `PGID` - the user and group that own the files the containers write (`id -u`, `id -g`); default 1000.
+- `MEDIA_ROOT` - the host folder mounted at `/media` in Findr; default `./media`. Library paths in Settings are inside this folder.
+- `TORRENT_PORT` - the torrent port Docker opens (default 6881). If you change it, set the same value under **Settings → Torrent client**.
 
 ## Everyday use
 
