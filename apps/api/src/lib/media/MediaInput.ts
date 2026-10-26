@@ -9,7 +9,8 @@
  * - ffmpeg is then told that format (`-f`), so it never probes for another
  *   demuxer;
  * - it may open local files only (`-protocol_whitelist file`), and the path
- *   is given as a `file:` URL, so no name can be read as another protocol.
+ *   is given as a `file:` URL, so no name can be read as another protocol;
+ * - MP4's references to media in other files are never followed.
  */
 
 import { open } from "node:fs/promises";
@@ -48,6 +49,8 @@ export class MediaInput {
    * meant for this input, such as a seek, go before these.
    */
   public static args(format: ContainerFormat, path: string): string[] {
-    return ["-f", format, "-protocol_whitelist", "file", "-i", `file:${path}`];
+    // MP4 can point at media in other files ("data references"); ffmpeg ignores them by default, and is told so
+    const references = format === "mov" ? ["-enable_drefs", "0"] : [];
+    return ["-f", format, ...references, "-protocol_whitelist", "file", "-i", `file:${path}`];
   }
 }

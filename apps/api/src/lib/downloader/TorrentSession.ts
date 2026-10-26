@@ -7,7 +7,7 @@
  * `discard()`, which removes the torrent and its data from the client.
  */
 
-import { join } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { WatchdogSettings } from "@findr/types/settings";
 import { AttemptFailure, sleep, throwIfCancelled } from "../pipeline/errors";
 import type { Downloader, TorrentInput } from "./Downloader";
@@ -99,7 +99,13 @@ export class TorrentSession {
     await this.downloader.stop(handle);
     request.onProgress(1);
 
-    return inspection.files.map((file) => ({ ...file, absolutePath: join(request.directory, file.path) }));
+    // The engine refuses paths that leave the directory; check again before anything opens them
+    return inspection.files.map((file) => {
+      const absolutePath = resolve(request.directory, file.path);
+      const inside = relative(resolve(request.directory), absolutePath);
+      if (!inside || inside.startsWith("..") || isAbsolute(inside)) throw new AttemptFailure(`Unsafe file path in torrent: ${file.path}`);
+      return { ...file, absolutePath };
+    });
   }
 
   /** Removes the torrent and its data from the client. Never throws; cleanup is best effort. */

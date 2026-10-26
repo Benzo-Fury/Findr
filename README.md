@@ -128,4 +128,6 @@ Inspired by [Roundup](https://github.com/0xlunar/roundup) by [0xlunar](https://g
 
 ## License
 
-Findr is licensed under the [Apache License 2.0](LICENSE).
+Findr is licensed under the [Apache License 2.0](LICENSE). The executables also carry an unmodified FFmpeg build, which is GPL-licensed; see [docs/ThirdParty.md](docs/ThirdParty.md).
+
+How Findr handles downloaded files, and the risks that remain, are in [docs/Security.md](docs/Security.md).

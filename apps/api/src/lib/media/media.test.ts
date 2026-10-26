@@ -130,6 +130,7 @@ describe("MediaInput", () => {
 
   test("opens files as a fixed format, from a file: URL, with only the file protocol", () => {
     expect(MediaInput.args("matroska", "/lib/concat:a|b.mkv")).toEqual(["-f", "matroska", "-protocol_whitelist", "file", "-i", "file:/lib/concat:a|b.mkv"]);
+    expect(MediaInput.args("mov", "/lib/a.mp4")).toEqual(["-f", "mov", "-enable_drefs", "0", "-protocol_whitelist", "file", "-i", "file:/lib/a.mp4"]);
   });
 });
 
