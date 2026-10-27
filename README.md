@@ -55,7 +55,7 @@ If a torrent is fake, dead, too slow or contains something dodgy, Findr throws i
 
 Download the `findr-<system>` file for your system from the [latest release](https://github.com/Benzo-Fury/Findr/releases) and run it. It's a single file with nothing else to install.
 
-> [!NOTE]
+> [!NOTE] Platform Notes
 > **Linux and macOS:** downloaded files aren't executable yet. Run `chmod +x findr-*` first.
 >
 > **macOS:** also run `xattr -d com.apple.quarantine findr-*`, or macOS refuses to open it (Findr isn't notarized by Apple).
