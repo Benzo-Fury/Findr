@@ -53,14 +53,14 @@ If a torrent is fake, dead, too slow or contains something dodgy, Findr throws i
 
 ### Binary
 
-Download the file for your system from the [latest release](https://github.com/Benzo-Fury/Findr/releases) and run it:
+Download the `findr-<system>` file for your system from the [latest release](https://github.com/Benzo-Fury/Findr/releases) and run it. It's a single file with nothing else to install.
 
-```bash
-chmod +x findr-linux-x64
-./findr-linux-x64
-```
-
-On macOS, run `xattr -d com.apple.quarantine <file>` first.
+> [!NOTE]
+> **Linux and macOS:** downloaded files aren't executable yet. Run `chmod +x findr-*` first.
+>
+> **macOS:** also run `xattr -d com.apple.quarantine findr-*`, or macOS refuses to open it (Findr isn't notarized by Apple).
+>
+> **Windows:** if SmartScreen warns about the file, choose **More info → Run anyway**.
 
 ### Docker
 
