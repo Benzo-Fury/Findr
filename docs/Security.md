@@ -120,7 +120,7 @@ Every downloaded file is parsed by ffprobe and ffmpeg's Matroska or MOV demuxer 
 - **Severity:** medium.
 - **Likelihood:** medium.
 
-The copy built into the executables changes only when Findr releases. So does the Docker image's Debian ffmpeg, which only picks up security fixes when the image is rebuilt. Until then, a published ffmpeg vulnerability stays open on every install.
+The copy built into the executables changes only when Findr releases. The Docker image carries the same copy. Until then, a published ffmpeg vulnerability stays open on every install.
 
 **Mitigations:**
 
@@ -132,7 +132,7 @@ The copy built into the executables changes only when Findr releases. So does th
 - **Severity:** high.
 - **Likelihood:** very low.
 
-The bundled builds come from Martin Riedl's build server (Linux and macOS) and from Gyan Doshi (Windows). Pinned hashes guarantee that every Findr build uses the same file that was reviewed when it was pinned. They can't show that the file was clean at that point.
+The bundled builds are the Jellyfin project's portable FFmpeg builds. Pinned hashes guarantee that every Findr build uses the same file that was reviewed when it was pinned. They can't show that the file was clean at that point.
 
 **Mitigation:** later, build FFmpeg in Findr's own release workflow from the official source tarball. Done as a minimal build, this also addresses 3.
 

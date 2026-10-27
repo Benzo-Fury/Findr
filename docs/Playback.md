@@ -4,7 +4,7 @@ Findr can play what it has downloaded in the browser, so a separate media server
 
 Playback is on by default and can be switched off under **Settings → Playback** (`playback.enabled`). Turning it off takes effect at once: every running session ends, its ffmpeg process is stopped, its scratch files are deleted, every TV Findr is driving is stopped, every playback route answers `playback_disabled`, and the web app hides Play, Resume and Continue watching. Indexed files and watch history are kept, and come back when it is switched on again; no restart is needed either way.
 
-It uses the same `ffmpeg` and `ffprobe` as the download pipeline: the copy built into the executables, the Docker image's own, or one you install (see [finding ffmpeg](Config.md#server)). Every library file is opened strictly as Matroska from the local disk, never left to ffmpeg to guess, and a file that isn't Matroska is never indexed. Hardware encoders other than VideoToolbox and NVENC usually need a system ffmpeg built for them; point `FFMPEG_PATH` and `FFPROBE_PATH` at it.
+It uses the same `ffmpeg` and `ffprobe` as the download pipeline: the copy built into the executables, the Docker image's own, or one you install (see [finding ffmpeg](Config.md#server)). Every library file is opened strictly as Matroska from the local disk, never left to ffmpeg to guess, and a file that isn't Matroska is never indexed.
 
 ## Indexing
 
@@ -42,9 +42,20 @@ Media is served under `/api/playback/stream/<token>/`, where the token is signed
 
 ## Converting video
 
-Transcodes use x264 on the CPU unless `hardwareAcceleration` names a hardware encoder: VideoToolbox on a Mac, NVENC on NVIDIA, Quick Sync on Intel, VA-API on Linux with Intel or AMD graphics, AMF on AMD under Windows, or Rockchip's MPP. Only encoding moves to the hardware; decoding, scaling and tone mapping stay on the CPU, so every encoder behaves the same way and needs nothing but ffmpeg built with it. **Test encoder** on the Settings page converts a few seconds of a test picture with the saved choice and shows ffmpeg's complaint if it fails. In a container, the device (`/dev/dri` for VA-API and Quick Sync, the NVIDIA runtime for NVENC) has to be passed through; the Docker image includes the VA-API drivers for Intel (on amd64) and AMD graphics, and [docker/README.md](../docker/README.md) shows the setup.
+Transcodes use x264 on the CPU unless `hardwareAcceleration` names a hardware encoder: VideoToolbox on a Mac, NVENC on NVIDIA, Quick Sync on Intel, VA-API on Linux with Intel or AMD graphics, AMF on AMD under Windows, or Rockchip's MPP. Only encoding moves to the hardware; decoding, scaling and tone mapping stay on the CPU, so every encoder behaves the same way. **Test encoder** on the Settings page converts a few seconds of a test picture with the saved choice and shows ffmpeg's complaint if it fails.
 
-HDR video sent to a screen without HDR is tone mapped to SDR when `toneMapping` is on, using ffmpeg's `zscale` and `tonemap` filters. The Docker image's ffmpeg and the one built into the executables have them. Without `zscale`, Findr logs a warning at startup and converts HDR without tone mapping, which looks washed out.
+The ffmpeg inside the executables and the Docker image has every one of these encoders built in. What it can't carry is the driver that runs the chip, which belongs to the machine:
+
+- **VideoToolbox** - nothing to install; it's part of macOS.
+- **NVENC** - the NVIDIA driver. In Docker, the NVIDIA container runtime with the `video` capability.
+- **VA-API** (Intel or AMD on Linux) - libva and the VA-API driver for the graphics (`intel-media-va-driver` or `mesa-va-drivers` on Debian and Ubuntu). The Docker image includes them.
+- **Quick Sync** (Intel) - Intel's media driver and Quick Sync runtime (`intel-media-va-driver` and `libmfx-gen1.2`). The Docker image includes them on amd64.
+- **AMF** (AMD on Windows) - the AMD graphics driver.
+- **Rockchip MPP** - a board running Rockchip's own (BSP) kernel, 5.10 or 6.1, as most RK35xx board images do; mainline kernels lack the MPP driver. It's ready when `/dev/mpp_service`, `/dev/rga`, `/dev/dri` and `/dev/dma_heap` exist and Findr's user can open them. Nothing else needs installing. The RK3588 is the one to use for 4K; older chips encode H.264 at 1080p.
+
+In a container the devices have to be passed through; [docker/README.md](../docker/README.md) shows the setup.
+
+HDR video sent to a screen without HDR is tone mapped to SDR when `toneMapping` is on, using ffmpeg's `zscale` and `tonemap` filters. The ffmpeg built into the executables and the Docker image has them. Without `zscale`, Findr logs a warning at startup and converts HDR without tone mapping, which looks washed out.
 
 ## Scrubbing thumbnails
 

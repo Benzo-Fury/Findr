@@ -83,14 +83,14 @@ Bun monorepo: `apps/api` (Hono on Bun), `apps/web` (React 19 + react-router-dom 
 
 1. **Cartographer** (`scripts/cartographer.ts`) — writes `src/_route.map.ts`, statically importing every route so the bundler sees them.
 2. **Asset map** (`scripts/assetmap.ts`) — writes `src/_asset.map.ts`, importing every web file with `with { type: "file" }` so it ships with the build.
-3. **Tool map** (`scripts/toolmap.ts`) — writes `src/_tools.map.ts`: empty for `dist/index.js`, then, before each compile, that target's ffmpeg and ffprobe, gzipped and imported with `with { type: "file" }`. The builds are pinned (URL and archive SHA-256) in `scripts/tools.json`, downloaded once into `apps/api/.cache/tools/` and refused on a hash mismatch; `--no-tools` builds without them. The map is reset to empty afterwards.
+3. **Tool map** (`scripts/toolmap.ts`) — writes `src/_tools.map.ts`: empty for `dist/index.js`, then, before each compile, that target's ffmpeg and ffprobe, gzipped and imported with `with { type: "file" }`. The builds are Jellyfin's portable jellyfin-ffmpeg (every hardware encoder, Rockchip's included; drivers load from the system), pinned (URL and archive SHA-256, `.zip` or `.tar.xz`) in `scripts/tools.json`, downloaded once into `apps/api/.cache/tools/` and refused on a hash mismatch; `--no-tools` builds without them. The map is reset to empty afterwards.
 4. `Bun.build` → `dist/index.js` (+ `dist/web/` assets), then `Bun.build` with `compile` → `dist/findr` (or `dist/findr-<target>` per `--target`, e.g. `bun run build --target linux-arm64`).
 
 Findr's own code contains no native code (TinyTorrent is pure TypeScript), so it cross-compiles to every target; keep it that way. The only native code is the pinned ffmpeg builds, which are data to the bundler (so a build needs network the first time per version, unless `--no-tools`). Bumping ffmpeg means new URLs and hashes in `tools.json` and the version in `docs/ThirdParty.md`.
 
 The generated files are gitignored. In production the server imports them; in development it globs `routes/` and proxies to Vite instead. Anything new that must ship — routes, assets — has to reach the bundle through static imports; no runtime filesystem discovery in production code paths.
 
-The `Dockerfile` does not compile anything. It packages executables that are already built (`dist/findr-linux-{x64,arm64}`) along with Debian's ffmpeg (which `FFMPEG_PATH`/`FFPROBE_PATH` select over the embedded copy, for VA-API) and `ip`, and sets `FINDR_CONTAINER`. `.github/workflows/release.yml` cross-compiles every target, then builds the multi-arch image from those executables and pushes it to ghcr.io.
+The `Dockerfile` does not compile anything. It packages executables that are already built (`dist/findr-linux-{x64,arm64}`) using their embedded ffmpeg, along with `ip` and the system libraries that ffmpeg's hardware encoders load (libva, the VA-API drivers, Intel's Quick Sync runtime), and sets `FINDR_CONTAINER`. `.github/workflows/release.yml` cross-compiles every target, then builds the multi-arch image from those executables and pushes it to ghcr.io.
 
 ### Web (`apps/web/src`)
 

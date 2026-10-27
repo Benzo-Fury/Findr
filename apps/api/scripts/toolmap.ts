@@ -71,9 +71,16 @@ async function writeWhole(path: string, bytes: Uint8Array): Promise<void> {
   await rename(temporary, path)
 }
 
+/** The archive's format, from its URL: a zip, or an xz-compressed tarball. */
+function archiveKind(tool: PinnedTool): "zip" | "tar.xz" {
+  if (tool.url.endsWith(".zip")) return "zip"
+  if (tool.url.endsWith(".tar.xz")) return "tar.xz"
+  throw new Error(`${tool.url} is neither a .zip nor a .tar.xz`)
+}
+
 /** The archive for a pinned tool, downloaded once and checked against its pinned hash. */
 async function archive(tool: PinnedTool): Promise<string> {
-  const path = join(cache, "archives", `${tool.sha256}.zip`)
+  const path = join(cache, "archives", `${tool.sha256}.${archiveKind(tool)}`)
   if (existsSync(path)) return path
 
   console.log(`Tools: downloading ${tool.url}`)
@@ -99,8 +106,9 @@ async function prepare(name: ToolName, tool: PinnedTool): Promise<{ file: string
   }
 
   // Pull the one member out of the archive, then compress it for embedding
-  const zip = await archive(tool)
-  const binary = new Uint8Array(await $`unzip -p ${zip} ${tool.member}`.quiet().arrayBuffer())
+  const path = await archive(tool)
+  const extract = archiveKind(tool) === "zip" ? $`unzip -p ${path} ${tool.member}` : $`tar -xJOf ${path} ${tool.member}`
+  const binary = new Uint8Array(await extract.quiet().arrayBuffer())
   if (binary.length === 0) throw new Error(`${tool.member} is missing from ${tool.url}`)
   const binarySha = sha256(binary)
   const file = join(cache, target, binarySha.slice(0, 16), `${name}.gz`)

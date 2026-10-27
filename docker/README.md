@@ -64,10 +64,15 @@ Using the `findr` binary or `bun run start`? Start only Prowlarr with `docker co
 
 ## Notes
 
-- **The image** is published for `linux/amd64` and `linux/arm64` with every release, tagged with the version (`1.4.0`), the minor line (`1.4`) and `latest`. It holds the release's executable plus Debian's ffmpeg and `ip`.
+- **The image** is published for `linux/amd64` and `linux/arm64` with every release, tagged with the version (`1.4.0`), the minor line (`1.4`) and `latest`. It holds the release's executable, with its ffmpeg, plus `ip` and the VA-API and Quick Sync drivers.
 - **Behind a reverse proxy**, set **Settings → Access → Public URL**.
 - **Casting to TVs** - Findr finds DLNA TVs with a multicast search that doesn't cross Docker's bridge network, so to cast to one give the `findr` service `network_mode: host` instead of `ports:` (TVs then reach it on the host's own address). On a bridge network, Chromecast and AirPlay still work from the browser, but set **Settings → Playback → Address for TVs** (`castBaseUrl`) to an address TVs can reach, such as `http://192.168.1.10:34571`. To cast to DLNA TVs on a different network from the server's, run a [cast bridge](../docs/Playback.md#tvs-on-another-network) on that network: `docker run -d --restart unless-stopped --network host -e FINDR_BRIDGE_TOKEN=<token> ghcr.io/benzo-fury/findr findr bridge --server <Findr's address>`. See [docs/Playback.md](../docs/Playback.md#casting).
-- **Hardware encoding** - the image includes the VA-API drivers for Intel (amd64 only) and AMD graphics. Pass the device through with `devices: ["/dev/dri:/dev/dri"]` and add the container's user to the host's `render` group (`group_add: ["<render group id>"]`); for NVENC, use the NVIDIA container runtime instead. **Test encoder** under **Settings → Playback** confirms it works.
+- **Hardware encoding** - the image's ffmpeg has every hardware encoder, and the image includes the VA-API drivers for Intel and AMD graphics and Intel's Quick Sync runtime (amd64 only). Pass the devices through and add the container's user to the host's `render` group (`group_add: ["<render group id>"]`):
+  - **Intel or AMD:** `devices: ["/dev/dri:/dev/dri"]`.
+  - **NVIDIA:** the NVIDIA container runtime (`runtime: nvidia`, or a `deploy.resources.reservations.devices` entry for the GPU) with `NVIDIA_DRIVER_CAPABILITIES=compute,video,utility`.
+  - **Rockchip** (a board on Rockchip's own kernel): every one of `/dev/mpp_service`, `/dev/rga`, `/dev/dri` and `/dev/dma_heap` that exists, plus the host's `video` group.
+
+  **Test encoder** under **Settings → Playback** confirms it works.
 - **On a VPN** - give Findr `network_mode: "service:gluetun"` instead of `ports:`, as in [docs/VPN.md](../docs/VPN.md#linux-a-network-namespace-or-docker-with-a-vpn-container), and set the killswitch's interface to the VPN container's (`tun0` or `wg0`).
 - **Prowlarr's download links** point at the address Findr used to search. Findr fetches `.torrent` files itself, so nothing else needs to reach Prowlarr.
 - **Torrent traffic** comes from Findr, not Prowlarr. Forward `TORRENT_PORT` on your router for better speeds. To keep it on a VPN, use Findr's VPN killswitch; to put Prowlarr and FlareSolverr on the VPN too, see [docs/VPN.md](../docs/VPN.md#prowlarr-and-flaresolverr).

@@ -1,26 +1,26 @@
 {
-  "version": "9.0.2",
+  "version": "8.1.3-1",
   "license": "GPL-3.0-or-later",
   "targets": {
     "linux-x64": {
-      "ffmpeg": { "url": "https://ffmpeg.martin-riedl.de/download/linux/amd64/1789931100_9.0.2/ffmpeg.zip", "sha256": "fa8ecf4abbd290d98f7d188b8649cc6b391ae209a98452be955a15aab1909d7f", "member": "ffmpeg" },
-      "ffprobe": { "url": "https://ffmpeg.martin-riedl.de/download/linux/amd64/1789931100_9.0.2/ffprobe.zip", "sha256": "3f428c49070be3d24ec338602b76d412e401ffcb8a5641ef0e729181a232fc32", "member": "ffprobe" }
+      "ffmpeg": { "url": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.3-1/jellyfin-ffmpeg_8.1.3-1_portable_linux64-gpl.tar.xz", "sha256": "b86dc023c64a5a9a410e6e3a938a970460214fae78f31c1553c9f88f1c289b6a", "member": "ffmpeg" },
+      "ffprobe": { "url": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.3-1/jellyfin-ffmpeg_8.1.3-1_portable_linux64-gpl.tar.xz", "sha256": "b86dc023c64a5a9a410e6e3a938a970460214fae78f31c1553c9f88f1c289b6a", "member": "ffprobe" }
     },
     "linux-arm64": {
-      "ffmpeg": { "url": "https://ffmpeg.martin-riedl.de/download/linux/arm64/1789931697_9.0.2/ffmpeg.zip", "sha256": "93a76ae90db5474eecdf951a729857c64f3de23567228d6a7d5e6e8e3cd1021b", "member": "ffmpeg" },
-      "ffprobe": { "url": "https://ffmpeg.martin-riedl.de/download/linux/arm64/1789931697_9.0.2/ffprobe.zip", "sha256": "bcbe80fb741c180083327afaf5434812e006b33cacde2016b9aeaf6936128330", "member": "ffprobe" }
+      "ffmpeg": { "url": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.3-1/jellyfin-ffmpeg_8.1.3-1_portable_linuxarm64-gpl.tar.xz", "sha256": "7bc8e8d0986f7f4693f63e9728570f671f07b6e21c05d5465dd7ce461d1631dc", "member": "ffmpeg" },
+      "ffprobe": { "url": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.3-1/jellyfin-ffmpeg_8.1.3-1_portable_linuxarm64-gpl.tar.xz", "sha256": "7bc8e8d0986f7f4693f63e9728570f671f07b6e21c05d5465dd7ce461d1631dc", "member": "ffprobe" }
     },
     "darwin-x64": {
-      "ffmpeg": { "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip", "sha256": "7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4", "member": "ffmpeg" },
-      "ffprobe": { "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffprobe.zip", "sha256": "2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd", "member": "ffprobe" }
+      "ffmpeg": { "url": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.3-1/jellyfin-ffmpeg_8.1.3-1_portable_mac64-gpl.tar.xz", "sha256": "cb2b5c154d49a6b6bfe29fa6c16510e85dcbf60b805764121a167b093d4bb6fb", "member": "ffmpeg" },
+      "ffprobe": { "url": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.3-1/jellyfin-ffmpeg_8.1.3-1_portable_mac64-gpl.tar.xz", "sha256": "cb2b5c154d49a6b6bfe29fa6c16510e85dcbf60b805764121a167b093d4bb6fb", "member": "ffprobe" }
     },
     "darwin-arm64": {
-      "ffmpeg": { "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip", "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924", "member": "ffmpeg" },
-      "ffprobe": { "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip", "sha256": "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6", "member": "ffprobe" }
+      "ffmpeg": { "url": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.3-1/jellyfin-ffmpeg_8.1.3-1_portable_macarm64-gpl.tar.xz", "sha256": "22445d7299742749ad2eeb9ce87963d50def0357e45b3e6c7b69987c8365dbf6", "member": "ffmpeg" },
+      "ffprobe": { "url": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.3-1/jellyfin-ffmpeg_8.1.3-1_portable_macarm64-gpl.tar.xz", "sha256": "22445d7299742749ad2eeb9ce87963d50def0357e45b3e6c7b69987c8365dbf6", "member": "ffprobe" }
     },
     "windows-x64": {
-      "ffmpeg": { "url": "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip", "sha256": "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba", "member": "ffmpeg-9.0.2-essentials_build/bin/ffmpeg.exe" },
-      "ffprobe": { "url": "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip", "sha256": "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba", "member": "ffmpeg-9.0.2-essentials_build/bin/ffprobe.exe" }
+      "ffmpeg": { "url": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.3-1/jellyfin-ffmpeg_8.1.3-1_portable_win64-clang-gpl.zip", "sha256": "3691f8b2d4c39c511b5faff1c8c4687bd782dac823e63ba69f0755f7ce1af9ce", "member": "ffmpeg.exe" },
+      "ffprobe": { "url": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.3-1/jellyfin-ffmpeg_8.1.3-1_portable_win64-clang-gpl.zip", "sha256": "3691f8b2d4c39c511b5faff1c8c4687bd782dac823e63ba69f0755f7ce1af9ce", "member": "ffprobe.exe" }
     }
   }
 }

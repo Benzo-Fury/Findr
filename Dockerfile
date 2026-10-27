@@ -1,5 +1,6 @@
-# Findr's container image: the compiled Linux executable plus the tools its
-# pipeline, playback and VPN killswitch run (ffmpeg, ip).
+# Findr's container image: the compiled Linux executable, which carries its own
+# ffmpeg, plus what that ffmpeg and the VPN killswitch need from the system
+# (hardware video drivers, ip).
 #
 # It packages executables that are already built rather than compiling them,
 # so the image runs exactly what the release ships. Build them first, then the
@@ -14,11 +15,14 @@ FROM debian:trixie-slim
 
 ARG TARGETARCH
 
-# VA-API drivers let ffmpeg encode on Intel (Quick Sync) and AMD graphics once
-# /dev/dri is passed through; Intel's is only built for amd64
+# The embedded ffmpeg loads hardware drivers from the system: libva and its
+# drivers let it encode on Intel and AMD graphics once /dev/dri is passed
+# through, and Intel's media driver and Quick Sync runtime are only built for
+# amd64. NVIDIA's libraries come from the NVIDIA container runtime, and
+# Rockchip's encoder needs nothing here but its devices
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg iproute2 ca-certificates curl tzdata mesa-va-drivers \
- && if [ "$TARGETARCH" = amd64 ]; then apt-get install -y --no-install-recommends intel-media-va-driver; fi \
+ && apt-get install -y --no-install-recommends iproute2 ca-certificates curl tzdata libva2 libva-drm2 mesa-va-drivers \
+ && if [ "$TARGETARCH" = amd64 ]; then apt-get install -y --no-install-recommends intel-media-va-driver libmfx-gen1.2; fi \
  && rm -rf /var/lib/apt/lists/*
 
 # Pick the executable built for this platform (Docker's amd64 is Bun's x64)
@@ -41,14 +45,10 @@ WORKDIR /data
 VOLUME /data
 
 # FINDR_CONTAINER makes Findr only announce updates: a new image is pulled
-# instead of the executable replacing itself inside a container. The
-# executable carries its own ffmpeg, but Debian's can use the VA-API drivers
-# above, so the image points Findr at it instead
+# instead of the executable replacing itself inside a container
 ENV NODE_ENV=production \
     DATABASE_PATH=/data/findr.db \
-    FINDR_CONTAINER=true \
-    FFMPEG_PATH=/usr/bin/ffmpeg \
-    FFPROBE_PATH=/usr/bin/ffprobe
+    FINDR_CONTAINER=true
 
 EXPOSE 34571 6881/tcp 6881/udp
 
