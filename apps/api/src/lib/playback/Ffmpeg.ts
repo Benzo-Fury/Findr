@@ -237,7 +237,11 @@ export class Ffmpeg {
     const output = await this.run(FfmpegLocator.path("ffmpeg"), args, AbortSignal.timeout(30_000));
     const seconds = ((performance.now() - started) / 1000).toFixed(1);
     if (output.exitCode === 0) return { ok: true, message: `Encoded 3 seconds of 1080p to 720p in ${seconds} s` };
-    return { ok: false, message: output.stderr.trim().split("\n").slice(-3).join(" ") || `ffmpeg exited with ${output.exitCode}` };
+
+    // The first lines name the cause (a missing driver or device); the rest is ffmpeg unwinding.
+    // Each line's `[h264_nvenc @ 0x…]` prefixes are dropped
+    const lines = output.stderr.trim().split("\n").slice(0, 2).map((line) => line.replace(/^(\[[^\]]*\]\s*)+/, ""));
+    return { ok: false, message: lines.join(" ").trim() || `ffmpeg exited with ${output.exitCode}` };
   }
 
   // ---------- Building blocks ---------- //
