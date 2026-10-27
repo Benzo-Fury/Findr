@@ -2,8 +2,8 @@
 # push and pull request. The release workflow calls it too, so nothing is built
 # for a release whose code fails either.
 #
-# mkvmerge, ffmpeg and ffprobe are installed so the Sterilizer and pipeline
-# tests run rather than skip.
+# ffmpeg and ffprobe are installed so the Sterilizer and pipeline tests run
+# rather than skip.
 
 name: CI
 
@@ -26,12 +26,12 @@ jobs:
         with:
           bun-version: 1.4.2
 
-      - name: Install mkvmerge and ffmpeg
+      - name: Install ffmpeg
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mkvtoolnix ffmpeg
+          sudo apt-get install -y --no-install-recommends ffmpeg
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -46,6 +46,7 @@ jobs:
         run: |
           bun run scripts/cartographer.ts
           bun run scripts/assetmap.ts --allow-empty
+          bun run scripts/toolmap.ts --empty
           bunx tsc --noEmit
 
       - name: Type check the web app
