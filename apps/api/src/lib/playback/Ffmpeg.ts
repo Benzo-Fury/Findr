@@ -298,7 +298,8 @@ export class Ffmpeg {
         output.push("-preset", settings.encoderPreset, "-profile:v", "high", "-crf", crf, ...capped);
         break;
       case "videotoolbox":
-        output.push("-profile:v", "high", "-allow_sw", "1", "-b:v", String(cap ?? encode.bitrateEstimate));
+        // Its own keyframe interval defaults to 12 frames; only the forced ones are wanted
+        output.push("-profile:v", "high", "-allow_sw", "1", "-b:v", String(cap ?? encode.bitrateEstimate), "-g", "9999");
         break;
       case "nvenc":
         output.push("-preset", "p4", "-profile:v", "high", "-rc", "vbr", "-cq", crf, "-b:v", "0", ...capped, "-forced-idr", "1");
