@@ -141,6 +141,9 @@ describe("remote access", () => {
     const relayed = { "x-forwarded-for": "203.0.113.9" }
     expect((await call("/api/health", { headers: relayed })).status).toBe(403)
 
+    // Even a forwarded loopback address is only believed from a trusted proxy
+    expect((await call("/api/health", { headers: { "x-forwarded-for": "127.0.0.1" } })).status).toBe(403)
+
     env.TRUST_PROXY = true
     try {
       expect((await call("/api/health", { headers: relayed })).status).toBe(403)

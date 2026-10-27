@@ -27,7 +27,7 @@ cd apps/api && bun run scripts/cartographer.ts && bun run scripts/assetmap.ts --
 cd apps/web && bunx tsc -b
 ```
 
-The Sterilizer and pipeline tests need `ffmpeg` and `ffprobe` on PATH and are skipped without them.
+The Sterilizer and pipeline tests need `ffmpeg` and `ffprobe` on PATH and are skipped without them. CI (`.github/workflows/ci.yml`) runs the tests and both type checks on every push and pull request, and a release builds nothing until they pass. `src/lib/server/permissions.test.ts` holds the intended access of every route, so a new route, or a change to who may call one, means updating its table.
 
 **Default login:** a database with no users is seeded with one admin, `admin` / `admin` (stored as `admin@findr.local`, flagged `mustReset`; from another machine, the setup code printed at startup claims it instead). It must replace its email and password on first sign-in before anything else works, so a dev database you have already set up will not accept `admin` / `admin`. To reset one, stop the API, delete the rows from `user`, `account`, `session` and `verification` in `data/findr.db` (the repo-root `data/`), and restart the API — hot reload does not re-run `seedRoot`. There is no env-seeded admin.
 
