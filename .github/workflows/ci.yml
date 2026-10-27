@@ -1,0 +1,48 @@
+# Runs the API test suite and type checks the API and the web app on every
+# push and pull request. The release workflow calls it too, so nothing is built
+# for a release whose code fails either.
+#
+# mkvmerge, ffmpeg and ffprobe are installed so the Sterilizer and pipeline
+# tests run rather than skip.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install mkvmerge and ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mkvtoolnix ffmpeg
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Test the API
+        working-directory: apps/api
+        run: bun test
+
+      # The type checker needs the generated build maps, empty where they would embed files
+      - name: Type check the API
+        working-directory: apps/api
+        run: |
+          bun run scripts/cartographer.ts
+          bun run scripts/assetmap.ts --allow-empty
+          bunx tsc --noEmit
+
+      - name: Type check the web app
+        working-directory: apps/web
+        run: bunx tsc -b

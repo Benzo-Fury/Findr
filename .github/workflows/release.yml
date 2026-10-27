@@ -1,6 +1,6 @@
-# Builds the standalone executable for every supported platform and attaches
-# them, with SHA-256 checksums, to the GitHub release that triggered the run,
-# then packages the Linux executables into a multi-platform container image
+# Runs the CI checks (ci.yml) first, then builds the standalone executable for
+# every supported platform and attaches them, with SHA-256 checksums, to the
+# GitHub release that triggered the run, then packages the Linux executables into a multi-platform container image
 # pushed to the GitHub Container Registry (ghcr.io/<owner>/findr).
 #
 # The build contains no native code, so a single runner cross-compiles every
@@ -18,7 +18,12 @@ permissions:
   packages: write
 
 jobs:
+  # The same tests and type checks as every push; a failure builds nothing
+  check:
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: check
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
