@@ -2,8 +2,8 @@
 # push and pull request. The release workflow calls it too, so nothing is built
 # for a release whose code fails either.
 #
-# ffmpeg and ffprobe are installed so the Sterilizer and pipeline tests run
-# rather than skip.
+# The ffmpeg and ffprobe that releases embed are installed, so the Sterilizer,
+# pipeline and playback tests run against them rather than skip.
 
 name: CI
 
@@ -26,12 +26,17 @@ jobs:
         with:
           bun-version: 1.4.2
 
-      - name: Install ffmpeg
-        env:
-          DEBIAN_FRONTEND: noninteractive
+      # The build releases embed, pinned and hash-checked in tools.json, rather than the distribution's
+      - name: Install the pinned ffmpeg
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          pin='.targets["linux-x64"].ffmpeg'
+          url=$(jq -r "$pin.url" apps/api/scripts/tools.json)
+          sha=$(jq -r "$pin.sha256" apps/api/scripts/tools.json)
+          curl -fsSL "$url" -o "$RUNNER_TEMP/ffmpeg.tar.xz"
+          echo "$sha  $RUNNER_TEMP/ffmpeg.tar.xz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/ffmpeg"
+          tar -xJf "$RUNNER_TEMP/ffmpeg.tar.xz" -C "$RUNNER_TEMP/ffmpeg" ffmpeg ffprobe
+          echo "$RUNNER_TEMP/ffmpeg" >> "$GITHUB_PATH"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
