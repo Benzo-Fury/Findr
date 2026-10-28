@@ -1,11 +1,11 @@
 import * as React from "react"
 import { AnimatePresence, motion } from "motion/react"
-import { ArrowLeftIcon, GearSixIcon, PlayIcon, TelevisionSimpleIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react"
+import { ArrowLeftIcon, ArrowsClockwiseIcon, PlayIcon, SkipForwardIcon, TelevisionSimpleIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react"
 import { Container, Hotkey } from "@videojs/react"
 import { GoogleCast } from "@videojs/react/extensions/google-cast"
+import { SpeechIcon, SwitchesIcon } from "@videojs/react/icons"
 import { HlsJsVideo } from "@videojs/react/media/hlsjs-video"
-import { VideoPlayer, VideoSkin, usePlayer } from "@videojs/react/video"
-import "@videojs/react/video/skin.css"
+import { VideoPlayer, usePlayer } from "@videojs/react/video"
 import type { PlaybackItemKey, PlaybackPrefs, PlaybackSessionRecord, RendererRecord } from "@findr/types/playback"
 import { createCastUrl, createPlaybackSession, endPlaybackSession, reportPlaybackProgress, updatePlaybackPrefs } from "@/lib/api"
 import { deviceProfile } from "@/lib/device-profile"
@@ -16,8 +16,11 @@ import { rendererDetail, useRenderers } from "@/lib/renderers"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { Switch } from "@/components/ui/switch"
-import { Notice, Panel, PanelDetail, PanelGroup, PanelOption } from "@/components/playback/player-panel"
+import { BarMenu, CheckItem, MenuLabel, MenuNote, MenuRow, Submenu } from "@/components/playback/player-menu"
+import { Notice } from "@/components/playback/player-panel"
+import { CaptionsSubmenu } from "@/components/videojs/ui/captions-submenu"
+import { PlaybackRateSubmenu } from "@/components/videojs/ui/playback-rate-submenu"
+import { VideoSkin } from "@/components/videojs/video/skin"
 
 /**
  * The video player for one movie or episode. It starts a session on the
@@ -27,10 +30,15 @@ import { Notice, Panel, PanelDetail, PanelGroup, PanelOption } from "@/component
  * per session, and swaps it into the same video element once it is ready,
  * so playback carries on (on AirPlay too) rather than starting over.
  *
+ * The skin is Video.js's default video skin, installed as source under
+ * `components/videojs/` so Findr can fill its settings menu (quality and
+ * audio here mean a new session, so they are Findr's own submenus beside the
+ * skin's speed and captions) and add a TV button to its control bar.
+ *
  * Casting: the skin's Cast button sends a TV its own session through the
  * Google Cast extension, Safari's AirPlay button hands over the stream
- * itself (so Safari plays HLS natively there), and the TV button in the top
- * bar lists DLNA renderers, which Findr then drives from the server. While a
+ * itself (so Safari plays HLS natively there), and the TV button beside them
+ * lists DLNA renderers, which Findr then drives from the server. While a
  * Google Cast receiver plays, a new audio track or quality is loaded on the
  * receiver directly and the browser's own stream catches up once casting ends.
  *
@@ -90,7 +98,7 @@ function openedLocally(): boolean {
 
 /** Quality caps offered by hand, in bits per second; null sends the file as good as the device takes. */
 const QUALITIES: { value: number | null; label: string }[] = [
-  { value: null, label: "Best available" },
+  { value: null, label: "Best" },
   { value: 20_000_000, label: "20 Mbps" },
   { value: 10_000_000, label: "10 Mbps" },
   { value: 6_000_000, label: "6 Mbps" },
@@ -280,6 +288,24 @@ export function Player(props: PlayerProps) {
           <Container className="relative size-full">
             <VideoSkin
               className="size-full"
+              settings={
+                <SettingsItems
+                  session={session}
+                  choice={choice}
+                  prefs={props.prefs}
+                  onQuality={chooseQuality}
+                  onAudio={chooseAudio}
+                  onPrefs={(prefs) => {
+                    props.onPrefs(prefs)
+                    void updatePlaybackPrefs(prefs).catch(() => {})
+                  }}
+                />
+              }
+              extraControls={
+                casting && (
+                  <TvMenu onPick={(renderer) => props.onPlayOnTv(renderer, positionRef.current, choice.audioTrack ?? session.audioTrack)} />
+                )
+              }
               style={
                 {
                   "--media-accent-color": "var(--color-signal)",
@@ -305,12 +331,8 @@ export function Player(props: PlayerProps) {
             <PageHotkeys />
             <Session
               {...props}
-              casting={casting}
-              choice={choice}
               session={session}
               positionRef={positionRef}
-              onQuality={chooseQuality}
-              onAudio={chooseAudio}
               onRemoteEnded={onRemoteEnded}
               onLost={() => void start(stream?.choice ?? choice)}
             />
@@ -356,20 +378,15 @@ function PageHotkeys() {
 }
 
 interface SessionProps extends PlayerProps {
-  casting: boolean
-  choice: Choice
   session: PlaybackSessionRecord
   positionRef: React.RefObject<number>
-  /** Picks a quality; `paused` says whether what plays is paused, so a TV switched to it stays so. */
-  onQuality: (value: number | null, paused: boolean) => void
-  onAudio: (index: number, paused: boolean) => void
   /** Casting or AirPlay ended. */
   onRemoteEnded: () => void
   /** The stream failed; start a fresh session where it stopped. */
   onLost: () => void
 }
 
-/** Everything drawn over the video: the top bar, settings, and the next-episode offer. */
+/** What goes on alongside the video: progress reports, recovery, the top bar, and the next-episode offer. */
 function Session(props: SessionProps) {
   const { session, item, positionRef, onRemoteEnded } = props
   const store = usePlayer()
@@ -379,8 +396,6 @@ function Session(props: SessionProps) {
   const controlsVisible = usePlayer((state) => state.controlsVisible)
   const mediaError = usePlayer((state) => state.error)
   const remote = usePlayer((state) => state.remotePlaybackState)
-  const [settingsOpen, setSettingsOpen] = React.useState(false)
-  const [tvOpen, setTvOpen] = React.useState(false)
 
   // Keep the restart point current
   React.useEffect(() => {
@@ -429,13 +444,11 @@ function Session(props: SessionProps) {
     }
   }, [ended, report, positionRef, session.durationMs])
 
-  const chromeVisible = controlsVisible || paused || settingsOpen || tvOpen
-  const closeSettings = React.useCallback(() => setSettingsOpen(false), [])
-  const closeTv = React.useCallback(() => setTvOpen(false), [])
+  const chromeVisible = controlsVisible || paused
 
   return (
     <>
-      {/* Top bar: back, what is playing, settings */}
+      {/* Top bar: back and what is playing */}
       <motion.div
         initial={false}
         animate={{ opacity: chromeVisible ? 1 : 0, y: chromeVisible ? 0 : -8 }}
@@ -457,75 +470,7 @@ function Session(props: SessionProps) {
           <p className="heading truncate text-lg text-surface md:text-xl">{props.title}</p>
           {props.subtitle && <p className="font-mono text-micro text-surface/70 tabular">{props.subtitle}</p>}
         </div>
-        {props.casting && (
-          <button
-            type="button"
-            aria-label="Play on a TV"
-            aria-expanded={tvOpen}
-            onClick={() => {
-              setSettingsOpen(false)
-              setTvOpen((open) => !open)
-            }}
-            className={cn(
-              "flex size-10 shrink-0 items-center justify-center rounded-full text-surface backdrop-blur-md transition-[background-color,transform] active:scale-90",
-              tvOpen ? "bg-signal text-ink" : "bg-surface/12 hover:bg-surface/20",
-            )}
-          >
-            <TelevisionSimpleIcon weight="bold" className="size-5" />
-          </button>
-        )}
-        <button
-          type="button"
-          aria-label="Playback settings"
-          aria-expanded={settingsOpen}
-          onClick={() => {
-            setTvOpen(false)
-            setSettingsOpen((open) => !open)
-          }}
-          className={cn(
-            "flex size-10 shrink-0 items-center justify-center rounded-full text-surface backdrop-blur-md transition-[background-color,transform] active:scale-90",
-            settingsOpen ? "bg-signal text-ink" : "bg-surface/12 hover:bg-surface/20",
-          )}
-        >
-          <GearSixIcon weight="bold" className="size-5" />
-        </button>
       </motion.div>
-
-      <AnimatePresence>
-        {settingsOpen && (
-          <SettingsPanel
-            session={session}
-            choice={props.choice}
-            prefs={props.prefs}
-            onQuality={(value) => {
-              setSettingsOpen(false)
-              props.onQuality(value, paused)
-            }}
-            onAudio={(index) => {
-              setSettingsOpen(false)
-              props.onAudio(index, paused)
-            }}
-            onPrefs={(prefs) => {
-              props.onPrefs(prefs)
-              void updatePlaybackPrefs(prefs).catch(() => {})
-            }}
-            onClose={closeSettings}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {tvOpen && (
-          <TvPicker
-            onPick={(renderer) => {
-              setTvOpen(false)
-              store.pause()
-              props.onPlayOnTv(renderer, positionRef.current, props.choice.audioTrack ?? session.audioTrack)
-            }}
-            onClose={closeTv}
-          />
-        )}
-      </AnimatePresence>
 
       <AnimatePresence>
         {ended && props.next && (
@@ -543,113 +488,114 @@ function Session(props: SessionProps) {
   )
 }
 
-interface SettingsPanelProps {
+interface SettingsItemsProps {
   session: PlaybackSessionRecord
   choice: Choice
   prefs: PlaybackPrefs
-  onQuality: (value: number | null) => void
-  onAudio: (index: number) => void
+  /** Picks a quality; `paused` says whether what plays is paused, so a TV switched to it stays so. */
+  onQuality: (value: number | null, paused: boolean) => void
+  onAudio: (index: number, paused: boolean) => void
   onPrefs: (prefs: PlaybackPrefs) => void
-  onClose: () => void
 }
 
-/** Quality, audio track and autoplay, with a line on how the file is being sent. */
-function SettingsPanel({ session, choice, prefs, onQuality, onAudio, onPrefs, onClose }: SettingsPanelProps) {
+/**
+ * The settings menu: quality and audio track (Findr's, as each means a new
+ * session), the skin's speed and captions, autoplay, and a line on how the
+ * file is being sent.
+ */
+function SettingsItems({ session, choice, prefs, onQuality, onAudio, onPrefs }: SettingsItemsProps) {
+  const paused = usePlayer((state) => state.paused)
   // The track picked, else the one the server chose for this session
   const audioTrack = choice.audioTrack ?? session.audioTrack
 
   return (
-    <Panel label="Playback settings" onClose={onClose}>
-      <PanelGroup label="Quality">
-        {QUALITIES.map((option) => (
-          <PanelOption key={option.label} selected={choice.quality === option.value} onClick={() => onQuality(option.value)}>
-            {option.label}
-          </PanelOption>
-        ))}
-      </PanelGroup>
-
+    <>
+      <Submenu
+        icon={SwitchesIcon}
+        label="Quality"
+        options={QUALITIES.map((option) => ({ value: String(option.value), label: option.label }))}
+        value={String(choice.quality)}
+        onValueChange={(value) => onQuality(QUALITIES.find((option) => String(option.value) === value)?.value ?? null, paused)}
+      />
       {session.audioTracks.length > 1 && (
-        <PanelGroup label="Audio">
-          {session.audioTracks.map((track) => (
-            <PanelOption key={track.index} selected={audioTrack === track.index} onClick={() => onAudio(track.index)}>
-              <span className="truncate">{audioTrackLabel(track, session.audioTracks)}</span>
-              <PanelDetail>{audioTrackDetail(track)}</PanelDetail>
-            </PanelOption>
-          ))}
-        </PanelGroup>
+        <Submenu
+          icon={SpeechIcon}
+          label="Audio"
+          options={session.audioTracks.map((track) => ({
+            value: String(track.index),
+            label: audioTrackLabel(track, session.audioTracks),
+            detail: audioTrackDetail(track),
+          }))}
+          value={String(audioTrack)}
+          onValueChange={(value) => onAudio(Number(value), paused)}
+        />
       )}
-
-      <label className="flex items-center justify-between gap-3 rounded-[0.75rem] px-3 py-2.5 text-[0.875rem]">
-        Play next episode automatically
-        <Switch checked={prefs.autoplayNext} onChange={(autoplayNext) => onPrefs({ ...prefs, autoplayNext })} />
-      </label>
-
-      <p className="border-t border-surface/10 px-3 pb-1.5 pt-2.5 text-micro leading-relaxed text-surface/60">{describeMode(session)}</p>
-    </Panel>
+      <PlaybackRateSubmenu />
+      <CaptionsSubmenu />
+      <CheckItem icon={SkipForwardIcon} checked={prefs.autoplayNext} onCheckedChange={(autoplayNext) => onPrefs({ ...prefs, autoplayNext })}>
+        Autoplay next episode
+      </CheckItem>
+      <MenuNote>{describeMode(session)}</MenuNote>
+    </>
   )
 }
 
-interface TvPickerProps {
-  onPick: (renderer: RendererRecord) => void
-  onClose: () => void
+/**
+ * The control bar's TV button: DLNA TVs on the network, searched for each
+ * time it opens. Cast and AirPlay devices aren't listed here: the browser
+ * finds those, through the buttons beside it.
+ */
+function TvMenu({ onPick }: { onPick: (renderer: RendererRecord) => void }) {
+  const store = usePlayer()
+  const [open, setOpen] = React.useState(false)
+
+  return (
+    <BarMenu icon={TelevisionSimpleIcon} label="Play on a TV" open={open} onOpenChange={setOpen}>
+      {open && (
+        <TvList
+          onPick={(renderer) => {
+            setOpen(false)
+            store.pause()
+            onPick(renderer)
+          }}
+        />
+      )}
+    </BarMenu>
+  )
 }
 
-/**
- * DLNA TVs on the network, searched for when the picker opens. Cast and
- * AirPlay devices aren't listed here: the browser finds those, through the
- * buttons in the control bar.
- */
-function TvPicker({ onPick, onClose }: TvPickerProps) {
+/** The TVs themselves, searched for when the list mounts. */
+function TvList({ onPick }: { onPick: (renderer: RendererRecord) => void }) {
   const { renderers, error, searching, search } = useRenderers()
 
   return (
-    <Panel label="Play on a TV" onClose={onClose}>
-      <div className="flex items-center justify-between px-3 pb-1 pt-2">
-        <p className="text-micro font-semibold text-surface/55">TVs on your network</p>
-        <button
-          type="button"
-          onClick={() => void search(true)}
-          disabled={searching}
-          className="rounded-full px-2 py-1 text-micro font-semibold text-surface/70 transition-colors hover:bg-surface/10 hover:text-surface disabled:opacity-50"
-        >
-          {searching ? "Searching" : "Search again"}
-        </button>
-      </div>
-
+    <>
+      <MenuLabel>TVs on your network</MenuLabel>
       {renderers === null || (searching && renderers.length === 0) ? (
-        <div className="flex items-center gap-3 px-3 py-4 text-[0.875rem] text-surface/70">
-          <Spinner className="size-4 text-signal" />
+        <div className="flex items-center gap-2 px-2 py-1.5">
+          <Spinner className="size-media-icon text-signal" />
           Looking for TVs
         </div>
       ) : renderers.length === 0 ? (
-        <p className="px-3 py-3 text-[0.875rem] leading-relaxed text-surface/70">
+        <p className="w-0 min-w-full whitespace-normal px-2 py-1 leading-snug text-media-muted-foreground">
           No TVs answered. A TV must be on, with DLNA or screen sharing turned on, and on the same network as the Findr server.
         </p>
       ) : (
-        <div role="list">
-          {renderers.map((renderer) => (
-            <button
-              key={renderer.id}
-              type="button"
-              role="listitem"
-              onClick={() => onPick(renderer)}
-              className="flex w-full items-center gap-3 rounded-[0.75rem] px-3 py-2.5 text-left transition-colors hover:bg-surface/10"
-            >
-              <TelevisionSimpleIcon aria-hidden weight="duotone" className="size-5 shrink-0 text-signal" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[0.875rem] font-medium">{renderer.name}</span>
-                {rendererDetail(renderer) && <span className="block truncate text-micro text-surface/55">{rendererDetail(renderer)}</span>}
-              </span>
-            </button>
-          ))}
-        </div>
+        renderers.map((renderer) => (
+          <MenuRow key={renderer.id} icon={TelevisionSimpleIcon} onSelect={() => onPick(renderer)}>
+            <span className="min-w-0">
+              <span className="block truncate">{renderer.name}</span>
+              {rendererDetail(renderer) && <span className="block truncate text-media-sm text-media-muted-foreground">{rendererDetail(renderer)}</span>}
+            </span>
+          </MenuRow>
+        ))
       )}
-
-      {error && <p className="px-3 pb-2 text-micro text-[oklch(0.75_0.15_25)]">{error}</p>}
-      <p className="border-t border-surface/10 px-3 pb-1.5 pt-2.5 text-micro leading-relaxed text-surface/60">
-        For Chromecast or AirPlay, use the cast buttons in the control bar.
-      </p>
-    </Panel>
+      <MenuRow icon={ArrowsClockwiseIcon} onSelect={() => void search(true)} disabled={searching}>
+        {searching ? "Searching" : "Search again"}
+      </MenuRow>
+      {error && <p className="px-2 pb-1 text-media-sm text-[oklch(0.75_0.15_25)]">{error}</p>}
+      <MenuNote>For Chromecast or AirPlay, use the cast buttons beside this one.</MenuNote>
+    </>
   )
 }
 
