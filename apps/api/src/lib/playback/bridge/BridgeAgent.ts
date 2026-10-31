@@ -57,7 +57,11 @@ const PING_MS = 25_000;
 const RETRY_MIN_MS = 1000;
 const RETRY_MAX_MS = 30_000;
 
-/** Devices that answered a search are reachable for this long after, matching how long the server keeps them. */
+/**
+ * Devices that answered a search are reachable for this long after their
+ * last answer to a search or a request, matching how long the server keeps
+ * them and letting a TV being driven outlast it, as the server's does.
+ */
 const DEVICE_TTL_MS = 10 * 60_000;
 
 /** Headers a TV request may carry; anything else the server sends is dropped. */
@@ -336,7 +340,9 @@ export class BridgeAgent {
       if (ALLOWED_HEADERS.has(name.toLowerCase())) headers[name] = value;
     }
 
+    // A device that answers is still there, so a TV being driven stays reachable between searches
     const reply = await LanHttp.request({ ...exchange, url: url.toString(), headers });
+    this.devices.set(url.hostname, Date.now());
     return { status: reply.status, body: reply.body.slice(0, MAX_BODY_BYTES) };
   }
 }

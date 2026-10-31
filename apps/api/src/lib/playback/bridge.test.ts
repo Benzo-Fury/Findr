@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -138,6 +138,28 @@ describe("BridgeAgent requests", () => {
     expect(seenHeaders?.get("cookie")).toBeNull();
     await expect(agent.send({ ...exchange, url: "http://10.20.30.40/admin" })).rejects.toThrow("isn't a device");
     await expect(agent.send({ ...exchange, url: `file://127.0.0.1/etc/passwd` })).rejects.toThrow("isn't a device");
+  });
+
+  test("keeps a device it is driving past its last search, and forgets one left alone", async () => {
+    const location = `http://127.0.0.1:${device.port}/description.xml`;
+    const agent = new BridgeAgent({ server: "http://127.0.0.1:1", token: "t", port: 0, mediaUrl: null }, { discover: async () => new Set([location]) });
+    const exchange = { url: location, method: "GET" as const, headers: {}, body: null, timeoutMs: 2000 };
+    const start = Date.now();
+    try {
+      await agent.search();
+
+      // Polled every few minutes, as a TV playing a film is, it stays reachable long after the search
+      for (let minutes = 4; minutes <= 20; minutes += 4) {
+        setSystemTime(start + minutes * 60_000);
+        expect((await agent.send(exchange)).status).toBe(200);
+      }
+
+      // Left alone past the limit, it is forgotten
+      setSystemTime(start + 31 * 60_000);
+      await expect(agent.send(exchange)).rejects.toThrow("isn't a device this bridge found");
+    } finally {
+      setSystemTime();
+    }
   });
 });
 
