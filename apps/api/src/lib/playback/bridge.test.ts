@@ -179,6 +179,40 @@ describe("BridgeMediaProxy", () => {
     expect((await proxy.handle(at("/api/playback/stream/tok/media.mkv/extra"), "192.168.1.50")).status).toBe(404);
     expect((await proxy.handle(at("/api/playback/splash", { method: "POST" }), "192.168.1.50")).status).toBe(405);
   });
+
+  test("keeps the server's Content-Length on a streamed body, as many TVs need", async () => {
+    // A body big enough that it streams rather than arriving in one piece
+    const size = 4_000_000;
+    const big = Bun.serve({
+      port: 0,
+      fetch(request) {
+        if (request.headers.get("range")) return new Response(new Uint8Array(1000), { status: 206, headers: { "content-range": `bytes 0-999/${size}` } });
+        return new Response(new Uint8Array(size), { headers: { "content-type": "video/x-matroska" } });
+      },
+    });
+    const listening = new BridgeMediaProxy(`http://127.0.0.1:${big.port}`, 0);
+    listening.start();
+    try {
+      await until(() => listening.boundPort !== null);
+      const url = `http://127.0.0.1:${listening.boundPort}/api/playback/stream/tok.en.sig/media.mkv`;
+
+      const whole = await fetch(url);
+      expect(whole.headers.get("content-length")).toBe(String(size));
+      expect(whole.headers.get("transfer-encoding")).toBeNull();
+      expect((await whole.arrayBuffer()).byteLength).toBe(size);
+
+      const head = await fetch(url, { method: "HEAD" });
+      expect(head.headers.get("content-length")).toBe(String(size));
+
+      const part = await fetch(url, { headers: { range: "bytes=0-999" } });
+      expect(part.status).toBe(206);
+      expect(part.headers.get("content-length")).toBe("1000");
+      expect((await part.arrayBuffer()).byteLength).toBe(1000);
+    } finally {
+      await listening.stop();
+      big.stop(true);
+    }
+  });
 });
 
 // ---------- From the server to a TV on the bridge's network ---------- //
