@@ -98,7 +98,8 @@ const RESUME_TRIES = 3;
 const STOPPED_RELEASE_MS = 60_000;
 
 /** The splash as DLNA names it: a JPEG up to 4096 pixels, sent whole rather than streamed. */
-const SPLASH_PROTOCOL_INFO = "http-get:*:image/jpeg:DLNA.ORG_PN=JPEG_LRG;DLNA.ORG_OP=00;DLNA.ORG_FLAGS=00900000000000000000000000000000";
+export const SPLASH_FEATURES = "DLNA.ORG_PN=JPEG_LRG;DLNA.ORG_OP=00;DLNA.ORG_FLAGS=00900000000000000000000000000000";
+const SPLASH_PROTOCOL_INFO = `http-get:*:image/jpeg:${SPLASH_FEATURES}`;
 
 export default class DlnaController extends SelfManagedSingleton {
   private readonly renderers = new Map<string, DlnaRenderer>();

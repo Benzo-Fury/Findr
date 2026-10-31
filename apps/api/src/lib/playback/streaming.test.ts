@@ -123,7 +123,10 @@ describe.skipIf(!hasFfmpeg)("Streaming through the server", () => {
     try {
       const tv = "192.168.1.50";
       expect((await get(record.playlistUrl, tv)).status).toBe(200);
-      expect((await get("/api/playback/splash", tv)).headers.get("content-type")).toBe("image/jpeg");
+      const splash = await get("/api/playback/splash", tv);
+      expect(splash.headers.get("content-type")).toBe("image/jpeg");
+      expect(splash.headers.get("transferMode.dlna.org")).toBe("Interactive");
+      expect(splash.headers.get("contentFeatures.dlna.org")).toStartWith("DLNA.ORG_PN=JPEG_LRG;");
       // A forged token, another path, or a public address are all refused
       expect((await get(record.playlistUrl.replace(/\/stream\/[^/]+\//, "/stream/forged.token.signature/"), tv)).status).toBe(403);
       expect((await get("/api/playback/casts", tv)).status).toBe(403);
