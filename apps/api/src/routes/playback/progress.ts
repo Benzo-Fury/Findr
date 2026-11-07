@@ -31,6 +31,8 @@ export default factory({
 
       if (!WatchHistory.report(userId, report, owned?.audioLanguage ?? null)) return c.json({ error: "not_playable" }, 404)
       if (report.event === "stop" && report.sessionId) await service.end(report.sessionId, userId)
+      // A player whose session was reaped, as while its tab slept, is told so it can start another
+      if (report.sessionId && !owned && report.event !== "stop") return c.json({ error: "session_not_found" }, 404)
       return c.body(null, 204)
     },
   },

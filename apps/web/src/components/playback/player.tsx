@@ -7,7 +7,7 @@ import { SpeechIcon, SwitchesIcon } from "@videojs/react/icons"
 import { HlsJsVideo } from "@videojs/react/media/hlsjs-video"
 import { VideoPlayer, usePlayer } from "@videojs/react/video"
 import type { PlaybackItemKey, PlaybackPrefs, PlaybackSessionRecord, RendererRecord } from "@findr/types/playback"
-import { createCastUrl, createPlaybackSession, endPlaybackSession, reportPlaybackProgress, updatePlaybackPrefs } from "@/lib/api"
+import { ApiError, createCastUrl, createPlaybackSession, endPlaybackSession, reportPlaybackProgress, updatePlaybackPrefs } from "@/lib/api"
 import { deviceProfile } from "@/lib/device-profile"
 import { googleCastConnected, loadOnGoogleCast } from "@/lib/google-cast"
 import { FADE } from "@/lib/motion"
@@ -334,7 +334,7 @@ export function Player(props: PlayerProps) {
               session={session}
               positionRef={positionRef}
               onRemoteEnded={onRemoteEnded}
-              onLost={() => void start(stream?.choice ?? choice)}
+              onLost={(paused) => void start(stream?.choice ?? choice, paused)}
             />
             <Notice message={notice} onDone={clearNotice} />
           </Container>
@@ -382,8 +382,8 @@ interface SessionProps extends PlayerProps {
   positionRef: React.RefObject<number>
   /** Casting or AirPlay ended. */
   onRemoteEnded: () => void
-  /** The stream failed; start a fresh session where it stopped. */
-  onLost: () => void
+  /** The stream failed or its session is gone; start a fresh session where it stopped, paused if it was. */
+  onLost: (paused: boolean) => void
 }
 
 /** What goes on alongside the video: progress reports, recovery, the top bar, and the next-episode offer. */
@@ -402,13 +402,16 @@ function Session(props: SessionProps) {
     if (currentTime > 0) positionRef.current = Math.round(currentTime * 1000)
   }, [currentTime, positionRef])
 
-  // A stream that fails mid-way, such as one reaped while the tab slept, restarts where it was, once per stream
+  // A stream that fails mid-way, or whose session was reaped while the tab slept, restarts where it was, once
+  // per stream. Safari's native player never reports the reaped session's missing segments, so the server's
+  // answer to a progress report is the signal there.
   const lostOnce = React.useRef<string | null>(null)
+  const [reaped, setReaped] = React.useState<string | null>(null)
   React.useEffect(() => {
-    if (!mediaError || lostOnce.current === session.id) return
+    if ((!mediaError && reaped !== session.id) || lostOnce.current === session.id) return
     lostOnce.current = session.id
-    props.onLost()
-  }, [mediaError, session.id, props])
+    props.onLost(paused && !mediaError)
+  }, [mediaError, reaped, paused, session.id, props])
 
   // Casting ending hands playback back to this browser
   const wasRemote = React.useRef(remote)
@@ -420,7 +423,9 @@ function Session(props: SessionProps) {
   // Report the position on a steady beat, and on pause; the last report ends the session
   const report = React.useCallback(
     (event: "tick" | "pause" | "seek" | "stop", keepalive = false) => {
-      void reportPlaybackProgress({ ...item, sessionId: session.id, positionMs: positionRef.current, event }, keepalive).catch(() => {})
+      void reportPlaybackProgress({ ...item, sessionId: session.id, positionMs: positionRef.current, event }, keepalive).catch((reason) => {
+        if (reason instanceof ApiError && reason.code === "session_not_found") setReaped(session.id)
+      })
     },
     [item, session.id, positionRef],
   )
@@ -433,8 +438,9 @@ function Session(props: SessionProps) {
       window.removeEventListener("pagehide", onHide)
     }
   }, [report])
+  // Resuming reports too, so a session reaped during a long pause is found out at once
   React.useEffect(() => {
-    if (paused && positionRef.current > 0) report("pause")
+    if (positionRef.current > 0) report(paused ? "pause" : "tick")
   }, [paused, report, positionRef])
   // Reaching the end marks it watched but keeps the session, so Watch again still plays
   React.useEffect(() => {
