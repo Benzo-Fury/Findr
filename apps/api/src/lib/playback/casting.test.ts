@@ -167,6 +167,21 @@ describe("DlnaRenderer", () => {
 </deviceList></device></root>`);
         }
         if (url.pathname === "/server/cm") return new Response("nothing here", { status: 500 });
+        // Two TVs listing bare containers, one a Hisense VIDAA TV that says so in its description
+        if (url.pathname === "/vidaa.xml" || url.pathname === "/bare.xml") {
+          const description = url.pathname === "/vidaa.xml" ? "<modelDescription>#CAP#\nbrand=his\nvidaa_support=1\n</modelDescription>" : "";
+          return new Response(`<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0"><device><deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType><friendlyName>Bedroom TV</friendlyName>${description}<UDN>uuid:bare</UDN>
+<serviceList>
+  <service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType><controlURL>/upnp/control/AVTransport1</controlURL></service>
+  <service><serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType><controlURL>/bare/cm</controlURL></service>
+</serviceList></device></root>`);
+        }
+        if (url.pathname === "/bare/cm") {
+          return new Response(
+            '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetProtocolInfoResponse xmlns:u="x"><Source></Source><Sink>http-get:*:video/mp4:*,http-get:*:video/x-matroska:*,http-get:*:video/mpeg:*,http-get:*:audio/aac:*</Sink></u:GetProtocolInfoResponse></s:Body></s:Envelope>',
+          );
+        }
         // A TV that takes its time over an action
         if (url.pathname === "/slow") {
           await Bun.sleep(300);
@@ -229,6 +244,14 @@ describe("DlnaRenderer", () => {
     expect(renderer?.transportStreamType).toBe("video/vnd.dlna.mpeg-tts");
     expect(renderer?.matroskaType).toBe("video/x-matroska");
     expect(renderer?.profile).toEqual({ videoCodecs: ["h264", "hevc"], audioCodecs: ["aac", "mp3", "ac3"], maxHeight: 1080, hdr: false });
+  });
+
+  test("takes HEVC on a Hisense VIDAA TV whose formats never name it", async () => {
+    const vidaa = await DlnaRenderer.open(location.replace("description.xml", "vidaa.xml"));
+    const bare = await DlnaRenderer.open(location.replace("description.xml", "bare.xml"));
+    expect(vidaa?.profile.videoCodecs).toEqual(["h264", "hevc"]);
+    expect(vidaa?.acceptsMatroska).toBe(true);
+    expect(bare?.profile.videoCodecs).toEqual(["h264"]);
   });
 
   test("drives the transport and reads back its state", async () => {

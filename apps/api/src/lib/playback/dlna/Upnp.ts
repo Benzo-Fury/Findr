@@ -19,6 +19,8 @@ export interface DeviceDescription {
   name: string;
   manufacturer: string | null;
   model: string | null;
+  /** Its `modelDescription`, which some TVs fill with capability flags (Hisense's `vidaa_support=1`). */
+  description: string | null;
   services: UpnpService[];
 }
 
@@ -83,6 +85,7 @@ export class Upnp {
       name: this.text(device, "friendlyName") || "Unnamed TV",
       manufacturer: this.text(device, "manufacturer") || null,
       model: this.text(device, "modelName") || null,
+      description: this.text(device, "modelDescription") || null,
       services,
     };
   }

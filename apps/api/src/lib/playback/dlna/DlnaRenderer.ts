@@ -6,7 +6,8 @@
  *
  * Audio-only renderers, such as speakers, are left out. Renderers list
  * containers and DLNA profile names, not codecs, so the profile is cautious: H.264 and AAC or MP3 always, and HEVC, AC-3, E-AC-3
- * and 4K only when the list names them.
+ * and 4K only when the list names them. Hisense VIDAA TVs list bare
+ * containers yet decode HEVC, so they are known by their description instead.
  */
 
 import type { DeviceProfile, PlaybackAudioCodec, PlaybackVideoCodec, RendererRecord, RendererState } from "@findr/types/playback";
@@ -60,6 +61,8 @@ export class DlnaRenderer {
   /** The `protocolInfo` entries it accepts. */
   private sinks: string[] = [];
   private matroskaRefused = false;
+  /** A Hisense VIDAA TV, which decodes HEVC though its formats never name it. */
+  private readonly vidaa: boolean;
 
   private constructor(network: RendererNetwork, description: DeviceDescription, location: string, transport: UpnpService) {
     const udn = description.udn.replace(/^uuid:/i, "");
@@ -68,6 +71,7 @@ export class DlnaRenderer {
     this.name = description.name;
     this.manufacturer = description.manufacturer;
     this.model = description.model;
+    this.vidaa = /\bvidaa_support=1\b/i.test(description.description ?? "");
     this.location = location;
     this.transport = transport;
     this.rendering = description.services.find((service) => service.serviceType.startsWith(RENDERING_CONTROL)) ?? null;
@@ -133,7 +137,7 @@ export class DlnaRenderer {
   public get profile(): DeviceProfile {
     const listed = this.sinks.join(",").toLowerCase();
     const videoCodecs: PlaybackVideoCodec[] = ["h264"];
-    if (/hevc|h265|h\.265/.test(listed)) videoCodecs.push("hevc");
+    if (this.vidaa || /hevc|h265|h\.265/.test(listed)) videoCodecs.push("hevc");
 
     const audioCodecs: PlaybackAudioCodec[] = ["aac", "mp3"];
     if (/ac3|ac-3|dolby/.test(listed)) audioCodecs.push("ac3");
