@@ -18,11 +18,11 @@ export interface DefaultVideoControlsProps {
   renderThumbnail?: NonNullable<ComponentProps<typeof TimeSlider>>['renderThumbnail'];
   /** Findr: the settings menu's items, in place of the skin's own. */
   settings?: ReactNode;
-  /** Findr: more buttons, ahead of Cast in the right-hand group. */
-  extraControls?: ReactNode;
+  /** Findr: one button in place of the Cast and AirPlay buttons. */
+  cast?: ReactNode;
 }
 
-export function DefaultVideoControls({ renderThumbnail, settings, extraControls }: DefaultVideoControlsProps = {}) {
+export function DefaultVideoControls({ renderThumbnail, settings, cast }: DefaultVideoControlsProps = {}) {
   return (
     <Controls.Root>
       <Controls.Backdrop
@@ -119,13 +119,16 @@ export function DefaultVideoControls({ renderThumbnail, settings, extraControls 
               'media-max-lg:group-[:not([data-visible])]/controls:-translate-y-media-hidden-offset'
             )}
           >
-            {extraControls}
-            <ButtonTooltip side="top">
-              <CastButton />
-            </ButtonTooltip>
-            <ButtonTooltip side="top">
-              <AirPlayButton />
-            </ButtonTooltip>
+            {cast ?? (
+              <>
+                <ButtonTooltip side="top">
+                  <CastButton />
+                </ButtonTooltip>
+                <ButtonTooltip side="top">
+                  <AirPlayButton />
+                </ButtonTooltip>
+              </>
+            )}
             <ButtonTooltip side="top">
               <PiPButton />
             </ButtonTooltip>

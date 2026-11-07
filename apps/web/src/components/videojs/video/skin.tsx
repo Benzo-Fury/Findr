@@ -21,8 +21,8 @@ export interface VideoSkinProps extends Omit<NonNullable<ComponentProps<typeof C
   renderThumbnail?: NonNullable<ComponentProps<typeof DefaultVideoControls>>['renderThumbnail'];
   /** Findr: the settings menu's items, in place of the skin's own. */
   settings?: ReactNode;
-  /** Findr: more buttons, ahead of Cast in the control bar. */
-  extraControls?: ReactNode;
+  /** Findr: one button in place of the Cast and AirPlay buttons. */
+  cast?: ReactNode;
 }
 
 export function VideoSkin({
@@ -31,7 +31,7 @@ export function VideoSkin({
   renderPoster,
   renderThumbnail,
   settings,
-  extraControls,
+  cast,
   ...props
 }: VideoSkinProps = {}) {
   return (
@@ -47,7 +47,7 @@ export function VideoSkin({
       <ErrorDialog />
       <Title />
 
-      <DefaultVideoControls renderThumbnail={renderThumbnail} settings={settings} extraControls={extraControls} />
+      <DefaultVideoControls renderThumbnail={renderThumbnail} settings={settings} cast={cast} />
 
       <VideoHotkeys />
       <VideoGestures />

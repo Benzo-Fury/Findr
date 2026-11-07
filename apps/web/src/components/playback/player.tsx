@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react"
 import { ArrowLeftIcon, ArrowsClockwiseIcon, PlayIcon, SkipForwardIcon, TelevisionSimpleIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react"
 import { Container, Hotkey } from "@videojs/react"
 import { GoogleCast } from "@videojs/react/extensions/google-cast"
-import { SpeechIcon, SwitchesIcon } from "@videojs/react/icons"
+import { AirPlayEnterIcon, CastEnterIcon, CastExitIcon, SpeechIcon, SwitchesIcon } from "@videojs/react/icons"
 import { HlsJsVideo } from "@videojs/react/media/hlsjs-video"
 import { VideoPlayer, usePlayer } from "@videojs/react/video"
 import type { PlaybackItemKey, PlaybackPrefs, PlaybackSessionRecord, RendererRecord } from "@findr/types/playback"
@@ -90,6 +90,9 @@ const HLS_TYPE = "application/vnd.apple.mpegurl"
  * hls.js.
  */
 const AIRPLAY = typeof window !== "undefined" && "WebKitPlaybackTargetAvailabilityEvent" in window
+
+/** Whether this is a Chromium browser, the only kind that offers Google Cast (the skin's own test). */
+const GOOGLE_CAST = typeof window !== "undefined" && "chrome" in window
 
 /** Whether the page was opened on this machine, so a relative URL would mean nothing to a TV. */
 function openedLocally(): boolean {
@@ -301,9 +304,9 @@ export function Player(props: PlayerProps) {
                   }}
                 />
               }
-              extraControls={
+              cast={
                 casting && (
-                  <TvMenu onPick={(renderer) => props.onPlayOnTv(renderer, positionRef.current, choice.audioTrack ?? session.audioTrack)} />
+                  <CastMenu onPick={(renderer) => props.onPlayOnTv(renderer, positionRef.current, choice.audioTrack ?? session.audioTrack)} />
                 )
               }
               style={
@@ -547,16 +550,36 @@ function SettingsItems({ session, choice, prefs, onQuality, onAudio, onPrefs }: 
 }
 
 /**
- * The control bar's TV button: DLNA TVs on the network, searched for each
- * time it opens. Cast and AirPlay devices aren't listed here: the browser
- * finds those, through the buttons beside it.
+ * The control bar's one cast button, in place of the skin's Cast and AirPlay
+ * buttons: Chromecast and AirPlay, where the browser offers them, open the
+ * browser's own device picker, and below them the DLNA TVs on the network,
+ * searched for each time the menu opens.
  */
-function TvMenu({ onPick }: { onPick: (renderer: RendererRecord) => void }) {
+function CastMenu({ onPick }: { onPick: (renderer: RendererRecord) => void }) {
   const store = usePlayer()
+  const remoteState = usePlayer((state) => state.remotePlaybackState)
+  const availability = usePlayer((state) => state.remotePlaybackAvailability)
   const [open, setOpen] = React.useState(false)
+  const connected = remoteState === "connected"
+
+  // The browser's picker needs the click that chose the row, so it is asked before the menu closes
+  const prompt = () => {
+    void store.promptRemotePlayback().catch(() => {})
+    setOpen(false)
+  }
 
   return (
-    <BarMenu icon={TelevisionSimpleIcon} label="Play on a TV" open={open} onOpenChange={setOpen}>
+    <BarMenu icon={connected ? CastExitIcon : CastEnterIcon} label={connected ? "Casting" : "Cast"} open={open} onOpenChange={setOpen}>
+      {GOOGLE_CAST && availability !== "unsupported" && (
+        <MenuRow icon={CastEnterIcon} onSelect={prompt} disabled={!connected && availability !== "available"}>
+          {connected ? "Stop casting" : availability === "available" ? "Chromecast" : "No Chromecast found"}
+        </MenuRow>
+      )}
+      {AIRPLAY && availability === "available" && (
+        <MenuRow icon={AirPlayEnterIcon} onSelect={prompt}>
+          {connected ? "Stop AirPlay" : "AirPlay"}
+        </MenuRow>
+      )}
       {open && (
         <TvList
           onPick={(renderer) => {
@@ -600,7 +623,6 @@ function TvList({ onPick }: { onPick: (renderer: RendererRecord) => void }) {
         {searching ? "Searching" : "Search again"}
       </MenuRow>
       {error && <p className="px-2 pb-1 text-media-sm text-[oklch(0.75_0.15_25)]">{error}</p>}
-      <MenuNote>For Chromecast or AirPlay, use the cast buttons beside this one.</MenuNote>
     </>
   )
 }
