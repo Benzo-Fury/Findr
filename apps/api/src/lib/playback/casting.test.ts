@@ -129,6 +129,31 @@ describe("Ffmpeg.videoEncode", () => {
   });
 });
 
+describe("Ffmpeg.transportStreamArgs", () => {
+  /** A plan for an HEVC file on an H.264-only TV: video re-encoded, AAC audio copied or not. */
+  const planFor = (audioCodecs: Array<"aac" | "mp3">, videoCodecs: Array<"h264" | "hevc"> = ["h264"]) =>
+    PlaybackDecider.decide({
+      probe: { ...probeStub(), video: { ...probeStub().video, codec: "hevc" } },
+      audioStream: 1,
+      profile: { videoCodecs, audioCodecs, maxHeight: 1080, hdr: false },
+      maxBitrate: null,
+      settings,
+    });
+  /** The output options between the input and `pipe:1`. */
+  const output = (args: string[]) => args.slice(args.indexOf("-i") + 2).join(" ");
+
+  test("trims copied audio to the start when the video is re-encoded after a seek", () => {
+    const line = output(Ffmpeg.transportStreamArgs("/media/a.mkv", planFor(["aac"]), 600, settings));
+    expect(line).toContain("-c:a copy -ss 0 ");
+  });
+
+  test("leaves the stream alone from the start, with converted audio, or with copied video", () => {
+    expect(output(Ffmpeg.transportStreamArgs("/media/a.mkv", planFor(["aac"]), 0, settings))).not.toContain("-ss");
+    expect(output(Ffmpeg.transportStreamArgs("/media/a.mkv", planFor(["mp3"]), 600, settings))).not.toContain("-ss");
+    expect(output(Ffmpeg.transportStreamArgs("/media/a.mkv", planFor(["aac"], ["h264", "hevc"]), 600, settings))).not.toContain("-ss");
+  });
+});
+
 function probeStub(): ProbeInfo {
   return {
     durationMs: 60_000,

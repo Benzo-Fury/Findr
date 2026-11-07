@@ -195,6 +195,11 @@ export class Ffmpeg {
     if (encode) args.push(...encode.output);
     else args.push("-c:v", "copy");
     args.push(...this.audioArgs(plan));
+
+    // A seek lands on the keyframe before `startSeconds`: re-encoded video is trimmed to the
+    // exact second, but copied audio keeps that lead-in and would play ahead of the picture
+    // on TVs that start both streams together. Drop the audio before the start to match
+    if (startSeconds > 0 && encode && plan.audio === "copy") args.push("-ss", "0");
     args.push("-max_muxing_queue_size", "4096", "-f", "mpegts", "-muxdelay", "0", "pipe:1");
     return args;
   }
