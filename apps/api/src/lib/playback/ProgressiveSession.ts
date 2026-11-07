@@ -57,6 +57,8 @@ export class ProgressiveSession {
   private closed = false;
   /** Whether the renderer has asked for the media yet, logged once to show it can reach Findr. */
   private fetched = false;
+  /** The `start` of the URL last served as a transport stream, to tell a renderer reconnecting from a seek. */
+  private servedStartMs: number | null = null;
 
   constructor(options: ProgressiveOptions) {
     this.id = options.id;
@@ -169,6 +171,17 @@ export class ProgressiveSession {
   /** A transport stream from `startMs`, produced while the renderer reads it. */
   private serveTransportStream(request: Request, headers: Headers, startMs: number): Response {
     if (request.method === "HEAD" || this.closed) return new Response(null, { status: this.closed ? 404 : 200, headers });
+
+    // A renderer that drops its connection (a stall, a network blip) asks for the same URL again,
+    // whose `start` is where the stream first began. Resume from how far playback has got instead
+    // of jumping back to that start. A seek loads a new URL and sets `positionMs` to its target,
+    // so this only ever moves a repeated request forward.
+    if (this.servedStartMs === startMs && this.positionMs > startMs) {
+      console.info(`[Playback] ${this.deviceName} reconnected; continuing the stream from ${Math.round(this.positionMs / 1000)}s instead of ${Math.round(startMs / 1000)}s`);
+      startMs = this.positionMs;
+    } else {
+      this.servedStartMs = startMs;
+    }
 
     // One run at a time: a new request replaces the last
     this.child?.kill("SIGKILL");
