@@ -5,6 +5,7 @@
  * with it.
  */
 
+import { existsSync } from "node:fs";
 import {
   TERMINAL_DOWNLOAD_STATUSES,
   type ActiveAttempt,
@@ -289,7 +290,14 @@ export class Download extends Model {
       createdAt: this.createdAt,
       updatedAt: this.updatedAtValue,
       activeAttempt: this.activeAttempt(),
+      missingFiles: this.missingFiles(),
     };
+  }
+
+  /** How many saved files are gone from disk; only finished downloads are checked, as running ones are still writing theirs. */
+  private missingFiles(): number {
+    if (!this.isFinished) return 0;
+    return this.savedFiles.filter((path) => !existsSync(path)).length;
   }
 
   /** The summary plus every episode, candidate and attempt. */

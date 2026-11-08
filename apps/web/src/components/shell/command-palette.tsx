@@ -3,7 +3,7 @@ import { Dialog } from "@base-ui/react/dialog"
 import { AnimatePresence, motion } from "motion/react"
 import { ArrowRightIcon, MagnifyingGlassIcon, XIcon } from "@phosphor-icons/react"
 import { searchTMDB } from "@/lib/api"
-import { DOWNLOAD_STATUS } from "@/lib/download-status"
+import { downloadStatus } from "@/lib/download-status"
 import { useLibrary, type LibraryEntry } from "@/lib/library"
 import { FADE, SPRING_PANEL, staggerDelay } from "@/lib/motion"
 import { useIsPhone } from "@/lib/responsive"
@@ -306,7 +306,7 @@ function Option({ id, result, words, active, index, onHover, onPick }: OptionPro
         </p>
       </div>
       {latest ? (
-        <StatusLabel status={DOWNLOAD_STATUS[latest.status]} className="shrink-0 text-micro" />
+        <StatusLabel status={downloadStatus(latest)} className="shrink-0 text-micro" />
       ) : (
         <ArrowRightIcon aria-hidden weight="bold" className={cn("size-4 shrink-0 text-ink-3 transition-[opacity,transform] duration-200", active ? "translate-x-0 opacity-100" : "-translate-x-1 opacity-0")} />
       )}

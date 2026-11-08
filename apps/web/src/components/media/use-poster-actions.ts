@@ -1,5 +1,5 @@
 import * as React from "react"
-import { DOWNLOAD_STATUS, isActive, type StatusStyle } from "@/lib/download-status"
+import { DOWNLOAD_STATUS, downloadStatus, isActive, type StatusStyle } from "@/lib/download-status"
 import { useLibrary } from "@/lib/library"
 import { cardKey } from "@/lib/title-cards"
 import { posterLayoutId, rememberPosterOrigin, useTitleRoute } from "@/lib/title-route"
@@ -35,7 +35,7 @@ export function usePosterActions(scope: string) {
       if (!entry?.latest) return undefined
       const running = entry.title.downloads.find((download) => isActive(download.status))
       if (running) return { status: DOWNLOAD_STATUS[running.status], progress: running.activeAttempt?.progress ?? null }
-      return { status: DOWNLOAD_STATUS[entry.latest.status] }
+      return { status: downloadStatus(entry.latest) }
     },
     [byKey],
   )

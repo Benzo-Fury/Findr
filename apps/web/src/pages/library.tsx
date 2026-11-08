@@ -12,7 +12,7 @@ import {
   SortAscendingIcon,
   SquaresFourIcon,
 } from "@phosphor-icons/react"
-import { DOWNLOAD_STATUS, isActive } from "@/lib/download-status"
+import { DOWNLOAD_STATUS, downloadStatus, filesMissing, isActive } from "@/lib/download-status"
 import { formatPercent, formatRelativeTime, plural } from "@/lib/format"
 import { useLibrary, type LibraryEntry } from "@/lib/library"
 import { EASE_OUT, FADE, staggerDelay } from "@/lib/motion"
@@ -85,6 +85,7 @@ function statusGroup(entry: LibraryEntry): Exclude<StatusFilter, "all"> | null {
   const downloads = entry.title.downloads
   if (downloads.some((download) => isActive(download.status))) return "active"
   const latest = entry.latest?.status
+  if (entry.latest && filesMissing(entry.latest)) return "attention"
   if (latest === "completed") return "ready"
   if (latest === "failed" || latest === "partial") return "attention"
   return null
@@ -460,11 +461,11 @@ interface CardProps {
   onOpen: (entry: LibraryEntry, layoutId?: string) => void
 }
 
-/** What a library card says about status: nothing when the title is simply ready. */
+/** What a library card says about status: nothing when the title is simply ready to play. */
 function cardStatus(entry: LibraryEntry) {
   const running = entry.title.downloads.find((download) => isActive(download.status))
   if (running) return { status: DOWNLOAD_STATUS[running.status], progress: running.activeAttempt?.progress ?? null }
-  if (entry.latest && entry.latest.status !== "completed") return { status: DOWNLOAD_STATUS[entry.latest.status], progress: undefined }
+  if (entry.latest && (entry.latest.status !== "completed" || filesMissing(entry.latest))) return { status: downloadStatus(entry.latest), progress: undefined }
   return { status: undefined, progress: undefined }
 }
 

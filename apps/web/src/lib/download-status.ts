@@ -9,6 +9,7 @@ import {
   CircleNotchIcon,
   ClockIcon,
   DownloadSimpleIcon,
+  FileXIcon,
   MagnifyingGlassIcon,
   ProhibitIcon,
   WarningCircleIcon,
@@ -20,6 +21,7 @@ import type {
   AttemptPhase,
   CandidateStatus,
   DownloadStatus,
+  DownloadSummary,
   EpisodeStatus,
 } from "@findr/types/downloads"
 
@@ -45,6 +47,20 @@ export const DOWNLOAD_STATUS: Record<DownloadStatus, StatusStyle> = {
   partial: { label: "Partial", icon: WarningCircleIcon, tone: "warn" },
   failed: { label: "Failed", icon: XCircleIcon, tone: "bad" },
   cancelled: { label: "Cancelled", icon: ProhibitIcon, tone: "muted" },
+}
+
+/** A finished download whose files have all since been deleted or moved off disk, so there is nothing to play. */
+export const FILES_MISSING: StatusStyle = { label: "Not on disk", icon: FileXIcon, tone: "warn" }
+
+/** Whether every file a finished download saved is gone. */
+export function filesMissing(download: DownloadSummary): boolean {
+  const saved = download.result?.files.length ?? 0
+  return saved > 0 && download.missingFiles >= saved
+}
+
+/** How a download reads in the library: its status, unless its files are gone. */
+export function downloadStatus(download: DownloadSummary): StatusStyle {
+  return filesMissing(download) ? FILES_MISSING : DOWNLOAD_STATUS[download.status]
 }
 
 export const EPISODE_STATUS: Record<EpisodeStatus, StatusStyle> = {

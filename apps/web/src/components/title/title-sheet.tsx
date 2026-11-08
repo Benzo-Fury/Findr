@@ -6,6 +6,7 @@ import {
   ArrowsClockwiseIcon,
   DotsThreeIcon,
   DownloadSimpleIcon,
+  FileXIcon,
   PlayIcon,
   StarIcon,
   TrashIcon,
@@ -13,7 +14,7 @@ import {
 } from "@phosphor-icons/react"
 import type { DownloadDetail, DownloadSummary } from "@findr/types/downloads"
 import { createDownload, deleteTitle, fetchDownload, fetchTMDBDetails, retryDownload } from "@/lib/api"
-import { ATTEMPT_PHASE, DOWNLOAD_STATUS, isActive } from "@/lib/download-status"
+import { ATTEMPT_PHASE, DOWNLOAD_STATUS, downloadStatus, filesMissing, isActive } from "@/lib/download-status"
 import { episodeCode, formatPercent, formatRuntime } from "@/lib/format"
 import { useLibrary, type LibraryEntry } from "@/lib/library"
 import { EASE_OUT, FADE, SPRING_SNAP, staggerDelay } from "@/lib/motion"
@@ -169,7 +170,7 @@ function TitleBody({ titleRef, onOpenTitle, onClose }: TitleBodyProps) {
             className="w-28 shrink-0 shadow-float ring-4 ring-surface md:w-36"
           />
           <div className="min-w-0 pb-1">
-            {current && <StatusLabel status={DOWNLOAD_STATUS[current.status]} variant="filled" className="mb-2" />}
+            {current && <StatusLabel status={downloadStatus(current)} variant="filled" className="mb-2" />}
             {title ? (
               <motion.h2
                 initial={{ opacity: 0, y: 8 }}
@@ -210,7 +211,7 @@ function TitleBody({ titleRef, onOpenTitle, onClose }: TitleBodyProps) {
             download={current}
             mediaType={titleRef.mediaType}
             onChanged={refresh}
-            onDownloadAgain={current.status === "completed" ? downloadAgain : undefined}
+            onDownloadAgain={current.status === "completed" && !filesMissing(current) ? downloadAgain : undefined}
             onViewProgress={() => navigate(`/downloads/${current.id}`)}
           />
         )}
@@ -336,6 +337,9 @@ function ActionPanel({ titleRef, title, details, current, season, onSeason, entr
   const isShow = titleRef.mediaType === "tv"
   const running = current ? isActive(current.status) : false
   const completed = current?.status === "completed"
+  // Files deleted or moved by hand since they were saved
+  const gone = current ? filesMissing(current) : false
+  const someGone = current !== undefined && current.missingFiles > 0 && !gone
 
   // Whether Play shows for this movie or season, which then needs nothing beneath it
   const playable =
@@ -399,7 +403,12 @@ function ActionPanel({ titleRef, title, details, current, season, onSeason, entr
                     Retry
                   </Button>
                 )}
-                {completed && <p className="text-[0.9375rem] text-ink-2">In your library.</p>}
+                {completed && gone && (
+                  <Button variant="signal" size="lg" icon={DownloadSimpleIcon} loading={working} onClick={start} disabled={!details}>
+                    Download again
+                  </Button>
+                )}
+                {completed && !gone && <p className="text-[0.9375rem] text-ink-2">In your library.</p>}
                 {current && (
                   <Button variant="ghost" iconEnd={ArrowRightIcon} onClick={() => onViewProgress(current.id)}>
                     Details
@@ -407,11 +416,25 @@ function ActionPanel({ titleRef, title, details, current, season, onSeason, entr
                 )}
               </div>
             )}
-            {current && !running && current.statusMessage && current.status !== "completed" && (
+            {current && !running && current.statusMessage && current.status !== "completed" && !gone && (
               <p className="mt-3 text-[0.875rem] leading-relaxed text-ink-2">{current.statusMessage}</p>
+            )}
+            {gone && !running && (
+              <MissingNote>
+                {isShow
+                  ? `This season's files were deleted or moved after Findr saved them, so there's nothing to play.`
+                  : `The file was deleted or moved after Findr saved it, so there's nothing to play.`}
+              </MissingNote>
             )}
           </motion.div>
         </AnimatePresence>
+      )}
+
+      {someGone && playable && current && (
+        <MissingNote>
+          {current.missingFiles === 1 ? "One episode" : `${current.missingFiles} episodes`} from this season {current.missingFiles === 1 ? "is" : "are"} no
+          longer on disk, so {current.missingFiles === 1 ? "it isn't" : "they aren't"} listed.
+        </MissingNote>
       )}
 
       {error && (
@@ -430,6 +453,16 @@ function ActionPanel({ titleRef, title, details, current, season, onSeason, entr
   )
 }
 
+/** Why there is less to play than was downloaded: files gone from disk since. */
+function MissingNote({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="mt-3 flex items-start gap-2 text-[0.875rem] leading-relaxed text-ink-2">
+      <FileXIcon aria-hidden weight="bold" className="mt-0.5 size-4 shrink-0 text-warn" />
+      <span>{children}</span>
+    </p>
+  )
+}
+
 interface SeasonPickerProps {
   seasons: SeasonInfo[]
   selected: number
@@ -445,7 +478,7 @@ function SeasonPicker({ seasons, selected, onSelect, entry }: SeasonPickerProps)
       <div role="radiogroup" aria-label="Season" className="scroll-x -mx-1 flex gap-1.5 px-1 pb-1">
         {seasons.map((season) => {
           const download = entry?.title.downloads.find((item) => item.season === season.number)
-          const status = download ? DOWNLOAD_STATUS[download.status] : null
+          const status = download ? downloadStatus(download) : null
           const active = season.number === selected
           const StatusIcon = status?.icon
           return (
