@@ -38,6 +38,7 @@ const EXPECTED: Record<string, Access> = {
   "/api/playback/cast": "user",
   "/api/playback/cast/:ticket/:file": "public",
   "/api/playback/casts": "user",
+  "/api/playback/credits": "user",
   "/api/playback/library": "user",
   "/api/playback/played": "user",
   "/api/playback/prefs": "user",

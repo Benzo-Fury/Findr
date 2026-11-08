@@ -10,12 +10,29 @@
  *
  * A renderer picked to cast to before anything plays shows Findr's splash, a
  * still photo, until something is played on it or it is unpicked.
+ *
+ * Episodes chain on the server, so they carry on with no remote open: once
+ * the credits have rolled for `UP_NEXT_COUNTDOWN_MS` (or the episode ends,
+ * when its credits are unknown), Findr plays the next episode on disk, as
+ * the viewer's autoplay preference allows and until the "still watching"
+ * count says to wait for them.
  */
 
-import type { PlaybackItemKey, RendererCommand, RendererPlay, RendererRecord, RendererState, RendererStatus } from "@findr/types/playback";
+import {
+  type PlaybackItemKey,
+  type RendererCommand,
+  type RendererPlay,
+  type RendererRecord,
+  type RendererState,
+  type RendererStatus,
+  UP_NEXT_COUNTDOWN_MS,
+} from "@findr/types/playback";
+import { MediaItem } from "../../db/models/MediaItem";
+import { PlaybackPrefs } from "../../db/models/PlaybackPrefs";
 import SelfManagedSingleton from "../../other/SelfManagedSingleton";
 import BridgeHub from "../bridge/BridgeHub";
 import { CastAccess } from "../CastAccess";
+import CreditsLocator from "../credits/CreditsLocator";
 import PlaybackService, { PlaybackError } from "../PlaybackService";
 import { ProgressiveSession } from "../ProgressiveSession";
 import { WatchHistory } from "../WatchHistory";
@@ -64,6 +81,18 @@ interface Active {
    * replaces the resume point.
    */
   resumeAt: number | null;
+  /** Where its credits start, once looked up; null until then, or when they can't be found. */
+  creditsMs: number | null;
+  /** The episode on disk after this one, or null. */
+  next: PlaybackItemKey | null;
+  /** Whether the next episode starts on its own: the viewer's preference, unless the remote turned it off for this one. */
+  autoplay: boolean;
+  /** Episodes in a row that started on their own, ending with this one; any command from the remote resets it. */
+  chain: number;
+  /** The viewer's "still watching" limit on `chain`; 0 never asks. */
+  stillWatchingAfter: number;
+  /** Moving on to the next episode, so polls don't start it twice. */
+  advancing: boolean;
   timer: ReturnType<typeof setInterval>;
 }
 
@@ -96,6 +125,9 @@ const RESUME_TRIES = 3;
 
 /** A renderer stopped for this long is let go, ending its session. */
 const STOPPED_RELEASE_MS = 60_000;
+
+/** An episode that stops within this of its end, credits unknown, has finished, and the next may start. */
+const FINISHED_MARGIN_MS = 90_000;
 
 /** The splash as DLNA names it: a JPEG up to 4096 pixels, sent whole rather than streamed. */
 export const SPLASH_FEATURES = "DLNA.ORG_PN=JPEG_LRG;DLNA.ORG_OP=00;DLNA.ORG_FLAGS=00900000000000000000000000000000";
@@ -180,8 +212,12 @@ export default class DlnaController extends SelfManagedSingleton {
 
   // ---------- Playing ---------- //
 
-  /** Plays a movie or episode on a renderer, replacing whatever Findr had it playing. */
-  public async play(rendererId: string, request: RendererPlay, userId: string): Promise<RendererStatus> {
+  /**
+   * Plays a movie or episode on a renderer, replacing whatever Findr had it
+   * playing. `chain` counts the episodes before it that started on their
+   * own, for the "still watching" check; one asked for from the remote is 0.
+   */
+  public async play(rendererId: string, request: RendererPlay, userId: string, chain = 0): Promise<RendererStatus> {
     const renderer = this.renderers.get(rendererId);
     if (!renderer?.network.connected) throw new PlaybackError("renderer_not_found", 404);
     const base = renderer.network.mediaBase();
@@ -192,6 +228,8 @@ export default class DlnaController extends SelfManagedSingleton {
     const label = request.label || "Findr";
     const { session, url, offsetMs } = await this.start(renderer, request, userId, base, label);
     const startMs = session.positionMs;
+    const prefs = PlaybackPrefs.get(userId);
+    const next = MediaItem.nextAfter(request);
 
     const active: Active = {
       renderer,
@@ -214,11 +252,24 @@ export default class DlnaController extends SelfManagedSingleton {
       started: false,
       lastPolledMs: null,
       resumeAt: session.direct && startMs > 0 ? startMs : null,
+      creditsMs: null,
+      next: next ? { titleId: next.titleId, season: next.season, episode: next.episode } : null,
+      autoplay: prefs.autoplayNext,
+      chain,
+      stillWatchingAfter: prefs.stillWatchingAfter,
+      advancing: false,
       timer: setInterval(() => void this.poll(rendererId), POLL_MS),
     };
     active.timer.unref?.();
     this.active.set(rendererId, active);
     if (active.resumeAt !== null) void this.resumeOnceStarted(rendererId, active, active.resumeAt);
+
+    // The credits are found while it plays, long before they come
+    if (next) {
+      void CreditsLocator.getInstance()
+        .creditsOf(session.item)
+        .then((creditsMs) => (active.creditsMs = creditsMs));
+    }
     return this.status(rendererId, userId);
   }
 
@@ -233,6 +284,8 @@ export default class DlnaController extends SelfManagedSingleton {
     }
 
     if (active) active.busy = true;
+    // Someone at the remote is watching, so the "still watching" count starts again
+    if (active && command.action !== "volume" && command.action !== "mute") active.chain = 0;
     try {
       switch (command.action) {
         case "play":
@@ -264,6 +317,9 @@ export default class DlnaController extends SelfManagedSingleton {
           await renderer.setMuted(command.muted);
           if (active) active.muted = command.muted;
           break;
+        case "autoplay":
+          if (active) active.autoplay = command.enabled;
+          break;
       }
     } catch (error) {
       throw new PlaybackError("renderer_failed", 502, error instanceof Error ? error.message : String(error));
@@ -291,6 +347,10 @@ export default class DlnaController extends SelfManagedSingleton {
       mode: active ? (active.session.direct ? "direct" : active.session.plan.mode) : null,
       audioTracks: active?.session.item.audioTracks() ?? [],
       audioTrack: active ? active.session.item.audioTrackOf(active.session.plan.audioStream) : null,
+      creditsMs: active?.creditsMs ?? null,
+      next: active?.next ?? null,
+      autoplay: active ? this.autoplays(active) : false,
+      askStillWatching: active ? this.asksStillWatching(active) : false,
     };
   }
 
@@ -565,6 +625,10 @@ export default class DlnaController extends SelfManagedSingleton {
       active.session.touch();
       if (state === "paused" && previous === "playing") this.report(active, "pause");
       else if (Date.now() - active.lastReport >= REPORT_MS) this.report(active, "tick");
+
+      // "Up next" has counted down through the start of the credits
+      const countedDown = active.creditsMs !== null && active.positionMs >= active.creditsMs + UP_NEXT_COUNTDOWN_MS;
+      if (state === "playing" && active.started && countedDown && this.autoplays(active)) await this.advance(rendererId, active);
       return;
     }
 
@@ -573,12 +637,58 @@ export default class DlnaController extends SelfManagedSingleton {
       active.session.touch();
       return;
     }
+    // An episode that ran to its end (or into its credits) moves on to the next
+    const finished =
+      active.positionMs >= active.session.item.durationMs - FINISHED_MARGIN_MS || (active.creditsMs !== null && active.positionMs >= active.creditsMs);
+    if (active.started && finished && this.autoplays(active)) return this.advance(rendererId, active);
+
     if (active.stoppedAt === null) {
       active.stoppedAt = Date.now();
       this.report(active, "stop");
     }
     active.session.touch();
     if (Date.now() - active.stoppedAt > STOPPED_RELEASE_MS) await this.release(rendererId, false);
+  }
+
+  // ---------- Next episode ---------- //
+
+  /** Whether the next episode will start on its own. */
+  private autoplays(active: Active): boolean {
+    return active.next !== null && active.autoplay && !this.asksStillWatching(active);
+  }
+
+  /** Whether enough episodes have started on their own that the next waits for someone to ask. */
+  private asksStillWatching(active: Active): boolean {
+    return active.next !== null && active.stillWatchingAfter > 0 && active.chain >= active.stillWatchingAfter;
+  }
+
+  /**
+   * Marks the episode watched and plays the next on the same renderer, from
+   * the start, in the viewer's language. A next episode that won't start
+   * leaves the renderer as it was, for the remote to offer it by hand.
+   */
+  private async advance(rendererId: string, active: Active): Promise<void> {
+    const next = active.next;
+    if (active.advancing || !next) return;
+    active.advancing = true;
+    active.busy = true;
+
+    // Watched to the end, whatever of the credits played
+    active.positionMs = active.session.item.durationMs;
+    this.report(active, "stop");
+
+    // The TV's title names the new episode
+    const code = `S${String(next.season).padStart(2, "0")}E${String(next.episode).padStart(2, "0")}`;
+    const label = /S\d+E\d+$/i.test(active.label) ? active.label.replace(/S\d+E\d+$/i, code) : `${active.label} ${code}`;
+    console.info(`[Playback] ${active.renderer.name} finished ${active.label}; playing ${label}`);
+    try {
+      await this.play(rendererId, { ...next, startMs: 0, audioTrack: null, label }, active.session.userId, active.chain + 1);
+    } catch (error) {
+      console.warn(`[Playback] ${active.renderer.name} didn't start ${label}: ${error instanceof Error ? error.message : String(error)}`);
+      active.autoplay = false;
+      active.advancing = false;
+      active.busy = false;
+    }
   }
 
   /** Stops driving a renderer and ends its session; `stop` also stops the renderer. */

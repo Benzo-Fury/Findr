@@ -22,7 +22,8 @@ import { TvRemote } from "@/components/playback/tv-remote"
  *
  * With a TV picked to cast to, the page becomes that TV's remote at once,
  * picking up from the saved position without asking, and the next episode
- * opens straight on the remote too. Picking a TV in the player makes it the
+ * opens straight on the remote too, whether picked there or started on the
+ * TV by the server once the credits rolled. Picking a TV in the player makes it the
  * cast target; "Watch here" clears it. `?tv=<id>` opens the remote of a TV
  * this user already has playing, as the Cast button links to.
  */
@@ -121,6 +122,14 @@ export function WatchPage() {
     [navigate, next],
   )
 
+  // A TV that moved on by itself: the next episode's remote rejoins it rather than sending it again
+  const followRenderer = tv?.renderer ?? null
+  const followNext = React.useCallback(() => {
+    if (!next || !followRenderer) return
+    playback.setCastTarget(followRenderer)
+    navigate(watchPath(next.key), { replace: true })
+  }, [navigate, next, followRenderer, playback])
+
   const title = entry?.card?.title ?? ""
   const subtitle = key.season !== null && key.episode !== null ? episodeCode(key.season, key.episode) : null
   const backdrop = tmdbImage(entry?.card?.backdropPath, "backdropLarge")
@@ -167,7 +176,12 @@ export function WatchPage() {
           setDecided({ id, tv: null })
           setStartMs(positionMs)
         }}
-        onPlayNext={() => playNext(false)}
+        onPlayNext={() => {
+          // The next episode stays on this TV, even when the remote was opened through `?tv=`
+          playback.setCastTarget(tv.renderer)
+          playNext(false)
+        }}
+        onFollowNext={followNext}
         onExit={exit}
       />
     )

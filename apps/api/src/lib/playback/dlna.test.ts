@@ -166,6 +166,7 @@ describe.skipIf(!hasFfmpeg)("DlnaController", () => {
   let server: ReturnType<typeof Bun.serve>;
   let root: string;
   let movie: PlaybackItemKey;
+  let episodes: PlaybackItemKey[];
   let rendererId: string;
   const controller = () => DlnaController.getInstance();
 
@@ -209,6 +210,17 @@ describe.skipIf(!hasFfmpeg)("DlnaController", () => {
     const title = Title.findOrCreate(8966, "movie");
     MediaItem.upsert({ titleId: title.id, downloadId: null, season: null, episode: null, path, size: 4096, mtime: 1, probe, keyframes: Float64Array.from([0]) });
     movie = { titleId: title.id, season: null, episode: null };
+
+    // Three episodes of a show: the first's credits start a second in, the others' are known to be unknown,
+    // and the second is a minute long, so stopping anywhere in it counts as finishing it
+    const show = Title.findOrCreate(1396, "tv");
+    for (const [episode, durationMs, creditsMs] of [[1, 7_200_000, 1000], [2, 60_000, null], [3, 7_200_000, null]] as const) {
+      const file = join(root, `e${episode}.mkv`);
+      await Bun.write(file, new Uint8Array(4096));
+      const item = MediaItem.upsert({ titleId: show.id, downloadId: null, season: 1, episode, path: file, size: 4096, mtime: 1, probe: { ...probe, durationMs }, keyframes: Float64Array.from([0]) });
+      MediaItem.setCredits(item.id, creditsMs, creditsMs === null ? "none" : "theintrodb", null);
+    }
+    episodes = [1, 2, 3].map((episode) => ({ titleId: show.id, season: 1, episode }));
   });
 
   beforeEach(async () => {
@@ -326,5 +338,49 @@ describe.skipIf(!hasFfmpeg)("DlnaController", () => {
     setSystemTime(new Date(Date.now() + 61_000));
     await until(() => controller().castsOf(viewer).length === 0);
     expect(PlaybackService.getInstance().get(sessionId)).toBeNull();
+  }, 30_000);
+
+  // ---------- The next episode ---------- //
+
+  const playEpisode = (index: number, chain = 0) =>
+    controller().play(rendererId, { ...(episodes[index] as PlaybackItemKey), startMs: 0, audioTrack: null, label: `Breaking Bad S01E0${index + 1}` }, viewer, chain);
+
+  test("plays the next episode on its own once the credits have counted down", async () => {
+    const first = await playEpisode(0);
+    expect(first.next).toEqual(episodes[1] as PlaybackItemKey);
+    expect(first.autoplay).toBe(true);
+    await until(() => status().creditsMs === 1000);
+
+    // Ten seconds into the credits (a second in), the TV is sent the next episode, titled as such
+    await until(() => tv.loads.length === 2, 20_000);
+    expect(status().item).toEqual(episodes[1] as PlaybackItemKey);
+    expect(status().label).toBe("Breaking Bad S01E02");
+    expect(PlaybackProgress.find(viewer, episodes[0] as PlaybackItemKey)?.played).toBe(true);
+  }, 30_000);
+
+  test("moves on when an episode with unknown credits stops at its end", async () => {
+    await playEpisode(1);
+    await until(() => status().state === "playing");
+    tv.state = "STOPPED";
+    await until(() => tv.loads.length === 2);
+    expect(status().item).toEqual(episodes[2] as PlaybackItemKey);
+    // The last episode on disk has nothing after it
+    expect(status().next).toBeNull();
+    expect(status().autoplay).toBe(false);
+  }, 30_000);
+
+  test("waits when the remote turns autoplay off, or after enough episodes in a row", async () => {
+    await playEpisode(0);
+    await controller().command(rendererId, { action: "autoplay", enabled: false }, viewer);
+    expect(status().autoplay).toBe(false);
+    expect(status().askStillWatching).toBe(false);
+
+    // The third in a row asks first, until someone at the remote does anything
+    await playEpisode(0, 3);
+    expect(status().askStillWatching).toBe(true);
+    expect(status().autoplay).toBe(false);
+    await controller().command(rendererId, { action: "play" }, viewer);
+    expect(status().askStillWatching).toBe(false);
+    expect(status().autoplay).toBe(true);
   }, 30_000);
 });

@@ -14,13 +14,14 @@ import {
   TelevisionSimpleIcon,
   TranslateIcon,
 } from "@phosphor-icons/react"
-import type { PlaybackItemKey, RendererCommand, RendererRecord, RendererStatus } from "@findr/types/playback"
+import { type PlaybackItemKey, type RendererCommand, type RendererRecord, type RendererStatus, UP_NEXT_COUNTDOWN_MS } from "@findr/types/playback"
 import { commandRenderer, fetchRendererStatus, playOnRenderer } from "@/lib/api"
 import { EASE_OUT } from "@/lib/motion"
 import { audioTrackDetail, audioTrackLabel, castActive, formatClock, sameItem } from "@/lib/playback"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { NextEpisodeButton } from "@/components/playback/next-episode-button"
 import { PlayerMessage } from "@/components/playback/player"
 import { Panel, PanelDetail, PanelGroup, PanelOption } from "@/components/playback/player-panel"
 
@@ -32,6 +33,12 @@ import { Panel, PanelDetail, PanelGroup, PanelOption } from "@/components/playba
  * playing this for the same user, it rejoins it rather than starting again,
  * unless told to restart. A file with several audio tracks can be switched
  * from here, which sends the TV the video again from where it is.
+ *
+ * Once an episode's credits start, Next Episode shows the server's countdown
+ * to the next episode (Findr starts it on the TV even with no remote open).
+ * Seeking within the credits or pressing Escape turns that off for this
+ * episode, leaving the button. When the TV moves on, the remote follows it to
+ * the next episode.
  *
  * Keyboard: Space or K plays and pauses, the left and right arrows (or J and
  * L) skip back and forward, the up and down arrows change the TV's volume,
@@ -52,7 +59,10 @@ interface TvRemoteProps {
   backdrop: string | null
   next: { key: PlaybackItemKey; label: string } | null
   onWatchHere: (positionMs: number) => void
+  /** Sends the next episode to the TV from the start. */
   onPlayNext: () => void
+  /** The TV moved on to the next episode on its own; open its remote, which rejoins it. */
+  onFollowNext: () => void
   onExit: () => void
 }
 
@@ -139,6 +149,22 @@ export function TvRemote(props: TvRemoteProps) {
   const stopped =
     status !== null && (!ours || status.state === "unreachable" || (started.current && (status.state === "stopped" || status.state === "idle")))
 
+  // Findr started the next episode on its own: follow the TV there
+  const movedOn = status !== null && status.mine && props.next !== null && sameItem(status.item, props.next.key)
+  const { onFollowNext } = props
+  React.useEffect(() => {
+    if (movedOn) onFollowNext()
+  }, [movedOn, onFollowNext])
+
+  // Next Episode once the credits roll, counting down while the server will start it
+  const inCredits = ours && !stopped && status?.creditsMs != null && position >= status.creditsMs
+  const counting = inCredits && status !== null && status.autoplay && !status.askStillWatching
+
+  /** Lets the credits play out, without the next episode starting on its own. */
+  function stayForCredits() {
+    if (counting) void send({ action: "autoplay", enabled: false })
+  }
+
   /** Sends the video to the TV again, from the top once it had finished. */
   function playAgain() {
     if (finished) lastPosition.current = 0
@@ -172,6 +198,8 @@ export function TvRemote(props: TvRemoteProps) {
   function seekTo(positionMs: number) {
     const target = Math.min(Math.max(positionMs, 0), Math.max(durationMs - 1000, 0))
     lastPosition.current = target
+    // Seeking within the credits means staying for them
+    if (status?.creditsMs != null && position >= status.creditsMs) stayForCredits()
     void send({ action: "seek", positionMs: target })
   }
 
@@ -183,7 +211,8 @@ export function TvRemote(props: TvRemoteProps) {
     const key = event.key.length === 1 ? event.key.toLowerCase() : event.key
     const volume = status?.volume ?? null
     let handled = true
-    if (key === "Escape") props.onExit()
+    if (key === "Escape" && counting) stayForCredits()
+    else if (key === "Escape") props.onExit()
     else if (!ready) handled = false
     else if (key === " " || key === "k") {
       if (!pending) void send({ action: playing ? "pause" : "play" })
@@ -259,6 +288,17 @@ export function TvRemote(props: TvRemoteProps) {
           </button>
         )}
       </div>
+
+      <AnimatePresence>
+        {inCredits && props.next && status && (
+          <NextEpisodeButton
+            code={props.next.label}
+            onClick={props.onPlayNext}
+            progress={counting ? (position - (status.creditsMs ?? 0)) / UP_NEXT_COUNTDOWN_MS : undefined}
+            className="absolute right-4 top-20 md:right-6"
+          />
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {audioOpen && status && (

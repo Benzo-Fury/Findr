@@ -182,4 +182,13 @@ export const migrations: Migration[] = [
       )`,
     ],
   },
+  {
+    name: "episode credits",
+    statements: [
+      // Where each episode's end credits start, how that was found, and when to look again (null: never)
+      "ALTER TABLE media_items ADD COLUMN credits_ms INTEGER",
+      "ALTER TABLE media_items ADD COLUMN credits_source TEXT",
+      "ALTER TABLE media_items ADD COLUMN credits_retry_at INTEGER",
+    ],
+  },
 ];

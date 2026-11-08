@@ -240,6 +240,20 @@
   }
 }
 
+/* The Next Episode countdown: an amber fill sweeping through the button, over --countdown */
+.next-episode-countdown {
+  animation: next-episode-sweep var(--countdown) linear forwards;
+}
+
+@keyframes next-episode-sweep {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -259,6 +273,11 @@
 
   .skeleton {
     animation: none;
+  }
+
+  /* A timer, not decoration: the Next Episode countdown keeps its length */
+  .next-episode-countdown {
+    animation-duration: var(--countdown) !important;
   }
 }
 

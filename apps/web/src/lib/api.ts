@@ -24,6 +24,8 @@ import type {
   CreateCastUrl,
   CreatedCastBridge,
   CreateSession,
+  CreditsQuery,
+  CreditsRecord,
   EncoderTestResult,
   MarkPlayed,
   NowPlayingRecord,
@@ -361,6 +363,12 @@ export function endPlaybackSession(id: string): Promise<void> {
  */
 export function reportPlaybackProgress(body: ReportProgress, keepalive = false): Promise<void> {
   return send("/api/playback/progress", { ...json(body), keepalive })
+}
+
+/** Where an episode's end credits start; the first ask may take several seconds. */
+export function fetchCredits(key: CreditsQuery, init?: RequestInit): Promise<CreditsRecord> {
+  const query = new URLSearchParams({ titleId: key.titleId, season: String(key.season), episode: String(key.episode) })
+  return request(`/api/playback/credits?${query}`, init)
 }
 
 /** Marks a movie or episode played or unplayed. */

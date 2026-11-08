@@ -1,13 +1,13 @@
 import * as React from "react"
 import { AnimatePresence, motion } from "motion/react"
-import { ArrowLeftIcon, ArrowsClockwiseIcon, PlayIcon, SkipForwardIcon, TelevisionSimpleIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react"
+import { ArrowLeftIcon, ArrowsClockwiseIcon, SkipForwardIcon, TelevisionSimpleIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react"
 import { Container, Hotkey } from "@videojs/react"
 import { GoogleCast } from "@videojs/react/extensions/google-cast"
 import { AirPlayEnterIcon, CastEnterIcon, CastExitIcon, SpeechIcon, SwitchesIcon } from "@videojs/react/icons"
 import { HlsJsVideo } from "@videojs/react/media/hlsjs-video"
 import { VideoPlayer, usePlayer } from "@videojs/react/video"
 import type { PlaybackItemKey, PlaybackPrefs, PlaybackSessionRecord, RendererRecord } from "@findr/types/playback"
-import { ApiError, createCastUrl, createPlaybackSession, endPlaybackSession, reportPlaybackProgress, updatePlaybackPrefs } from "@/lib/api"
+import { ApiError, createCastUrl, createPlaybackSession, endPlaybackSession, fetchCredits, reportPlaybackProgress, updatePlaybackPrefs } from "@/lib/api"
 import { deviceProfile } from "@/lib/device-profile"
 import { googleCastConnected, loadOnGoogleCast } from "@/lib/google-cast"
 import { FADE } from "@/lib/motion"
@@ -16,6 +16,7 @@ import { rendererDetail, useRenderers } from "@/lib/renderers"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { NextEpisodeButton } from "@/components/playback/next-episode-button"
 import { BarMenu, CheckItem, MenuLabel, MenuNote, MenuRow, Submenu } from "@/components/playback/player-menu"
 import { Notice } from "@/components/playback/player-panel"
 import { CaptionsSubmenu } from "@/components/videojs/ui/captions-submenu"
@@ -29,6 +30,11 @@ import { VideoSkin } from "@/components/videojs/video/skin"
  * a fresh session at the same moment, since the server packages one stream
  * per session, and swaps it into the same video element once it is ready,
  * so playback carries on (on AirPlay too) rather than starting over.
+ *
+ * Next episode: once the credits start (where the server says they do), a
+ * Next Episode button counts down and moves on. Pausing holds it; seeking
+ * within the credits or pressing Escape stops it, leaving the button. Credits
+ * that can't be found leave only the button at the end.
  *
  * The skin is Video.js's default video skin, installed as source under
  * `components/videojs/` so Findr can fill its settings menu (quality and
@@ -57,7 +63,7 @@ interface PlayerProps {
   posterUrl: string | null
   prefs: PlaybackPrefs
   onPrefs: (prefs: PlaybackPrefs) => void
-  /** The next episode on disk, offered when this one ends. */
+  /** The next episode on disk, offered when the credits start and when this one ends. */
   next: { key: PlaybackItemKey; label: string } | null
   /** How many episodes in a row have started on their own, for the "still watching" check. */
   autoplayed: number
@@ -115,8 +121,8 @@ const QUALITY_KEY = "findr:playback-quality"
 /** How often the position is reported while the player is open. */
 const HEARTBEAT_MS = 10_000
 
-/** Seconds before the next episode starts on its own. */
-const COUNTDOWN_SECONDS = 10
+/** A jump in position bigger than this is a seek, not playback. */
+const SEEK_JUMP_SECONDS = 3
 
 /** Why the server re-encoded, in plain words. */
 const REASONS: Record<string, string> = {
@@ -445,7 +451,7 @@ function Session(props: SessionProps) {
   React.useEffect(() => {
     if (positionRef.current > 0) report(paused ? "pause" : "tick")
   }, [paused, report, positionRef])
-  // Reaching the end marks it watched but keeps the session, so Watch again still plays
+  // Reaching the end marks it watched but keeps the session, so playing it again still works
   React.useEffect(() => {
     if (ended) {
       positionRef.current = session.durationMs
@@ -453,7 +459,44 @@ function Session(props: SessionProps) {
     }
   }, [ended, report, positionRef, session.durationMs])
 
+  // The credits, where Next Episode shows and counts down; seeking back before them resets it
+  const creditsMs = useCredits(item, props.next !== null)
+  const inCredits = creditsMs !== null && !ended && currentTime * 1000 >= creditsMs
+  const offerNext = props.next !== null && (inCredits || ended)
+  const [stayed, setStayed] = React.useState(false)
+  React.useEffect(() => {
+    if (!inCredits && !ended) setStayed(false)
+  }, [inCredits, ended])
+
+  // Seeking within the credits, or Escape, means staying for them: the countdown stops, the button stays
+  const lastTime = React.useRef(currentTime)
+  React.useEffect(() => {
+    const fromCredits = creditsMs !== null && lastTime.current * 1000 >= creditsMs
+    if (inCredits && fromCredits && Math.abs(currentTime - lastTime.current) > SEEK_JUMP_SECONDS) setStayed(true)
+    lastTime.current = currentTime
+  }, [currentTime, inCredits, creditsMs])
+  React.useEffect(() => {
+    if (!offerNext || stayed) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setStayed(true)
+    }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [offerNext, stayed])
+
+  // Moving on counts this episode as watched to the end, whatever of the credits played
+  const { onPlayNext } = props
+  const playNext = React.useCallback(
+    (automatic: boolean) => {
+      positionRef.current = session.durationMs
+      report("stop", true)
+      onPlayNext(automatic)
+    },
+    [onPlayNext, positionRef, report, session.durationMs],
+  )
+
   const chromeVisible = controlsVisible || paused
+  const askStillWatching = props.prefs.stillWatchingAfter > 0 && props.autoplayed >= props.prefs.stillWatchingAfter
 
   return (
     <>
@@ -481,15 +524,15 @@ function Session(props: SessionProps) {
         </div>
       </motion.div>
 
+      {/* One button through the credits and the end, so its countdown carries on across both */}
       <AnimatePresence>
-        {ended && props.next && (
-          <UpNext
-            label={props.next.label}
-            automatic={props.prefs.autoplayNext}
-            askStillWatching={props.prefs.stillWatchingAfter > 0 && props.autoplayed >= props.prefs.stillWatchingAfter}
-            onPlay={(automatic) => props.onPlayNext(automatic)}
-            onReplay={() => void store.seek(0).then(() => store.play())}
-            onExit={props.onExit}
+        {offerNext && props.next && (
+          <NextEpisodeButton
+            key="next"
+            code={props.next.label}
+            onClick={() => playNext(false)}
+            countdown={props.prefs.autoplayNext && !askStillWatching && !stayed ? { held: paused && !ended, onDone: () => playNext(true) } : undefined}
+            className="absolute bottom-24 right-4 md:right-6"
           />
         )}
       </AnimatePresence>
@@ -627,69 +670,24 @@ function TvList({ onPick }: { onPick: (renderer: RendererRecord) => void }) {
   )
 }
 
-interface UpNextProps {
-  label: string
-  /** Whether to count down and start on its own. */
-  automatic: boolean
-  /** Ask before carrying on, after enough episodes in a row. */
-  askStillWatching: boolean
-  onPlay: (automatic: boolean) => void
-  onReplay: () => void
-  onExit: () => void
-}
-
-/** Offered when an episode ends: the next one, counting down unless asked to wait. */
-function UpNext({ label, automatic, askStillWatching, onPlay, onReplay, onExit }: UpNextProps) {
-  const counting = automatic && !askStillWatching
-  const [left, setLeft] = React.useState(COUNTDOWN_SECONDS)
+/**
+ * Where an episode's credits start, asked once it plays when there is a next
+ * episode to offer; null while unknown.
+ */
+function useCredits(item: PlaybackItemKey, wanted: boolean): number | null {
+  const [creditsMs, setCreditsMs] = React.useState<number | null>(null)
+  const { titleId, season, episode } = item
 
   React.useEffect(() => {
-    if (!counting) return
-    if (left <= 0) {
-      onPlay(true)
-      return
-    }
-    const timer = setTimeout(() => setLeft((current) => current - 1), 1000)
-    return () => clearTimeout(timer)
-  }, [counting, left, onPlay])
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 12 }}
-      transition={FADE}
-      className="absolute bottom-24 right-4 w-[min(22rem,calc(100vw-2rem))] rounded-panel bg-[oklch(0.2_0.012_265/0.94)] p-5 text-surface shadow-float backdrop-blur-xl md:right-6"
-    >
-      {askStillWatching ? (
-        <>
-          <p className="heading text-xl">Still watching?</p>
-          <p className="mt-1 text-[0.875rem] text-surface/70">Next is {label}.</p>
-          <div className="mt-4 flex gap-2">
-            <Button variant="signal" icon={PlayIcon} onClick={() => onPlay(false)}>
-              Keep watching
-            </Button>
-            <Button variant="ghost" className="text-surface/80 hover:bg-surface/10 hover:text-surface" onClick={onExit}>
-              Stop
-            </Button>
-          </div>
-        </>
-      ) : (
-        <>
-          <p className="text-micro font-semibold text-surface/55">Up next</p>
-          <p className="heading mt-0.5 text-xl">{label}</p>
-          <div className="mt-4 flex gap-2">
-            <Button variant="signal" icon={PlayIcon} onClick={() => onPlay(false)}>
-              {counting ? `Play in ${left}` : "Play"}
-            </Button>
-            <Button variant="ghost" className="text-surface/80 hover:bg-surface/10 hover:text-surface" onClick={onReplay}>
-              Watch again
-            </Button>
-          </div>
-        </>
-      )}
-    </motion.div>
-  )
+    setCreditsMs(null)
+    if (!wanted || season === null || episode === null) return
+    const controller = new AbortController()
+    fetchCredits({ titleId, season, episode }, { signal: controller.signal })
+      .then((record) => setCreditsMs(record.creditsMs))
+      .catch(() => {})
+    return () => controller.abort()
+  }, [titleId, season, episode, wanted])
+  return creditsMs
 }
 
 interface PlayerMessageProps {

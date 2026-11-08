@@ -26,7 +26,16 @@ interface MediaItemRow {
   probe: string;
   keyframes: Uint8Array;
   indexed_at: number;
+  credits_ms: number | null;
+  credits_source: CreditsSource | null;
+  credits_retry_at: number | null;
 }
+
+/**
+ * How an episode's credits were found: TheIntroDB, matching its ending's
+ * audio against another episode's, a run of black frames, or not at all.
+ */
+export type CreditsSource = "theintrodb" | "fingerprint" | "blackframe" | "none";
 
 /** What the indexer records about a file. */
 export interface MediaItemInput {
@@ -64,6 +73,12 @@ export class MediaItem extends Model {
   public readonly probe: ProbeInfo;
   public readonly keyframes: Float64Array;
   public readonly indexedAt: number;
+  /** Where the end credits start, in milliseconds, when found. */
+  public readonly creditsMs: number | null;
+  /** How the credits were looked for; null until they have been. */
+  public readonly creditsSource: CreditsSource | null;
+  /** When to look for the credits again, as a better source may have them by then; null never. */
+  public readonly creditsRetryAt: number | null;
 
   private constructor(row: MediaItemRow) {
     super();
@@ -82,6 +97,9 @@ export class MediaItem extends Model {
     const bytes = new Uint8Array(row.keyframes);
     this.keyframes = new Float64Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / Float64Array.BYTES_PER_ELEMENT);
     this.indexedAt = row.indexed_at;
+    this.creditsMs = row.credits_ms;
+    this.creditsSource = row.credits_source;
+    this.creditsRetryAt = row.credits_retry_at;
   }
 
   // ---------- Queries ---------- //
@@ -106,6 +124,37 @@ export class MediaItem extends Model {
       )
       .get({ titleId: key.titleId, season: key.season, episode: key.episode });
     return row ? new MediaItem(row) : null;
+  }
+
+  /**
+   * The episodes of a show on disk, in season and episode order, the newest
+   * file of each. Specials (season 0) come first, as the web app orders them.
+   */
+  public static episodesOf(titleId: string): MediaItem[] {
+    const rows = this.db
+      .query<MediaItemRow, { titleId: string }>(
+        `SELECT * FROM media_items
+         WHERE title_id = $titleId AND season IS NOT NULL AND episode IS NOT NULL
+         ORDER BY season, episode, indexed_at DESC`,
+      )
+      .all({ titleId });
+    const seen = new Set<string>();
+    return rows
+      .filter((row) => {
+        const key = `${row.season}:${row.episode}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map((row) => new MediaItem(row));
+  }
+
+  /** The episode on disk after this one, or null for a movie or the last episode. */
+  public static nextAfter(key: PlaybackItemKey): MediaItem | null {
+    if (key.season === null || key.episode === null) return null;
+    const episodes = this.episodesOf(key.titleId);
+    const index = episodes.findIndex((item) => item.season === key.season && item.episode === key.episode);
+    return index >= 0 ? (episodes[index + 1] ?? null) : null;
   }
 
   /** Every item with its title's TMDB identity, in title, season and episode order. */
@@ -138,7 +187,8 @@ export class MediaItem extends Model {
            title_id = excluded.title_id, download_id = excluded.download_id, season = excluded.season,
            episode = excluded.episode, size = excluded.size, mtime = excluded.mtime,
            duration_ms = excluded.duration_ms, probe = excluded.probe, keyframes = excluded.keyframes,
-           indexed_at = excluded.indexed_at`,
+           indexed_at = excluded.indexed_at,
+           credits_ms = NULL, credits_source = NULL, credits_retry_at = NULL`,
       )
       .run({
         id: this.newId(),
@@ -158,6 +208,13 @@ export class MediaItem extends Model {
     const item = this.findByPath(input.path);
     if (!item) throw new Error(`Media item ${input.path} vanished after insert`);
     return item;
+  }
+
+  /** Records where an item's credits start (null: not found), how, and when to look again. */
+  public static setCredits(id: string, creditsMs: number | null, source: CreditsSource, retryAt: number | null): void {
+    this.db
+      .query("UPDATE media_items SET credits_ms = $creditsMs, credits_source = $source, credits_retry_at = $retryAt WHERE id = $id")
+      .run({ id, creditsMs, source, retryAt });
   }
 
   /** Forgets a file, such as one that is no longer on disk. */

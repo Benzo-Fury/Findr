@@ -239,6 +239,25 @@ export interface PlaybackLibrary {
   nextUp: PlaybackItemKey[];
 }
 
+// ---------- Credits ---------- //
+
+/** How long "Up next" counts down from the start of the credits before the next episode plays. */
+export const UP_NEXT_COUNTDOWN_MS = 10_000;
+
+/** `GET /api/playback/credits`: one episode, as query values. */
+export const CreditsQuerySchema = z.object({
+  titleId: z.string().min(1),
+  season: z.coerce.number().int().nonnegative(),
+  episode: z.coerce.number().int().nonnegative(),
+});
+export type CreditsQuery = z.infer<typeof CreditsQuerySchema>;
+
+/** Where an episode's end credits start. */
+export interface CreditsRecord {
+  /** Milliseconds from the start of the file, or null when Findr couldn't tell. */
+  creditsMs: number | null;
+}
+
 // ---------- Preferences ---------- //
 
 /** Per-user playback preferences. */
@@ -302,6 +321,8 @@ export const RendererCommandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("seek"), positionMs: z.number().int().nonnegative() }),
   z.object({ action: z.literal("volume"), volume: z.number().int().min(0).max(100) }),
   z.object({ action: z.literal("mute"), muted: z.boolean() }),
+  /** Whether Findr starts the next episode on its own once this one's credits roll. */
+  z.object({ action: z.literal("autoplay"), enabled: z.boolean() }),
 ]);
 export type RendererCommand = z.infer<typeof RendererCommandSchema>;
 
@@ -324,6 +345,17 @@ export interface RendererStatus {
   audioTracks: AudioTrack[];
   /** Index into `audioTracks` of the one it plays, or null while it plays nothing of ours. */
   audioTrack: number | null;
+  /** Where the credits of what it plays start, once known; null when unknown. */
+  creditsMs: number | null;
+  /** The episode on disk after the one it plays, or null. */
+  next: PlaybackItemKey | null;
+  /**
+   * Whether Findr starts `next` on its own: `UP_NEXT_COUNTDOWN_MS` into the
+   * credits, or when the episode ends if the credits are unknown.
+   */
+  autoplay: boolean;
+  /** Enough episodes have started on their own that Findr waits to be asked before the next. */
+  askStillWatching: boolean;
 }
 
 // ---------- Cast bridges ---------- //
