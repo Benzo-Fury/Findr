@@ -81,6 +81,7 @@ The same data is available at `GET /api/settings` and `PATCH /api/settings` (adm
 |---|---|
 | `prowlarrUrl` | Base URL of your [Prowlarr](https://prowlarr.com/) instance, e.g. `http://localhost:9696` (`http://prowlarr:9696` in the Docker stack). Required. |
 | `prowlarrApiKey` | Prowlarr API key (Prowlarr → Settings → General; the Docker stack reads it from Prowlarr's config, see `PROWLARR_CONFIG`). Required. Prowlarr's download links are saved with the key removed, and it is re-attached only when Findr fetches from this URL. |
+| `prowlarrTimeoutSeconds` | How long a search may wait for Prowlarr, 10–600 seconds (default `60`). Prowlarr answers only once its slowest indexer has, so one slow or stalled indexer can push every search past this. Prefer disabling that indexer in Prowlarr; raise this if your indexers are simply slow. |
 | `tmdbApiKey` | [TMDB](https://developer.themoviedb.org/) API key, for browsing, metadata, episode lists and naming. Required. |
 | `anthropicApiKey` | Enables the wrong-title filter (see below). Optional; without it the filter is skipped. |
 

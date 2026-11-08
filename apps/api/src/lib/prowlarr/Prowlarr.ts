@@ -290,12 +290,16 @@ export default class Prowlarr extends SelfManagedSingleton {
       url.searchParams.append("indexerIds", String(id));
     }
 
-    // Give up after the timeout, or as soon as the caller aborts
-    const timeout = AbortSignal.timeout(TIMEOUT_MS * 4);
+    // Give up after the configured timeout, or as soon as the caller aborts
+    const { prowlarrTimeoutSeconds } = SettingsStore.section("services");
+    const timeout = AbortSignal.timeout(prowlarrTimeoutSeconds * 1000);
     const res = await fetch(url, {
       headers: { "X-Api-Key": apiKey },
       signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
     }).catch((error: unknown) => {
+      if (timeout.aborted && !options.signal?.aborted) {
+        throw new ProwlarrError(`Prowlarr did not answer within ${prowlarrTimeoutSeconds}s (it waits for its slowest indexer)`);
+      }
       throw new ProwlarrError(`Prowlarr request failed: ${error}`);
     });
 

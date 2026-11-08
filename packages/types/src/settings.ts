@@ -126,6 +126,11 @@ export const ServicesSettingsSchema = z.object({
   /** Base URL of the Prowlarr instance searched for releases. */
   prowlarrUrl: serviceUrl.default(""),
   prowlarrApiKey: z.string().trim().default(""),
+  /**
+   * How long a Prowlarr search may take. Prowlarr answers only once its
+   * slowest indexer has, so one slow indexer can hold back every search.
+   */
+  prowlarrTimeoutSeconds: z.number().int().min(10).max(600).default(60),
   /** Enables the wrong-title filter. */
   anthropicApiKey: z.string().trim().default(""),
 });

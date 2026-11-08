@@ -82,6 +82,7 @@ export const FIELDS: readonly FieldDef[] = [
   // Services
   field({ section: "services", key: "prowlarrUrl", label: "Prowlarr URL", help: "Where Findr searches for releases.", control: { kind: "text", placeholder: "http://localhost:9696", mono: true } }),
   field({ section: "services", key: "prowlarrApiKey", label: "Prowlarr API key", control: { kind: "secret" } }),
+  field({ section: "services", key: "prowlarrTimeoutSeconds", label: "Search timeout", help: "Prowlarr answers once its slowest indexer has. Raise this if searches time out.", keywords: "prowlarr indexer slow timeout", control: { kind: "number", min: 10, max: 600, step: 5, unit: "s" } }),
   field({ section: "services", key: "tmdbApiKey", label: "TMDB API key", help: "Used for browsing, artwork, episode lists and naming.", control: { kind: "secret" } }),
   field({ section: "services", key: "anthropicApiKey", label: "Anthropic API key", help: "Optional. Turns on the wrong-title filter.", keywords: "claude", control: { kind: "secret" } }),
 
