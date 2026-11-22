@@ -195,6 +195,13 @@ export function SettingsPage() {
     return () => observer.disconnect()
   }, [visible, server])
 
+  // A link to a section (`/settings#playback`, from the playback problems banner) scrolls to it once the settings are in
+  const loaded = server !== null
+  React.useEffect(() => {
+    const id = window.location.hash.slice(1)
+    if (loaded && id) window.requestAnimationFrame(() => document.getElementById(`section-${id}`)?.scrollIntoView({ block: "start" }))
+  }, [loaded])
+
   function jump(id: string) {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
     document.getElementById(`section-${id}`)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" })

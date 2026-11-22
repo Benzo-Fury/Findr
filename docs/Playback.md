@@ -14,15 +14,21 @@ When playback starts, or is switched back on, Findr reconciles the index against
 
 ## How a file reaches a device
 
-The player sends what the device can decode (video and audio codecs, screen height, HDR). Findr then picks the cheapest way to send the file:
+The player sends what the device can decode: its video and audio codecs, its screen's height and whether the screen shows HDR. A browser also measures each video codec's decoder through Media Capabilities: the tallest picture it decodes smoothly, whether it takes 10-bit, and whether it decodes HDR10 and maps it down to an SDR screen itself. Findr judges a file by what the decoder takes rather than what the screen shows, so a 4K or HDR file that a 1080p or SDR screen's browser still decodes is sent as it is, and the browser scales or maps it down at no cost to the server. Firefox isn't trusted to map HDR down, since it shows HDR washed out. Nothing is copied deeper than 10-bit. Chromecasts can't measure themselves, so they are judged by the `chromecastProfile` setting; DLNA TVs by the formats they list, corrected by an admin (see [DLNA in detail](#casting)).
+
+Findr then picks the cheapest way to send the file:
 
 | Mode | When | Cost |
 |---|---|---|
 | Original stream | The device decodes the video and audio as they are. | Copying only. |
 | Converting audio | The video plays, but the audio doesn't (DTS and TrueHD, for example). Audio becomes stereo AAC. | Small. Always allowed. |
-| Converting video | The video codec, 10-bit H.264, a resolution above the screen, HDR on a non-HDR screen, or the bitrate limit rules out copying. Video becomes H.264. | High. Needs `playback.transcoding`, and counts toward `maxConcurrentTranscodes`. |
+| Converting video | The video codec, 10-bit video the decoder doesn't take (10-bit H.264 always), a picture taller than the decoder takes, HDR the device can't show, the bitrate limit, or a copy that already failed to decode on this device rules out copying. Video becomes H.264, sized to the screen. | High. Needs `playback.transcoding`, and counts toward `maxConcurrentTranscodes`. |
 
 The player's settings panel says which mode is in use and why.
+
+Measurements can be optimistic. When a browser fails to decode a copied stream, the player starts a new session from the same moment with the video converted, and remembers in that browser what failed (HDR, then 10-bit, then the picture size, then the codec), so the next file of the kind is converted from the start.
+
+For an HDR file on an SDR screen, the player's settings menu has **Convert HDR on the server**, saved per user. It has the server tone map HDR to SDR instead of the browser, for browsers whose own mapping looks dim or flat. It costs a transcode.
 
 Every mode is served as fragmented-MP4 HLS. Library files are Matroska, which Safari and iOS don't play, so copying into HLS is what lets every browser play them. Only the chosen video and audio streams are mapped; metadata, chapters and anything else in the file stay behind. Copied HEVC is tagged `hvc1`, which Apple's players require.
 
@@ -42,20 +48,39 @@ Media is served under `/api/playback/stream/<token>/`, where the token is signed
 
 ## Converting video
 
-Transcodes use x264 on the CPU unless `hardwareAcceleration` names a hardware encoder: VideoToolbox on a Mac, NVENC on NVIDIA, Quick Sync on Intel, VA-API on Linux with Intel or AMD graphics, AMF on AMD under Windows, or Rockchip's MPP. Only encoding moves to the hardware; decoding, scaling and tone mapping stay on the CPU, so every encoder behaves the same way. **Test encoder** on the Settings page converts a few seconds of a test picture with the saved choice and shows ffmpeg's complaint if it fails.
+Converting a 4K HDR film means decoding it, scaling it down, mapping HDR to SDR and encoding H.264. Findr runs as much of that as it can on the graphics hardware: VideoToolbox on a Mac, NVENC on NVIDIA, Quick Sync on Intel, VA-API on Linux with Intel or AMD graphics, AMF on AMD under Windows, or Rockchip's MPP. `hardwareAcceleration` is `auto` by default, which uses the first of these that works on the machine; naming one uses only that one, and `none` keeps everything on the CPU.
 
-The ffmpeg inside the executables and the Docker image has every one of these encoders built in. What it can't carry is the driver that runs the chip, which belongs to the machine:
+When playback starts, and whenever the playback settings change, Findr checks the hardware with ffmpeg in about a second: whether its encoder works, which video it decodes (H.264, HEVC, AV1 and VP9, 8- and 10-bit, each checked by bringing decoded frames back from the device), and whether it scales and tone maps there. **Test hardware** on the Settings page runs the check again and shows what it found, with ffmpeg's complaint for anything that didn't work.
+
+Each conversion then starts on the highest of four rungs the check allows for that file:
+
+| Rung | Decoding | Scaling | Tone mapping | Encoding |
+|---|---|---|---|---|
+| All on hardware | Hardware | Hardware | Hardware | Hardware |
+| Decoded on hardware | Hardware | Hardware where it can | CPU | Hardware |
+| Encoded on hardware | CPU | CPU | CPU | Hardware |
+| CPU | CPU | CPU | CPU | x264 |
+
+A conversion that fails before producing anything is started again one rung down from the same place, and that kind of conversion (the same video codec and bit depth, scaling and tone mapping) starts on the lower rung from then on, until the settings change or the hardware is tested again. Once a stream's first segment has gone to the player, it only steps down to rungs with the same encoder, so the player can carry on with the stream it has. A machine whose hardware doesn't work at all converts on the CPU rather than failing to play.
+
+The ffmpeg inside the executables and the Docker image has every one of these built in. What it can't carry is the driver that runs the chip, which belongs to the machine:
 
 - **VideoToolbox** - nothing to install; it's part of macOS.
 - **NVENC** - the NVIDIA driver. In Docker, the NVIDIA container runtime with the `video` capability.
 - **VA-API** (Intel or AMD on Linux) - libva and the VA-API driver for the graphics (`intel-media-va-driver` or `mesa-va-drivers` on Debian and Ubuntu). The Docker image includes them.
 - **Quick Sync** (Intel) - Intel's media driver and Quick Sync runtime (`intel-media-va-driver` and `libmfx-gen1.2`). The Docker image includes them on amd64.
 - **AMF** (AMD on Windows) - the AMD graphics driver.
-- **Rockchip MPP** - a board running Rockchip's own (BSP) kernel, 5.10 or 6.1, as most RK35xx board images do; mainline kernels lack the MPP driver. It's ready when `/dev/mpp_service`, `/dev/rga`, `/dev/dri` and `/dev/dma_heap` exist and Findr's user can open them. Nothing else needs installing. The RK3588 is the one to use for 4K; older chips encode H.264 at 1080p.
+- **Rockchip MPP** - a board running Rockchip's own (BSP) kernel, 5.10 or 6.1, as most RK35xx board images do; mainline kernels lack the MPP driver. It's ready when `/dev/mpp_service`, `/dev/rga`, `/dev/dri` and `/dev/dma_heap` exist and Findr's user can open them. MPP decodes, the RGA scales and MPP encodes; the RK3588 is the one to use for 4K, and older chips encode H.264 at 1080p. HDR is tone mapped on the RK3588's Mali GPU through OpenCL, which also needs `/dev/mali0` and Rockchip's Mali driver (libmali; the arm64 Docker image includes it), so the board converts HDR on the "all on hardware" rung; without them it does so on the "decoded on hardware" rung, tone mapping on the CPU. In Docker, the container also has to be allowed to read the device tree, or MPP can't tell which chip it runs on and won't decode: see [docker/README.md](../docker/README.md).
+
+Quick Sync on Linux decodes through VA-API on the same GPU and hands the frames to Quick Sync for scaling, tone mapping and encoding, so both use `vaapiDevice`. VA-API tone mapping works on Intel graphics only; AMD converts HDR on the "decoded on hardware" rung.
+
+The Mali GPU loads its firmware the first time anything uses it. Long after boot, memory can be too fragmented for that to work (the kernel log says `Failed to allocate 512 physical pages`), and HDR is then tone mapped on the CPU until the machine restarts. Findr checks the hardware as it starts, so started at boot it loads the firmware early.
+
+**Checks.** Under Settings → Playback, admins see how well this machine plays: everything that stops a conversion running as fully on the hardware as it could, worst first, each with what to do about it (often a few lines to add to `compose.yml`, ready to copy). They cover hardware turned off or failing, device files missing from a container or closed to Findr's user, Rockchip's hidden device tree, missing Rockchip and NVIDIA devices, formats the hardware doesn't decode (with how many library files they affect), scaling and tone mapping left on the CPU (and why: no GPU device, no OpenCL driver, or the Mali firmware failing to load), an ffmpeg without a fast or any CPU tone mapper, few cores, little memory, little room where conversions are written, NVIDIA's limit on encodes, conversions that fell back to a slower rung since the hardware was last tested, and library files whose audio is converted on every play. Anything that stops playback working as it should also shows as a banner on admins' Library page.
 
 In a container the devices have to be passed through; [docker/README.md](../docker/README.md) shows the setup.
 
-HDR video sent to a screen without HDR is tone mapped to SDR when `toneMapping` is on, using ffmpeg's `zscale` and `tonemap` filters. The ffmpeg built into the executables and the Docker image has them. Without `zscale`, Findr logs a warning at startup and converts HDR without tone mapping, which looks washed out.
+HDR video sent to a screen that can't show it is tone mapped to SDR (BT.2390) when `toneMapping` is on: on the hardware where it can, otherwise on the CPU with `tonemapx`, the SIMD tone mapper in the ffmpeg built into the executables and the Docker image, which is several times faster than zscale. An ffmpeg without `tonemapx` falls back to `zscale` and `tonemap`; one with neither converts HDR without tone mapping, which looks washed out, and Findr logs a warning at startup.
 
 ## Scrubbing thumbnails
 
@@ -67,7 +92,7 @@ With `casting` on, the player offers three ways to send what is playing to a TV.
 
 | | Receivers | Works from | How |
 |---|---|---|---|
-| Google Cast | Chromecast, Google TV, Android TV, most Sony, Hisense, TCL and Philips TVs | Chrome or Edge on a computer or Android | The Cast button in the control bar. The TV gets its own session, sized for it: H.264 (High, up to level 4.1, the oldest Chromecasts' limit) and AAC up to 1080p, converted when the file needs it. |
+| Google Cast | Chromecast, Google TV, Android TV, most Sony, Hisense, TCL and Philips TVs | Chrome or Edge on a computer or Android | The Cast button in the control bar. The TV gets its own session, sized for it by `chromecastProfile`: by default H.264 (High, up to level 4.1, the oldest Chromecasts' limit) and AAC up to 1080p; with the 4K models chosen, HEVC Main 10, 4K and HDR10 as well. Anything else is converted. |
 | AirPlay | Apple TV, and AirPlay 2 TVs from Samsung, LG, Sony and Vizio | Safari on a Mac, iPhone or iPad | The AirPlay button in the control bar. Safari plays the stream itself rather than through hls.js, so it can hand the same stream over. |
 | DLNA | Most other smart TVs, games consoles, Kodi | Any browser | The Cast button on the Library page, or the TV button at the top of the player, lists the TVs Findr finds on its own network and through its [bridges](#tvs-on-another-network). Findr drives the TV from the server; the page becomes its remote. |
 
@@ -83,7 +108,7 @@ With `casting` on, the player offers three ways to send what is playing to a TV.
 
 **Google Cast and HTTPS.** Google's default receiver runs on HTTPS. Most Cast devices play media from a plain `http://` address on the local network, but if a device shows an error as soon as you cast, set `castBaseUrl` to an HTTPS address for Findr, such as one through a reverse proxy. A Public URL is usually HTTPS already.
 
-**DLNA in detail.** Findr asks each TV which formats it accepts, and labels what it sends with the TV's own name for the format, so the stream's `protocolInfo` matches one the TV listed. A TV that lists Matroska gets the library file as it is, with byte ranges, when it can decode the streams in it and the chosen audio track is the file's default (a TV playing the file picks its track itself); any other gets an MPEG-TS that ffmpeg produces as the TV reads it, copying what the TV decodes and converting the rest. Some TVs list Matroska, fetch the file and then never play it, Sony's among them: if a file hasn't started within 15 seconds, or the TV reports an error, Findr sends the same thing again as MPEG-TS from where it was meant to start, and sends that TV MPEG-TS until Findr restarts. TVs list containers rather than codecs, so Findr assumes H.264 and AAC or MP3, and adds HEVC, AC-3, E-AC-3 and 4K only when the TV's list names them; many 4K TVs don't, and their HEVC files are then converted. Seeking a file goes to the TV; seeking a converted stream loads it again from the new position. Findr reads the TV's position every two seconds and saves progress as the browser does, counting a stream as started only once that position moves forward (as it opens a new item, a TV can still report the last one's position), lets the TV go a minute after it stops, and leaves out renderers that take only audio, such as speakers. Anyone signed in can cast; only the person who started something on a TV can pause, seek or stop it. Some TVs, Sony's among them, only answer the command to play once they have started the stream, so Findr waits up to 20 seconds and, if the TV still hasn't answered, keeps watching its state rather than giving up. The log says when a TV first fetches its stream; if a TV fails and that line never appears, the TV couldn't reach Findr's address (check `castBaseUrl`, or the bridge's `--media-url`, and the firewall in between).
+**DLNA in detail.** Findr asks each TV which formats it accepts, and labels what it sends with the TV's own name for the format, so the stream's `protocolInfo` matches one the TV listed. A TV that lists Matroska gets the library file as it is, with byte ranges, when it can decode the streams in it and the chosen audio track is the file's default (a TV playing the file picks its track itself); any other gets an MPEG-TS that ffmpeg produces as the TV reads it, copying what the TV decodes and converting the rest. Some TVs list Matroska, fetch the file and then never play it, Sony's among them: if a file hasn't started within 15 seconds, or the TV reports an error, Findr sends the same thing again as MPEG-TS from where it was meant to start, and sends that TV MPEG-TS until Findr restarts. TVs list containers rather than codecs, so Findr assumes H.264 and AAC or MP3, and adds HEVC (10-bit included), AC-3, E-AC-3 and 4K only when the TV's list names them; many 4K TVs don't, and no TV says whether it shows HDR. An admin can correct that on the TV's remote under **What this TV plays**, setting HEVC, 4K and HDR each to Automatic (what the TV lists), Yes or No; the choice is kept for that TV and applies from the next video sent to it. A TV that is sent copied video in MPEG-TS and doesn't start it within 15 seconds, or reports an error, is sent the same thing again converted, from where it was meant to start, and is taken not to play that kind of video (HDR, then 10-bit, then 4K, then HEVC) until Findr restarts. Seeking a file goes to the TV; seeking a converted stream loads it again from the new position. Findr reads the TV's position every two seconds and saves progress as the browser does, counting a stream as started only once that position moves forward (as it opens a new item, a TV can still report the last one's position), lets the TV go a minute after it stops, and leaves out renderers that take only audio, such as speakers. Anyone signed in can cast; only the person who started something on a TV can pause, seek or stop it. Some TVs, Sony's among them, only answer the command to play once they have started the stream, so Findr waits up to 20 seconds and, if the TV still hasn't answered, keeps watching its state rather than giving up. The log says when a TV first fetches its stream; if a TV fails and that line never appears, the TV couldn't reach Findr's address (check `castBaseUrl`, or the bridge's `--media-url`, and the firewall in between).
 
 ### TVs on another network
 
@@ -112,7 +137,7 @@ The server can ask a bridge for only two things: a search, and HTTP requests to 
 
 ## Now playing
 
-Admins see every session at the top of **Settings → Playback**: who is watching what, on which device, how far in, and how it is being sent (the original file or streams, audio converted, or video converted on the CPU or hardware), with a button that stops it. Stopping a DLNA session stops the TV too.
+Admins see every session at the top of **Settings → Playback**: who is watching what, on which device, how far in, and how it is being sent (the original file or streams, audio converted, or video converted, and on which rung: all on hardware, decoded and encoded on hardware, encoded on hardware, or on the CPU), with a button that stops it. Stopping a DLNA session stops the TV too.
 
 ## Watching
 

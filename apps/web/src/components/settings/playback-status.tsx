@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { ProgressBar } from "@/components/ui/progress-bar"
 import { Skeleton } from "@/components/ui/skeleton"
+import { PlaybackChecks } from "@/components/settings/playback-checks"
 
 /** How often the list refreshes while the page is open. */
 const POLL_MS = 5000
@@ -42,11 +43,13 @@ const MODES: Record<NowPlayingRecord["mode"], string> = {
 /**
  * The top of the Playback settings section: who is watching what right now,
  * on which device and how it is being sent, with a way to stop any of it;
- * and a test of the configured video encoder.
+ * a test of the configured video encoder; and what could play better here.
  */
 export function PlaybackStatusPanel() {
   const [sessions, setSessions] = React.useState<NowPlayingRecord[] | null>(null)
   const [error, setError] = React.useState<string | null>(null)
+  /** Bumped after each hardware test, so the checks read its answer. */
+  const [tested, setTested] = React.useState(0)
 
   const load = React.useCallback((signal?: AbortSignal) => {
     fetchNowPlaying({ signal })
@@ -93,7 +96,8 @@ export function PlaybackStatusPanel() {
           </ul>
         )}
       </div>
-      <EncoderTest />
+      <EncoderTest onTested={() => setTested((count) => count + 1)} />
+      <PlaybackChecks revision={tested} />
     </div>
   )
 }
@@ -171,7 +175,7 @@ function listOf(items: string[]): string {
 }
 
 /** Checks what the hardware does with the saved settings and says so. */
-function EncoderTest() {
+function EncoderTest({ onTested }: { onTested: () => void }) {
   const [result, setResult] = React.useState<EncoderTestResult | null>(null)
   const [running, setRunning] = React.useState(false)
 
@@ -183,6 +187,7 @@ function EncoderTest() {
       setResult({ ok: false, encoder: "", message: reason instanceof Error ? reason.message : "The test could not run", hardware: null })
     } finally {
       setRunning(false)
+      onTested()
     }
   }
 

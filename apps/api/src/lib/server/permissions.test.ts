@@ -28,6 +28,7 @@ const EXPECTED: Record<string, Access> = {
   "/api/downloads/:id/cancel": "user",
   "/api/downloads/:id/retry": "user",
   "/api/health": "public",
+  "/api/playback/admin/diagnostics": "admin",
   "/api/playback/admin/encoder-test": "admin",
   "/api/playback/admin/sessions": "admin",
   "/api/playback/admin/sessions/:id": "admin",

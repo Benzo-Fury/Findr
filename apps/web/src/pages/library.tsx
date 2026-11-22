@@ -37,6 +37,7 @@ import { Segmented } from "@/components/ui/segmented"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StatusLabel } from "@/components/ui/status-label"
 import { UpdateBanner } from "@/components/updates/update-banner"
+import { PlaybackProblemsBanner } from "@/components/playback/playback-problems-banner"
 import { ContinueWatchingRow } from "@/components/playback/continue-watching-row"
 
 /**
@@ -201,6 +202,7 @@ export function LibraryPage() {
       </PageHeader>
 
       <UpdateBanner updates={updates} dismissible className="mt-5" />
+      <PlaybackProblemsBanner className="mt-5" />
       <ActivityRibbon count={active.length} progress={active[0]?.activeAttempt?.progress} onOpen={() => navigate("/downloads")} />
       <ContinueWatchingRow className="mt-8" />
 
