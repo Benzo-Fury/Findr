@@ -41,6 +41,19 @@ services:
       # Torrent port (TCP and UDP); forward it on your router for better speeds
       - ${TORRENT_PORT:-6881}:${TORRENT_PORT:-6881}
       - ${TORRENT_PORT:-6881}:${TORRENT_PORT:-6881}/udp
+    # Hardware video: uncomment what this machine has (see README.md). Settings
+    # → Playback then lists anything still missing.
+    # devices:
+    #   - /dev/dri:/dev/dri                  # Intel or AMD graphics, and Rockchip
+    #   - /dev/dma_heap:/dev/dma_heap        # Rockchip
+    #   - /dev/mpp_service:/dev/mpp_service  # Rockchip
+    #   - /dev/rga:/dev/rga                  # Rockchip
+    #   - /dev/mali0:/dev/mali0              # Rockchip RK3588, HDR on the GPU
+    # group_add:
+    #   - "44"                               # the host's video (or render) group id
+    # security_opt:                          # Rockchip: lets its decoder read the device tree
+    #   - systempaths=unconfined
+    #   - apparmor=unconfined
     depends_on:
       - prowlarr
     restart: unless-stopped

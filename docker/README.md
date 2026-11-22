@@ -70,7 +70,23 @@ Using the `findr` binary or `bun run start`? Start only Prowlarr with `docker co
 - **Hardware encoding** - the image's ffmpeg has every hardware encoder, and the image includes the VA-API drivers for Intel and AMD graphics and Intel's Quick Sync runtime (amd64 only). Pass the devices through and add the container's user to the host's `render` group (`group_add: ["<render group id>"]`):
   - **Intel or AMD:** `devices: ["/dev/dri:/dev/dri"]`.
   - **NVIDIA:** the NVIDIA container runtime (`runtime: nvidia`, or a `deploy.resources.reservations.devices` entry for the GPU) with `NVIDIA_DRIVER_CAPABILITIES=compute,video,utility`.
-  - **Rockchip** (a board on Rockchip's own kernel): every one of `/dev/mpp_service`, `/dev/rga`, `/dev/dri` and `/dev/dma_heap` that exists, plus the host's `video` group.
+  - **Rockchip** (a board on Rockchip's own kernel): every one of `/dev/mpp_service`, `/dev/rga`, `/dev/dri`, `/dev/dma_heap` and `/dev/mali0` that exists, plus the host's `video` group. Docker hides the device tree from containers, and Rockchip's MPP needs it to know which chip it runs on, so also add `security_opt: [systempaths=unconfined, apparmor=unconfined]` (as Jellyfin does for Rockchip). `/dev/mali0` lets an RK3588 tone map HDR on its GPU, using the Mali driver the arm64 image carries:
+
+    ```yaml
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/dma_heap:/dev/dma_heap
+      - /dev/mpp_service:/dev/mpp_service
+      - /dev/rga:/dev/rga
+      - /dev/mali0:/dev/mali0
+    group_add:
+      - "44"    # the host's video group: getent group video
+    security_opt:
+      - systempaths=unconfined
+      - apparmor=unconfined
+    ```
+
+  Settings → Playback lists anything still missing once Findr is running.
 
   **Test encoder** under **Settings → Playback** confirms it works.
 - **On a VPN** - give Findr `network_mode: "service:gluetun"` instead of `ports:`, as in [docs/VPN.md](../docs/VPN.md#linux-a-network-namespace-or-docker-with-a-vpn-container), and set the killswitch's interface to the VPN container's (`tun0` or `wg0`).

@@ -1,6 +1,6 @@
 # Third-party software
 
-Findr itself is licensed under the Apache License 2.0. The standalone executables and the Docker image also carry a copy of **FFmpeg** (`ffmpeg` and `ffprobe`), which Findr runs as separate programs to clean downloads and play your library. FFmpeg is a separate work under its own licence, described below.
+Findr itself is licensed under the Apache License 2.0. The standalone executables and the Docker image also carry a copy of **FFmpeg** (`ffmpeg` and `ffprobe`), which Findr runs as separate programs to clean downloads and play your library, and the arm64 Docker image carries a GPU driver for Rockchip boards. Each is a separate work under its own licence, described below.
 
 ## FFmpeg
 
@@ -32,3 +32,11 @@ As the GPL requires, the corresponding source is available:
 - **FFmpeg 8.1.3:** <https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz>
 
 If any of these links stops working, open an issue on Findr's repository and the source will be provided.
+
+## Mali GPU driver (arm64 Docker image only)
+
+The arm64 Docker image also carries Rockchip's **libmali** for the Mali-G610 GPU, which lets an RK3588 board tone map HDR on its GPU through OpenCL. Findr doesn't link it; ffmpeg loads it through OpenCL only when it tone maps on a Rockchip board.
+
+- **Version:** libmali-valhall-g610-g24p0-gbm 1.9-1, the headless (GBM) build, as packaged at <https://github.com/tsukumijima/libmali-rockchip/releases/tag/v1.9-1-20260923-ec78b74>.
+- **Copyright and licence:** Arm Limited and Rockchip Electronics. A binary-only driver distributed by Rockchip under the terms in its repository, <https://github.com/rockchip-linux/libmali>. It isn't open source, and no source is available for it.
+- **Where it comes from in the image:** pinned by URL and SHA-256 in the `Dockerfile`.
