@@ -2,9 +2,10 @@
  * Runs ffmpeg and ffprobe for playback: whether they are installed and which
  * filters they have, a run-to-completion helper for probing, and the argument
  * lists for each kind of output: fragmented MP4 for HLS, MPEG-TS for DLNA
- * renderers, and sprite sheets of scrubbing thumbnails. Video encoding goes
- * through one builder, so x264 and every hardware encoder take the same
- * scaling, tone mapping and keyframe placement.
+ * renderers, and sprite sheets of scrubbing thumbnails. Re-encoded video
+ * comes from `TranscodePipeline`, by way of the session's `TranscodeLadder`,
+ * so x264 and every hardware rung take the same scaling, tone mapping and
+ * keyframe placement.
  *
  * Library files are always Matroska written by the sterilizer, so every
  * input is opened as Matroska from a local file only (`MediaInput`), never
@@ -15,10 +16,11 @@
  * session can't point Findr at another program.
  */
 
-import type { HardwareAcceleration, PlaybackSettings } from "@findr/types/playback";
+import type { PlaybackSettings } from "@findr/types/playback";
 import { FfmpegLocator } from "../media/FfmpegLocator";
 import { MediaInput } from "../media/MediaInput";
 import type { PlaybackPlan } from "./PlaybackDecider";
+import type { VideoArgs } from "./TranscodePipeline";
 
 /** What a finished process printed and how it exited. */
 export interface ProcessOutput {
@@ -38,35 +40,11 @@ export class FfmpegMissingError extends Error {
 /** Audio bitrate of a converted track, in bits per second. */
 export const AUDIO_BITRATE = 192_000;
 
-/** How an encode should come out, whatever encoder makes it. */
-export interface VideoEncode {
-  /** Height to scale to, or null to keep the source's. */
-  scaleToHeight: number | null;
-  /** Video bitrate ceiling, or null for quality-based encoding. */
-  bitrateCap: number | null;
-  /** The bitrate expected at this height, for encoders that only take a target. */
-  bitrateEstimate: number;
-  /** Convert HDR to SDR on the way. */
-  toneMap: boolean;
-  /** Seconds between forced keyframes. */
-  keyframeSeconds: number;
-}
-
-/** The encoder each hardware acceleration uses for H.264. */
-const H264_ENCODERS: Record<HardwareAcceleration, string> = {
-  none: "libx264",
-  videotoolbox: "h264_videotoolbox",
-  nvenc: "h264_nvenc",
-  qsv: "h264_qsv",
-  vaapi: "h264_vaapi",
-  amf: "h264_amf",
-  rkmpp: "h264_rkmpp",
-};
-
 /**
- * HDR (PQ or HLG) to SDR BT.709: linearise, map the highlights down with
- * Hable's curve, then convert to BT.709 primaries and transfer. zscale does
- * the colour maths; ffmpeg's own scaler can't.
+ * HDR (PQ or HLG) to SDR BT.709 for thumbnails when ffmpeg lacks `tonemapx`:
+ * linearise, map the highlights down with Hable's curve, then convert to
+ * BT.709 primaries and transfer. zscale does the colour maths; ffmpeg's own
+ * scaler can't.
  */
 const TONE_MAP_FILTERS = [
   "zscale=t=linear:npl=100",
@@ -97,18 +75,18 @@ export class Ffmpeg {
       if (name) filters.add(name);
     }
     this.filters = filters;
-    if (!this.canToneMap) console.warn("[Playback] ffmpeg has no zscale filter, so HDR is converted without tone mapping");
+    if (!this.canToneMap) console.warn("[Playback] ffmpeg has neither tonemapx nor zscale, so HDR is converted without tone mapping");
     return true;
   }
 
-  /** Whether this ffmpeg can tone map HDR to SDR. */
+  /** Whether this ffmpeg can tone map HDR to SDR, with `tonemapx` or zscale. */
   public static get canToneMap(): boolean {
-    return this.filters !== null && this.filters.has("zscale") && this.filters.has("tonemap");
+    return this.filters !== null && (this.filters.has("tonemapx") || (this.filters.has("zscale") && this.filters.has("tonemap")));
   }
 
-  /** The H.264 encoder a hardware acceleration setting uses. */
-  public static encoderName(acceleration: HardwareAcceleration): string {
-    return H264_ENCODERS[acceleration];
+  /** ffmpeg's filter names, once `available()` has read them; empty before. */
+  public static get filterNames(): ReadonlySet<string> {
+    return this.filters ?? new Set();
   }
 
   /**
@@ -145,9 +123,10 @@ export class Ffmpeg {
    * chosen video and audio streams are mapped; everything else in the file
    * — and its metadata and chapters — is left behind.
    */
-  public static streamArgs(path: string, plan: PlaybackPlan, startSeconds: number, settings: PlaybackSettings): string[] {
+  public static streamArgs(path: string, plan: PlaybackPlan, startSeconds: number, video: VideoArgs | null): string[] {
     const args = ["-hide_banner", "-nostdin", "-nostats", "-loglevel", "error"];
-    const encode = plan.video === "encode" ? this.videoEncode(settings, this.encodeFor(plan, settings.segmentSeconds)) : null;
+    const encode = plan.video === "encode" ? video : null;
+    if (plan.video === "encode" && !video) throw new Error("A transcode needs its video arguments");
     if (encode) args.push(...encode.input);
 
     // Keep the file's own timestamps so every run shares one timeline. Copying can
@@ -185,9 +164,10 @@ export class Ffmpeg {
    * MPEG-TS on stdout, for DLNA renderers that won't take the file as it is.
    * Timestamps restart at zero; the renderer is told where the stream began.
    */
-  public static transportStreamArgs(path: string, plan: PlaybackPlan, startSeconds: number, settings: PlaybackSettings): string[] {
+  public static transportStreamArgs(path: string, plan: PlaybackPlan, startSeconds: number, video: VideoArgs | null): string[] {
     const args = ["-hide_banner", "-nostdin", "-nostats", "-loglevel", "error"];
-    const encode = plan.video === "encode" ? this.videoEncode(settings, this.encodeFor(plan, 2)) : null;
+    const encode = plan.video === "encode" ? video : null;
+    if (plan.video === "encode" && !video) throw new Error("A transcode needs its video arguments");
     if (encode) args.push(...encode.input);
     if (startSeconds > 0) args.push("-ss", startSeconds.toFixed(3));
     args.push(...MediaInput.args("matroska", path));
@@ -215,8 +195,13 @@ export class Ffmpeg {
    */
   public static trickplayArgs(path: string, videoStream: number, directory: string, options: { intervalSeconds: number; width: number; height: number; toneMap: boolean }): string[] {
     const filters = [`fps=1/${options.intervalSeconds}`];
-    if (options.toneMap && this.canToneMap) filters.push(...TONE_MAP_FILTERS);
-    filters.push(`scale=${options.width}:${options.height}`, `tile=${TRICKPLAY_TILE}x${TRICKPLAY_TILE}`);
+    if (options.toneMap && this.filters?.has("tonemapx")) {
+      filters.push(`scale=${options.width}:${options.height}`, "tonemapx=tonemap=bt2390:t=bt709:m=bt709:p=bt709:format=yuv420p");
+    } else {
+      if (options.toneMap && this.canToneMap) filters.push(...TONE_MAP_FILTERS);
+      filters.push(`scale=${options.width}:${options.height}`);
+    }
+    filters.push(`tile=${TRICKPLAY_TILE}x${TRICKPLAY_TILE}`);
     return [
       "-hide_banner", "-nostdin", "-nostats", "-loglevel", "error",
       "-skip_frame", "nokey", ...MediaInput.args("matroska", path),
@@ -224,29 +209,6 @@ export class Ffmpeg {
       "-vf", filters.join(","), "-fps_mode", "passthrough", "-q:v", "5",
       "-f", "image2", "-start_number", "1", `${directory}/%d.jpg`,
     ];
-  }
-
-  // ---------- Encoder test ---------- //
-
-  /**
-   * Encodes three seconds of a generated test picture with the configured
-   * encoder and throws away the result, so an admin can tell whether the
-   * hardware encoder works on this machine before anyone presses Play.
-   */
-  public static async testEncoder(settings: PlaybackSettings): Promise<{ ok: boolean; message: string }> {
-    const encode = this.videoEncode(settings, { scaleToHeight: 720, bitrateCap: null, bitrateEstimate: 4_000_000, toneMap: false, keyframeSeconds: 2 });
-    const args = ["-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", ...encode.input];
-    args.push("-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=24", "-t", "3", ...encode.output, "-f", "null", "-");
-
-    const started = performance.now();
-    const output = await this.run(FfmpegLocator.path("ffmpeg"), args, AbortSignal.timeout(30_000));
-    const seconds = ((performance.now() - started) / 1000).toFixed(1);
-    if (output.exitCode === 0) return { ok: true, message: `Encoded 3 seconds of 1080p to 720p in ${seconds} s` };
-
-    // The first lines name the cause (a missing driver or device); the rest is ffmpeg unwinding.
-    // Each line's `[h264_nvenc @ 0x…]` prefixes are dropped
-    const lines = output.stderr.trim().split("\n").slice(0, 2).map((line) => line.replace(/^(\[[^\]]*\]\s*)+/, ""));
-    return { ok: false, message: lines.join(" ").trim() || `ffmpeg exited with ${output.exitCode}` };
   }
 
   // ---------- Building blocks ---------- //
@@ -259,73 +221,5 @@ export class Ffmpeg {
   /** Audio copied when the device takes it, otherwise stereo AAC. */
   private static audioArgs(plan: PlaybackPlan): string[] {
     return plan.audio === "copy" ? ["-c:a", "copy"] : ["-c:a", "aac", "-ac", "2", "-b:a", String(AUDIO_BITRATE)];
-  }
-
-  /** What a plan asks of the video encoder. */
-  private static encodeFor(plan: PlaybackPlan, keyframeSeconds: number): VideoEncode {
-    return {
-      scaleToHeight: plan.scaleToHeight,
-      bitrateCap: plan.videoBitrateCap,
-      bitrateEstimate: Math.max(plan.bitrate - (plan.audio === "encode" ? AUDIO_BITRATE : 0), 500_000),
-      toneMap: plan.toneMap,
-      keyframeSeconds,
-    };
-  }
-
-  /**
-   * H.264 encoding with the configured encoder: arguments that go before the
-   * input (a hardware device) and after it (filters, encoder and its rate
-   * control). Every encoder gets a keyframe every `keyframeSeconds` counted
-   * from the start of the run, and no B-frames, so presentation and decode
-   * times agree and segments cut cleanly.
-   */
-  public static videoEncode(settings: PlaybackSettings, encode: VideoEncode): { input: string[]; output: string[] } {
-    const acceleration = settings.hardwareAcceleration;
-    const crf = String(settings.h264Crf);
-    const cap = encode.bitrateCap;
-    const input: string[] = [];
-    const output: string[] = ["-c:v", H264_ENCODERS[acceleration]];
-
-    // Filters run on the CPU: tone map, scale, then hand frames over in the encoder's format
-    const filters: string[] = [];
-    if (encode.toneMap && this.canToneMap) filters.push(...TONE_MAP_FILTERS);
-    if (encode.scaleToHeight !== null) filters.push(`scale=-2:${encode.scaleToHeight}`);
-    if (acceleration === "vaapi") {
-      input.push("-vaapi_device", settings.vaapiDevice);
-      filters.push("format=nv12", "hwupload");
-    } else filters.push(acceleration === "qsv" ? "format=nv12" : "format=yuv420p");
-    output.push("-vf", filters.join(","));
-
-    // Rate control: quality-based unless capped, in each encoder's own terms
-    const capped = cap === null ? [] : ["-maxrate", String(cap), "-bufsize", String(cap * 2)];
-    switch (acceleration) {
-      case "none":
-        output.push("-preset", settings.encoderPreset, "-profile:v", "high", "-crf", crf, ...capped);
-        break;
-      case "videotoolbox":
-        // Its own keyframe interval defaults to 12 frames; only the forced ones are wanted
-        output.push("-profile:v", "high", "-allow_sw", "1", "-b:v", String(cap ?? encode.bitrateEstimate), "-g", "9999");
-        break;
-      case "nvenc":
-        output.push("-preset", "p4", "-profile:v", "high", "-rc", "vbr", "-cq", crf, "-b:v", "0", ...capped, "-forced-idr", "1");
-        break;
-      case "qsv":
-        output.push("-preset", "veryfast", "-profile:v", "high", "-look_ahead", "0", "-forced_idr", "1");
-        output.push(...(cap === null ? ["-global_quality", crf] : ["-b:v", String(cap), ...capped]));
-        break;
-      case "vaapi":
-        output.push(...(cap === null ? ["-rc_mode", "CQP", "-qp", crf] : ["-rc_mode", "VBR", "-b:v", String(cap), ...capped]));
-        break;
-      case "amf":
-        output.push("-quality", "speed", ...(cap === null ? ["-rc", "cqp", "-qp_i", crf, "-qp_p", crf] : ["-rc", "vbr_peak", "-b:v", String(cap), ...capped]));
-        break;
-      case "rkmpp":
-        output.push(...(cap === null ? ["-rc_mode", "CQP", "-qp_init", crf] : ["-rc_mode", "VBR", "-b:v", String(cap), ...capped]));
-        break;
-    }
-
-    output.push("-bf", "0", "-force_key_frames", `expr:gte(t,n_forced*${encode.keyframeSeconds})`, "-sc_threshold", "0");
-    if (acceleration === "none" && settings.threads > 0) output.push("-threads", String(settings.threads));
-    return { input, output };
   }
 }

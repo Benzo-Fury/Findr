@@ -331,7 +331,7 @@ describe.skipIf(!hasFfmpeg)("Casting through a bridge", () => {
 
   test("lists the bridge's TVs, named for where they are", async () => {
     const renderers = await DlnaController.getInstance().list(true);
-    expect(renderers).toEqual([{ id: `${bridge.id}:den-tv`, name: "Den TV", manufacturer: null, model: null, direct: true, place: "Home" }]);
+    expect(renderers).toEqual([expect.objectContaining({ id: `${bridge.id}:den-tv`, name: "Den TV", manufacturer: null, model: null, direct: true, place: "Home" })]);
     expect(BridgeHub.getInstance().record(bridge, DlnaController.getInstance().countOn(bridge.id))).toMatchObject({ name: "Home", online: true, address: mediaUrl, renderers: 1 });
   });
 

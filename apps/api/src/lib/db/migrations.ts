@@ -191,4 +191,15 @@ export const migrations: Migration[] = [
       "ALTER TABLE media_items ADD COLUMN credits_retry_at INTEGER",
     ],
   },
+  {
+    name: "renderer overrides",
+    statements: [
+      // An admin's corrections to what each TV says it plays, by renderer id, as one JSON document
+      `CREATE TABLE renderer_overrides (
+        renderer_id TEXT PRIMARY KEY NOT NULL,
+        value       TEXT NOT NULL,
+        updated_at  INTEGER NOT NULL
+      )`,
+    ],
+  },
 ];

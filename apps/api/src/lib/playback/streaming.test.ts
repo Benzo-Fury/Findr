@@ -76,7 +76,7 @@ describe.skipIf(!hasFfmpeg)("Streaming through the server", () => {
 
   test("plays from the playlist down to its segments under the signed path", async () => {
     const record = await PlaybackService.getInstance().create(
-      { titleId, season: null, episode: null, deviceProfile: browser, maxBitrate: null, audioTrack: null, startMs: null },
+      { titleId, season: null, episode: null, deviceProfile: browser, maxBitrate: null, audioTrack: null, startMs: null, avoidCopy: false },
       { userId: viewer, local: true },
     );
     expect(record.mode).toBe("audio");
@@ -117,7 +117,7 @@ describe.skipIf(!hasFfmpeg)("Streaming through the server", () => {
 
   test("lets a TV on the network fetch media with remote access off, and nothing else", async () => {
     const record = await PlaybackService.getInstance().create(
-      { titleId, season: null, episode: null, deviceProfile: browser, maxBitrate: null, audioTrack: null, startMs: null },
+      { titleId, season: null, episode: null, deviceProfile: browser, maxBitrate: null, audioTrack: null, startMs: null, avoidCopy: false },
       { userId: viewer, local: true },
     );
     try {

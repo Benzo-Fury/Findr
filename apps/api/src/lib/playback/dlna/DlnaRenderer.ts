@@ -8,9 +8,24 @@
  * containers and DLNA profile names, not codecs, so the profile is cautious: H.264 and AAC or MP3 always, and HEVC, AC-3, E-AC-3
  * and 4K only when the list names them. Hisense VIDAA TVs list bare
  * containers yet decode HEVC, so they are known by their description instead.
+ * TVs almost never say whether they show HDR, so HDR is assumed only when an
+ * admin says so (`overrides`, set by the controller from `RendererOverride`).
+ *
+ * A TV that is sent copied video and never starts it teaches the renderer
+ * what it can't take (`recordCopyFailure`), for as long as Findr runs, so
+ * the next file of the kind is converted from the start.
  */
 
-import type { DeviceProfile, PlaybackAudioCodec, PlaybackVideoCodec, RendererRecord, RendererState } from "@findr/types/playback";
+import type {
+  DeviceProfile,
+  PlaybackAudioCodec,
+  PlaybackVideoCodec,
+  RendererCapabilities,
+  RendererOverrides,
+  RendererRecord,
+  RendererState,
+  SourceVideo,
+} from "@findr/types/playback";
 import { LocalRendererNetwork } from "./LocalRendererNetwork";
 import type { RendererNetwork } from "./RendererNetwork";
 import { type DeviceDescription, Upnp, type UpnpService } from "./Upnp";
@@ -36,6 +51,9 @@ const TRANSPORT_STATES: Record<string, RendererState> = {
   TRANSITIONING: "loading",
   NO_MEDIA_PRESENT: "idle",
 };
+
+/** What a failed copy taught about a renderer: each entry is a capability it turned out not to have. */
+type CopyFailure = "hevc" | "tenBit" | "uhd" | "hdr";
 
 /** Where the renderer is in what it plays. */
 export interface PositionInfo {
@@ -63,6 +81,10 @@ export class DlnaRenderer {
   private matroskaRefused = false;
   /** A Hisense VIDAA TV, which decodes HEVC though its formats never name it. */
   private readonly vidaa: boolean;
+  /** An admin's corrections to what it says it plays, kept current by the controller. */
+  public overrides: RendererOverrides = { hevc: null, uhd: null, hdr: null };
+  /** What copies it failed to start have shown it can't take. */
+  private readonly copyFailures = new Set<CopyFailure>();
 
   private constructor(network: RendererNetwork, description: DeviceDescription, location: string, transport: UpnpService) {
     const udn = description.udn.replace(/^uuid:/i, "");
@@ -93,7 +115,17 @@ export class DlnaRenderer {
 
   /** As the web app lists it. */
   public toRecord(): RendererRecord {
-    return { id: this.id, name: this.name, manufacturer: this.manufacturer, model: this.model, direct: this.acceptsMatroska, place: this.network.place };
+    return {
+      id: this.id,
+      name: this.name,
+      manufacturer: this.manufacturer,
+      model: this.model,
+      direct: this.acceptsMatroska,
+      place: this.network.place,
+      capabilities: this.capabilities,
+      detected: this.detected,
+      overrides: this.overrides,
+    };
   }
 
   // ---------- Formats ---------- //
@@ -133,17 +165,50 @@ export class DlnaRenderer {
     return "video/mpeg";
   }
 
-  /** What it decodes, read cautiously from the formats it lists. */
+  /** What it says it plays, read cautiously from the formats it lists; never HDR, which TVs don't list. */
+  public get detected(): RendererCapabilities {
+    const listed = this.sinks.join(",").toLowerCase();
+    return { hevc: this.vidaa || /hevc|h265|h\.265/.test(listed), uhd: /uhd|2160|3840|_4k/.test(listed), hdr: false };
+  }
+
+  /** What it is taken to play: what it says, corrected by an admin, less what failed copies showed it can't. */
+  public get capabilities(): RendererCapabilities {
+    const detected = this.detected;
+    return {
+      hevc: (this.overrides.hevc ?? detected.hevc) && !this.copyFailures.has("hevc"),
+      uhd: (this.overrides.uhd ?? detected.uhd) && !this.copyFailures.has("uhd"),
+      hdr: (this.overrides.hdr ?? detected.hdr) && !this.copyFailures.has("hdr"),
+    };
+  }
+
+  /** What it decodes, as the playback decider takes it. */
   public get profile(): DeviceProfile {
     const listed = this.sinks.join(",").toLowerCase();
-    const videoCodecs: PlaybackVideoCodec[] = ["h264"];
-    if (this.vidaa || /hevc|h265|h\.265/.test(listed)) videoCodecs.push("hevc");
+    const capabilities = this.capabilities;
+    const maxHeight = capabilities.uhd ? 2160 : 1080;
+    const videoCodecs: PlaybackVideoCodec[] = capabilities.hevc ? ["h264", "hevc"] : ["h264"];
 
     const audioCodecs: PlaybackAudioCodec[] = ["aac", "mp3"];
     if (/ac3|ac-3|dolby/.test(listed)) audioCodecs.push("ac3");
     if (/eac3|e-ac-3|ec-3|ec3/.test(listed)) audioCodecs.push("eac3");
 
-    return { videoCodecs, audioCodecs, maxHeight: /uhd|2160|3840|_4k/.test(listed) ? 2160 : 1080, hdr: false };
+    // HEVC is taken at 10-bit until a copy shows otherwise
+    const decoders = capabilities.hevc ? [{ codec: "hevc" as const, maxHeight, tenBit: !this.copyFailures.has("tenBit"), hdr: capabilities.hdr }] : undefined;
+    return { videoCodecs, audioCodecs, maxHeight, hdr: capabilities.hdr, decoders };
+  }
+
+  /**
+   * Remembers that it never started a copy of `source`, narrowing the most
+   * specific thing about it the TV was trusted with: HDR, then 10-bit, then
+   * 4K, then HEVC itself. H.264 is never dropped, since everything else is
+   * converted to it.
+   */
+  public recordCopyFailure(source: SourceVideo): void {
+    const capabilities = this.capabilities;
+    if (source.hdr && capabilities.hdr) this.copyFailures.add("hdr");
+    else if (source.codec === "hevc" && source.bitDepth > 8 && !this.copyFailures.has("tenBit")) this.copyFailures.add("tenBit");
+    else if (source.height > 1080 && capabilities.uhd) this.copyFailures.add("uhd");
+    else if (source.codec === "hevc") this.copyFailures.add("hevc");
   }
 
   /** Reads the formats it accepts; a renderer that won't say is treated as the most basic. */

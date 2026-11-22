@@ -17,28 +17,7 @@ import type {
 } from "@findr/types/downloads"
 import type { CredentialsReset } from "@findr/types/account"
 import type { ClaimStatus, SetupClaim, SetupStatus } from "@findr/types/setup"
-import type {
-  CastBridgeRecord,
-  CastUrlRecord,
-  CreateCastBridge,
-  CreateCastUrl,
-  CreatedCastBridge,
-  CreateSession,
-  CreditsQuery,
-  CreditsRecord,
-  EncoderTestResult,
-  MarkPlayed,
-  NowPlayingRecord,
-  PlaybackCapabilities,
-  PlaybackLibrary,
-  PlaybackPrefs,
-  PlaybackSessionRecord,
-  RendererCommand,
-  RendererPlay,
-  RendererRecord,
-  RendererStatus,
-  ReportProgress,
-} from "@findr/types/playback"
+import type { CastBridgeRecord, CastUrlRecord, CreateCastBridge, CreateCastUrl, CreateSession, CreatedCastBridge, CreditsQuery, CreditsRecord, EncoderTestResult, MarkPlayed, NowPlayingRecord, PlaybackCapabilities, PlaybackDiagnostics, PlaybackLibrary, PlaybackPrefs, PlaybackSessionRecord, RendererCommand, RendererOverrides, RendererPlay, RendererRecord, RendererStatus, ReportProgress } from "@findr/types/playback"
 import type { SettingsPatch, SettingsResponse } from "@findr/types/settings"
 import type { UpdateStatus } from "@findr/types/updates"
 import type { VpnStatus } from "@findr/types/vpn"
@@ -411,6 +390,11 @@ export function commandRenderer(id: string, command: RendererCommand): Promise<R
   return request(`/api/playback/renderers/${encodeURIComponent(id)}/command`, json(command))
 }
 
+/** Replaces an admin's corrections to what a TV plays; null fields follow the TV. */
+export function setRendererCapabilities(id: string, overrides: RendererOverrides): Promise<RendererRecord> {
+  return request(`/api/playback/renderers/${encodeURIComponent(id)}/capabilities`, json(overrides, "PUT"))
+}
+
 /** Shows Findr's splash on a TV picked to cast to. */
 export function showRendererSplash(id: string): Promise<void> {
   return send(`/api/playback/renderers/${encodeURIComponent(id)}/splash`, { method: "POST" })
@@ -449,6 +433,11 @@ export function stopNowPlaying(id: string): Promise<void> {
 /** Encodes a test picture with the saved encoder settings (admins only). */
 export function testEncoder(): Promise<EncoderTestResult> {
   return request("/api/playback/admin/encoder-test", { method: "POST" })
+}
+
+/** What stops this machine playing as well as it could, worst first, from the last hardware check (admins only). */
+export function fetchPlaybackDiagnostics(init?: RequestInit): Promise<PlaybackDiagnostics> {
+  return request("/api/playback/admin/diagnostics", init)
 }
 
 /* -------------------------------------------------------------------------- */

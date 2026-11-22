@@ -1,6 +1,6 @@
 import * as React from "react"
 import { AnimatePresence, motion } from "motion/react"
-import { ArrowLeftIcon, ArrowsClockwiseIcon, SkipForwardIcon, TelevisionSimpleIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react"
+import { ArrowLeftIcon, ArrowsClockwiseIcon, SkipForwardIcon, SunDimIcon, TelevisionSimpleIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react"
 import { Container, Hotkey } from "@videojs/react"
 import { GoogleCast } from "@videojs/react/extensions/google-cast"
 import { AirPlayEnterIcon, CastEnterIcon, CastExitIcon, SpeechIcon, SwitchesIcon } from "@videojs/react/icons"
@@ -8,7 +8,7 @@ import { HlsJsVideo } from "@videojs/react/media/hlsjs-video"
 import { VideoPlayer, usePlayer } from "@videojs/react/video"
 import type { PlaybackItemKey, PlaybackPrefs, PlaybackSessionRecord, RendererRecord } from "@findr/types/playback"
 import { ApiError, createCastUrl, createPlaybackSession, endPlaybackSession, fetchCredits, reportPlaybackProgress, updatePlaybackPrefs } from "@/lib/api"
-import { deviceProfile } from "@/lib/device-profile"
+import { deviceProfile, recordDecodeFailure } from "@/lib/device-profile"
 import { googleCastConnected, loadOnGoogleCast } from "@/lib/google-cast"
 import { FADE } from "@/lib/motion"
 import { audioTrackDetail, audioTrackLabel, itemKey, usePlayback } from "@/lib/playback"
@@ -29,7 +29,10 @@ import { VideoSkin } from "@/components/videojs/video/skin"
  * and offers the next episode when one ends. Changing quality or audio starts
  * a fresh session at the same moment, since the server packages one stream
  * per session, and swaps it into the same video element once it is ready,
- * so playback carries on (on AirPlay too) rather than starting over.
+ * so playback carries on (on AirPlay too) rather than starting over. A
+ * copied stream the browser then fails to decode is started again converted,
+ * and the browser's profile remembers what failed, so the next file of the
+ * kind is converted from the start.
  *
  * A new movie or episode (the next one, chiefly) is swapped into the same
  * video element in the same way, so fullscreen holds and it plays at once:
@@ -127,6 +130,12 @@ const QUALITY_KEY = "findr:playback-quality"
 /** How often the position is reported while the player is open. */
 const HEARTBEAT_MS = 10_000
 
+/** Whether this screen shows HDR itself, in which case HDR is never converted for it. */
+const HDR_SCREEN = typeof window !== "undefined" && window.matchMedia("(dynamic-range: high)").matches
+
+/** `MediaError.MEDIA_ERR_NETWORK`: the stream couldn't be fetched, as opposed to decoded. */
+const MEDIA_ERR_NETWORK = 2
+
 /** A jump in position bigger than this is a seek, not playback. */
 const SEEK_JUMP_SECONDS = 3
 
@@ -135,8 +144,9 @@ const REASONS: Record<string, string> = {
   bit_depth: "10-bit video",
   h264_level: "H.264 level above what the TV decodes",
   resolution: "resolution above this screen",
-  hdr: "HDR on a non-HDR screen",
+  hdr: "HDR this screen can't show",
   bitrate_cap: "the quality limit",
+  client_decode_failed: "the original failing to play here",
 }
 
 function readQuality(): number | null {
@@ -178,6 +188,8 @@ export function Player(props: PlayerProps) {
   // The stream playing, and a count that lets only the latest request replace it
   const streamRef = React.useRef<Stream | null>(null)
   const requestRef = React.useRef(0)
+  // Set once a copy of this item failed to decode here, so every later session for it converts
+  const avoidCopyRef = React.useRef(false)
 
   /**
    * Starts a session for `next` where the viewer is and swaps it in, ending
@@ -191,10 +203,11 @@ export function Player(props: PlayerProps) {
       try {
         const session = await createPlaybackSession({
           ...item,
-          deviceProfile: deviceProfile(),
+          deviceProfile: await deviceProfile(),
           maxBitrate: next.quality,
           audioTrack: next.audioTrack,
           startMs: positionRef.current,
+          avoidCopy: avoidCopyRef.current,
         })
         // Superseded, or the player closed, while it started
         if (request !== requestRef.current) {
@@ -224,6 +237,7 @@ export function Player(props: PlayerProps) {
   const initial = React.useRef(choice)
   const { startMs } = props
   React.useEffect(() => {
+    avoidCopyRef.current = false
     positionRef.current = startMs
     const first = { quality: streamRef.current?.choice.quality ?? initial.current.quality, audioTrack: null }
     setChoice(first)
@@ -291,6 +305,35 @@ export function Player(props: PlayerProps) {
     }
   }
 
+  /**
+   * Starts a fresh session where a lost stream stopped. A copy that failed to
+   * decode comes back converted, after the browser's profile learns what failed.
+   */
+  const recover = React.useCallback(
+    async (lost: PlaybackSessionRecord, paused: boolean, decodeFailed: boolean) => {
+      if (decodeFailed && lost.mode !== "transcode") {
+        avoidCopyRef.current = true
+        await recordDecodeFailure(lost.sourceVideo).catch(() => {})
+      }
+      void start(streamRef.current?.choice ?? choice, paused)
+    },
+    [choice, start],
+  )
+
+  function chooseServerToneMap(serverToneMap: boolean, paused: boolean) {
+    const prefs = { ...props.prefs, serverToneMap }
+    props.onPrefs(prefs)
+    // The server reads the preference when it makes a session, so a stream it changes restarts with it:
+    // turned on while the original plays, or off while HDR is what forced the conversion
+    const current = streamRef.current?.session
+    const changes = current && (serverToneMap ? current.mode !== "transcode" : current.reasons.includes("hdr"))
+    void updatePlaybackPrefs(prefs)
+      .catch(() => {})
+      .then(() => {
+        if (changes) void start(streamRef.current?.choice ?? choice, paused)
+      })
+  }
+
   const session = stream?.session ?? null
   // The last item's stream, still on screen while this one's session starts
   const switching = stream !== null && itemKey(stream.item) !== itemKey(item)
@@ -324,6 +367,7 @@ export function Player(props: PlayerProps) {
                   prefs={props.prefs}
                   onQuality={chooseQuality}
                   onAudio={chooseAudio}
+                  onServerToneMap={chooseServerToneMap}
                   onPrefs={(prefs) => {
                     props.onPrefs(prefs)
                     void updatePlaybackPrefs(prefs).catch(() => {})
@@ -367,7 +411,7 @@ export function Player(props: PlayerProps) {
                 session={session}
                 positionRef={positionRef}
                 onRemoteEnded={onRemoteEnded}
-                onLost={(paused) => void start(stream?.choice ?? choice, paused)}
+                onLost={(paused, decodeFailed) => void recover(session, paused, decodeFailed)}
               />
             )}
             <Notice message={notice} onDone={clearNotice} />
@@ -429,8 +473,12 @@ interface SessionProps extends PlayerProps {
   positionRef: React.RefObject<number>
   /** Casting or AirPlay ended. */
   onRemoteEnded: () => void
-  /** The stream failed or its session is gone; start a fresh session where it stopped, paused if it was. */
-  onLost: (paused: boolean) => void
+  /**
+   * The stream failed or its session is gone; start a fresh session where it
+   * stopped, paused if it was. `decodeFailed` says the media itself couldn't be
+   * decoded, rather than fetched.
+   */
+  onLost: (paused: boolean, decodeFailed: boolean) => void
 }
 
 /** What goes on alongside the video: progress reports, recovery, the top bar, and the next-episode offer. */
@@ -457,8 +505,12 @@ function Session(props: SessionProps) {
   React.useEffect(() => {
     if ((!mediaError && reaped !== session.id) || lostOnce.current === session.id) return
     lostOnce.current = session.id
-    props.onLost(paused && !mediaError)
-  }, [mediaError, reaped, paused, session.id, props])
+    // Anything but a network failure means this browser couldn't decode what it was sent
+    const decodeFailed = mediaError !== null && mediaError !== undefined && mediaError.code !== MEDIA_ERR_NETWORK
+    // Recovery is taken over here, so the skin's error dialog closes and the error isn't counted against the next stream
+    if (mediaError) store.dismissError()
+    props.onLost(paused && !mediaError, decodeFailed)
+  }, [mediaError, reaped, paused, session.id, props, store])
 
   // Casting ending hands playback back to this browser
   const wasRemote = React.useRef(remote)
@@ -585,15 +637,18 @@ interface SettingsItemsProps {
   /** Picks a quality; `paused` says whether what plays is paused, so a TV switched to it stays so. */
   onQuality: (value: number | null, paused: boolean) => void
   onAudio: (index: number, paused: boolean) => void
+  /** Turns server-side HDR conversion on or off, restarting the stream with it. */
+  onServerToneMap: (enabled: boolean, paused: boolean) => void
   onPrefs: (prefs: PlaybackPrefs) => void
 }
 
 /**
  * The settings menu: quality and audio track (Findr's, as each means a new
- * session), the skin's speed and captions, autoplay, and a line on how the
- * file is being sent.
+ * session), the skin's speed and captions, autoplay, for HDR files whether
+ * the server converts HDR rather than the browser, and a line on how the file
+ * is being sent.
  */
-function SettingsItems({ session, choice, prefs, onQuality, onAudio, onPrefs }: SettingsItemsProps) {
+function SettingsItems({ session, choice, prefs, onQuality, onAudio, onServerToneMap, onPrefs }: SettingsItemsProps) {
   const paused = usePlayer((state) => state.paused)
   // The track picked, else the one the server chose for this session
   const audioTrack = choice.audioTrack ?? session.audioTrack
@@ -625,6 +680,11 @@ function SettingsItems({ session, choice, prefs, onQuality, onAudio, onPrefs }: 
       <CheckItem icon={SkipForwardIcon} checked={prefs.autoplayNext} onCheckedChange={(autoplayNext) => onPrefs({ ...prefs, autoplayNext })}>
         Autoplay next episode
       </CheckItem>
+      {session.sourceVideo.hdr && !HDR_SCREEN && (
+        <CheckItem icon={SunDimIcon} checked={prefs.serverToneMap} onCheckedChange={(enabled) => onServerToneMap(enabled, paused)}>
+          Convert HDR on the server
+        </CheckItem>
+      )}
       <MenuNote>{describeMode(session)}</MenuNote>
     </>
   )

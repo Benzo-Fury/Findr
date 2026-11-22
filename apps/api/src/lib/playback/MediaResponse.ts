@@ -54,12 +54,12 @@ export class MediaResponse {
   }
 
   /** Serves a DLNA session's stream, positioned by `?start=` in milliseconds. */
-  public static progressive(c: Context, session: ProgressiveSession, file: string): Response {
+  public static async progressive(c: Context, session: ProgressiveSession, file: string): Promise<Response> {
     if (file !== session.fileName) return this.error("not_found", 404);
     // A paused renderer stops reading for as long as it likes
     this.allowSlow(c, 0);
     const start = Number(c.req.query("start") ?? 0);
-    const response = session.serve(c.req.raw, Number.isFinite(start) && start > 0 ? Math.floor(start) : 0);
+    const response = await session.serve(c.req.raw, Number.isFinite(start) && start > 0 ? Math.floor(start) : 0);
     for (const [name, value] of Object.entries(CORS_HEADERS)) response.headers.set(name, value);
     return response;
   }

@@ -20,9 +20,46 @@ export type TranscodeResolution = z.infer<typeof TranscodeResolutionSchema>;
 export const EncoderPresetSchema = z.enum(["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"]);
 export type EncoderPreset = z.infer<typeof EncoderPresetSchema>;
 
-/** Hardware video encoders a transcode may use instead of x264. */
-export const HardwareAccelerationSchema = z.enum(["none", "videotoolbox", "nvenc", "qsv", "vaapi", "amf", "rkmpp"]);
+/** A video API a transcode runs on: one of the hardware ones, or `none` for the CPU alone. */
+export const HardwareApiSchema = z.enum(["none", "videotoolbox", "nvenc", "qsv", "vaapi", "amf", "rkmpp"]);
+export type HardwareApi = z.infer<typeof HardwareApiSchema>;
+
+/** The hardware setting: an API, or `auto` for the first on this machine that works. */
+export const HardwareAccelerationSchema = z.enum(["auto", ...HardwareApiSchema.options]);
 export type HardwareAcceleration = z.infer<typeof HardwareAccelerationSchema>;
+
+/** How much of a transcode runs on the hardware: all of it, decoding and encoding, encoding only, or none. */
+export const TranscodeRungSchema = z.enum(["device", "decode", "encode", "cpu"]);
+export type TranscodeRung = z.infer<typeof TranscodeRungSchema>;
+
+/** Video kinds a hardware decoder is checked for, by codec and bit depth. */
+export const DecodeKindSchema = z.enum(["h264", "hevc", "hevc10", "av1", "av1_10", "vp9", "vp9_10"]);
+export type DecodeKind = z.infer<typeof DecodeKindSchema>;
+
+/** What the hardware on this machine was found to do, as the admin's encoder test shows it. */
+export interface HardwareReport {
+  /** The setting. */
+  configured: HardwareAcceleration;
+  /** The API in use: the setting, or what `auto` chose. */
+  api: HardwareApi;
+  encoder: string;
+  /** Whether its encoder works; without it every transcode runs on the CPU. */
+  encodes: boolean;
+  /** Video kinds it decodes, frames staying on the device. */
+  decodes: DecodeKind[];
+  /** Whether it scales on the device. */
+  scales: boolean;
+  /** Whether it maps HDR to SDR on the device. */
+  toneMaps: boolean;
+  /** Why something didn't work, from ffmpeg, or null. */
+  message: string | null;
+  /** How long the checks took. */
+  durationMs: number;
+}
+
+/** What Google Cast receivers are taken to decode. */
+export const ChromecastProfileSchema = z.enum(["1080p", "4k-hdr"]);
+export type ChromecastProfile = z.infer<typeof ChromecastProfileSchema>;
 
 /** The `playback` settings section. */
 export const PlaybackSettingsSchema = z.object({
@@ -56,12 +93,18 @@ export const PlaybackSettingsSchema = z.object({
   segmentSeconds: z.number().int().min(2).max(10).default(6),
   /** Segments further behind the player than this are deleted. */
   segmentKeepSeconds: z.number().int().min(60).max(7200).default(600),
-  /** Hardware encoder for transcodes; `none` encodes with x264 on the CPU. */
-  hardwareAcceleration: HardwareAccelerationSchema.default("none"),
-  /** The render node VA-API encodes on. */
+  /** Hardware for transcodes: an API, `auto` for the first that works here, or `none` for the CPU alone. */
+  hardwareAcceleration: HardwareAccelerationSchema.default("auto"),
+  /** The render node VA-API and Quick Sync use. */
   vaapiDevice: z.string().trim().min(1).default("/dev/dri/renderD128"),
   /** Convert HDR to SDR when transcoding for a screen without HDR. Needs ffmpeg's zscale filter. */
   toneMapping: z.boolean().default(true),
+  /**
+   * What Google Cast receivers on this network decode. They can't say, so
+   * `1080p` assumes the oldest (H.264 up to 1080p, SDR) and `4k-hdr` the
+   * Chromecast Ultra and Google TV models (HEVC Main 10, 4K, HDR10).
+   */
+  chromecastProfile: ChromecastProfileSchema.default("1080p"),
   /** Offer casting: Google Cast, AirPlay and DLNA renderers, which may fetch media from the local network. */
   casting: z.boolean().default(true),
   /** The address TVs reach Findr at; empty uses this machine's local network address. */
@@ -95,16 +138,35 @@ export type PlaybackVideoCodec = z.infer<typeof PlaybackVideoCodecSchema>;
 export const PlaybackAudioCodecSchema = z.enum(["aac", "mp3", "opus", "flac", "ac3", "eac3"]);
 export type PlaybackAudioCodec = z.infer<typeof PlaybackAudioCodecSchema>;
 
+/**
+ * What a device's decoder takes for one video codec, beyond decoding it at
+ * all. Measured where the client can ask (a browser's Media Capabilities), so
+ * the server copies everything the decoder handles rather than everything the
+ * screen shows.
+ */
+export const VideoDecoderSchema = z.object({
+  codec: PlaybackVideoCodecSchema,
+  /** Tallest picture it decodes smoothly, whatever the screen's size. */
+  maxHeight: z.number().int().min(144).max(4320),
+  /** Whether it decodes 10-bit video. */
+  tenBit: z.boolean(),
+  /** Whether it decodes HDR10 and shows it right, mapping it down to the screen itself when the screen is SDR. */
+  hdr: z.boolean(),
+});
+export type VideoDecoder = z.infer<typeof VideoDecoderSchema>;
+
 /** What the playing device can decode, measured by the client. */
 export const DeviceProfileSchema = z.object({
   videoCodecs: z.array(PlaybackVideoCodecSchema).max(8),
   audioCodecs: z.array(PlaybackAudioCodecSchema).max(8),
-  /** Tallest picture worth sending. */
+  /** Tallest picture worth sending: a transcode is sized to it, and a codec without a `decoders` entry is copied only up to it. */
   maxHeight: z.number().int().min(144).max(4320),
-  /** Whether the device shows HDR as HDR rather than washed out. */
+  /** Whether the screen shows HDR as HDR rather than washed out. */
   hdr: z.boolean(),
   /** Highest H.264 level it decodes, as ffprobe numbers it (41 for 4.1); absent for no limit. */
   maxH264Level: z.number().int().min(10).max(62).optional(),
+  /** Per codec, what the decoder takes; a codec listed without an entry is judged by `maxHeight` and `hdr` alone. */
+  decoders: z.array(VideoDecoderSchema).max(8).optional(),
 });
 export type DeviceProfile = z.infer<typeof DeviceProfileSchema>;
 
@@ -134,8 +196,19 @@ export const CreateSessionSchema = PlaybackItemKeySchema.extend({
   audioTrack: z.number().int().nonnegative().nullable().default(null),
   /** Where to start; null resumes from the saved position. */
   startMs: z.number().int().nonnegative().nullable().default(null),
+  /** Re-encode the video even where the profile says it plays, after the original failed to decode on this device. */
+  avoidCopy: z.boolean().default(false),
 });
 export type CreateSession = z.infer<typeof CreateSessionSchema>;
+
+/** The library file's video, as a session reports it, so a player that fails to decode a copy knows what failed. */
+export interface SourceVideo {
+  /** ffprobe's codec name, such as `hevc`. */
+  codec: string;
+  height: number;
+  bitDepth: number;
+  hdr: boolean;
+}
 
 /** One audio track of a library file. */
 export interface AudioTrack {
@@ -164,6 +237,8 @@ export interface PlaybackSessionRecord {
   /** Height and bitrate actually sent. */
   height: number;
   bitrate: number;
+  /** The file's own video, before any re-encoding. */
+  sourceVideo: SourceVideo;
   /**
    * The playlist at an address other devices on the network can reach, for
    * AirPlay; null when Findr can't tell what that address is or casting is off.
@@ -268,6 +343,8 @@ export const PlaybackPrefsSchema = z.object({
   autoplayNext: z.boolean().default(true),
   /** Ask whether anyone is watching after this many episodes in a row. 0 never asks. */
   stillWatchingAfter: z.number().int().min(0).max(20).default(3),
+  /** Convert HDR on the server for a screen without HDR, even when the device says it maps HDR down itself. */
+  serverToneMap: z.boolean().default(false),
 });
 export type PlaybackPrefs = z.infer<typeof PlaybackPrefsSchema>;
 
@@ -291,6 +368,28 @@ export interface PlaybackCapabilities {
 export const RendererStateSchema = z.enum(["idle", "loading", "playing", "paused", "stopped", "unreachable"]);
 export type RendererState = z.infer<typeof RendererStateSchema>;
 
+/** What a TV is taken to play beyond H.264 up to 1080p in SDR. */
+export const RendererCapabilitiesSchema = z.object({
+  /** HEVC, 10-bit included. */
+  hevc: z.boolean(),
+  /** Pictures up to 4K. */
+  uhd: z.boolean(),
+  /** HDR10, shown as HDR. */
+  hdr: z.boolean(),
+});
+export type RendererCapabilities = z.infer<typeof RendererCapabilitiesSchema>;
+
+/**
+ * `PUT /api/playback/renderers/:id/capabilities`: an admin's corrections to
+ * what was read from a TV. A null field is left to what the TV says.
+ */
+export const RendererOverridesSchema = z.object({
+  hevc: z.boolean().nullable(),
+  uhd: z.boolean().nullable(),
+  hdr: z.boolean().nullable(),
+});
+export type RendererOverrides = z.infer<typeof RendererOverridesSchema>;
+
 /** A TV or other DLNA renderer found on the local network. */
 export interface RendererRecord {
   id: string;
@@ -301,6 +400,12 @@ export interface RendererRecord {
   direct: boolean;
   /** The cast bridge it was found through, by name; null for the server's own network. */
   place: string | null;
+  /** What Findr sends it as it is, after any admin corrections. */
+  capabilities: RendererCapabilities;
+  /** What the TV itself says it plays, before corrections. */
+  detected: RendererCapabilities;
+  /** An admin's corrections; null fields follow `detected`. */
+  overrides: RendererOverrides;
 }
 
 /** `POST /api/playback/renderers/:id/play`. */
@@ -415,15 +520,53 @@ export interface NowPlayingRecord {
   reasons: string[];
   /** Whether video is encoded on a hardware encoder. */
   hardware: boolean;
+  /** How much of the transcode runs on the hardware: all of it, decoding and encoding, encoding only, or none; null when nothing is encoded. */
+  rung: TranscodeRung | null;
   positionMs: number;
   durationMs: number;
   startedAt: number;
 }
 
-/** `POST /api/playback/admin/encoder-test`: whether the configured encoder works. */
+/** `POST /api/playback/admin/encoder-test`: whether the configured encoder works, and what else the hardware does. */
 export interface EncoderTestResult {
   ok: boolean;
   encoder: string;
   /** ffmpeg's complaint when it failed, or how long the test took. */
   message: string;
+  /** What the hardware was found to do; null when ffmpeg is missing. */
+  hardware: HardwareReport | null;
+}
+
+// ---------- Diagnostics ---------- //
+
+/**
+ * How much a diagnostic matters: something is broken (`problem`), works but
+ * could run faster or lighter (`slower`), or is worth knowing (`note`).
+ */
+export const DiagnosticLevelSchema = z.enum(["problem", "slower", "note"]);
+export type DiagnosticLevel = z.infer<typeof DiagnosticLevelSchema>;
+
+/** One thing about this machine that stops playback working as well as it could, and how to fix it. */
+export interface PlaybackDiagnostic {
+  /** Stable name of the check, such as `tone_map_cpu`. */
+  id: string;
+  level: DiagnosticLevel;
+  /** One line saying what is wrong. */
+  title: string;
+  /** What it means for playback, and why it happens here. */
+  detail: string;
+  /** What to do about it, or null when nothing can be done. */
+  fix: string | null;
+  /** Configuration or a command to copy for the fix, or null. */
+  snippet: string | null;
+}
+
+/** `GET /api/playback/admin/diagnostics`: everything found about how well this machine plays. */
+export interface PlaybackDiagnostics {
+  /** What the hardware check found; null when ffmpeg is missing or playback is off. */
+  hardware: HardwareReport | null;
+  /** Worst first. */
+  items: PlaybackDiagnostic[];
+  /** When the checks ran. */
+  checkedAt: number;
 }

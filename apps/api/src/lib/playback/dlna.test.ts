@@ -321,6 +321,26 @@ describe.skipIf(!hasFfmpeg)("DlnaController", () => {
     expect(controller()["renderers"].get(rendererId)?.acceptsMatroska).toBe(false);
   }, 30_000);
 
+  test("converts the video instead when the TV never starts a stream of it as it is", async () => {
+    const renderer = controller()["renderers"].get(rendererId);
+    renderer?.refuseMatroska();
+    tv.neverStarts = true;
+    await play(0);
+    expect(tv.loads[0]).toContain("/media.ts?start=0");
+    expect(controller()["active"].get(rendererId)?.session.plan.video).toBe("copy");
+
+    setSystemTime(new Date(Date.now() + 16_000));
+    await until(() => tv.loads.length === 2);
+    const plan = controller()["active"].get(rendererId)?.session.plan;
+    expect(plan?.video).toBe("encode");
+    expect(plan?.reasons).toEqual(["client_decode_failed"]);
+
+    // A converted stream that is slow to start is left to start; only copies are retried
+    setSystemTime(new Date(Date.now() + 32_000));
+    await Bun.sleep(2300);
+    expect(tv.loads.length).toBe(2);
+  }, 30_000);
+
   test("tells whose cast it is, and lets the TV go a minute after it stops", async () => {
     await play(0);
     await until(() => status().state === "playing");

@@ -19,6 +19,7 @@ import { Ffmpeg } from "./Ffmpeg";
 import { Fmp4Splitter, type Fragment } from "./Fmp4Splitter";
 import type { PlaybackPlan } from "./PlaybackDecider";
 import type { SegmentPlan } from "./SegmentPlan";
+import type { VideoArgs } from "./TranscodePipeline";
 
 // ---------- Types ---------- //
 
@@ -27,6 +28,8 @@ export interface HlsJobOptions {
   plan: PlaybackPlan;
   segments: SegmentPlan;
   settings: PlaybackSettings;
+  /** How the run re-encodes video, when the plan encodes it. */
+  video: VideoArgs | null;
   /** The segment the run starts at. */
   startIndex: number;
   /** The file's first timestamp in seconds, which segment times are measured from. */
@@ -35,8 +38,11 @@ export interface HlsJobOptions {
   directory: string;
   onInit(bytes: Uint8Array): void;
   onSegment(index: number): void;
-  /** Called once when the run ends; `error` is null when it reached the end of the file. */
-  onEnd(error: Error | null): void;
+  /**
+   * Called once when the run ends; `error` is null when it reached the end of
+   * the file, and `produced` says whether ffmpeg wrote anything first.
+   */
+  onEnd(error: Error | null, produced: boolean): void;
 }
 
 /** A run producing nothing for this long, while not paused, is stuck. */
@@ -66,6 +72,8 @@ export class HlsJob {
   private stallTimer: ReturnType<typeof setInterval> | null = null;
   /** Whether a video fragment has arrived; audio before the first one is dropped. */
   private seenVideo = false;
+  /** Whether ffmpeg has written anything; a run failing before that may step down a rung. */
+  private produced = false;
 
   constructor(private readonly options: HlsJobOptions) {
     this.startIndex = options.startIndex;
@@ -85,8 +93,8 @@ export class HlsJob {
 
   /** Launches ffmpeg and starts reading its output. */
   public start(): void {
-    const { path, plan, segments, settings } = this.options;
-    const args = Ffmpeg.streamArgs(path, plan, segments.start(this.startIndex), settings);
+    const { path, plan, segments, video } = this.options;
+    const args = Ffmpeg.streamArgs(path, plan, segments.start(this.startIndex), video);
 
     try {
       this.child = Bun.spawn([FfmpegLocator.path("ffmpeg"), ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
@@ -150,6 +158,7 @@ export class HlsJob {
 
         const { done, value } = await reader.read();
         if (done) break;
+        this.produced = true;
         this.lastActivity = Date.now();
         splitter.push(value);
         for (const fragment of pending.splice(0)) await this.add(fragment);
@@ -210,6 +219,6 @@ export class HlsJob {
     if (this.ended) return;
     this.ended = true;
     if (this.stallTimer) clearInterval(this.stallTimer);
-    this.options.onEnd(error);
+    this.options.onEnd(error, this.produced);
   }
 }

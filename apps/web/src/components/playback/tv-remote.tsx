@@ -9,13 +9,23 @@ import {
   PlayIcon,
   RewindIcon,
   SkipForwardIcon,
+  SlidersHorizontalIcon,
   SpeakerHighIcon,
   SpeakerSlashIcon,
   TelevisionSimpleIcon,
   TranslateIcon,
 } from "@phosphor-icons/react"
-import { type PlaybackItemKey, type RendererCommand, type RendererRecord, type RendererStatus, UP_NEXT_COUNTDOWN_MS } from "@findr/types/playback"
-import { commandRenderer, fetchRendererStatus, playOnRenderer } from "@/lib/api"
+import {
+  type PlaybackItemKey,
+  type RendererCapabilities,
+  type RendererCommand,
+  type RendererOverrides,
+  type RendererRecord,
+  type RendererStatus,
+  UP_NEXT_COUNTDOWN_MS,
+} from "@findr/types/playback"
+import { commandRenderer, fetchRendererStatus, playOnRenderer, setRendererCapabilities } from "@/lib/api"
+import { isAdmin, useSession } from "@/lib/auth"
 import { EASE_OUT } from "@/lib/motion"
 import { audioTrackDetail, audioTrackLabel, castActive, formatClock, sameItem } from "@/lib/playback"
 import { cn } from "@/lib/utils"
@@ -39,6 +49,10 @@ import { Panel, PanelDetail, PanelGroup, PanelOption } from "@/components/playba
  * Seeking within the credits or pressing Escape turns that off for this
  * episode, leaving the button. When the TV moves on, the remote follows it to
  * the next episode.
+ *
+ * Admins also get "What this TV plays": TVs list containers rather than
+ * codecs and never say whether they show HDR, so HEVC, 4K and HDR can each be
+ * set by hand, from the next video sent to the TV.
  *
  * Keyboard: Space or K plays and pauses, the left and right arrows (or J and
  * L) skip back and forward, the up and down arrows change the TV's volume,
@@ -84,6 +98,28 @@ export function TvRemote(props: TvRemoteProps) {
   const [audioTrack, setAudioTrack] = React.useState(props.audioTrack)
   const [audioOpen, setAudioOpen] = React.useState(false)
   const closeAudio = React.useCallback(() => setAudioOpen(false), [])
+  const { data: session } = useSession()
+  const admin = session ? isAdmin(session) : false
+  // What the TV is taken to play, kept current as an admin corrects it
+  const [record, setRecord] = React.useState(renderer)
+  const [capabilitiesOpen, setCapabilitiesOpen] = React.useState(false)
+  const closeCapabilities = React.useCallback(() => setCapabilitiesOpen(false), [])
+  // Corrections show at once and are saved in order, so quick clicks can't undo each other
+  const saving = React.useRef<Promise<unknown>>(Promise.resolve())
+  const saves = React.useRef(0)
+  const overrides = React.useRef(renderer.overrides)
+  const changeCapability = (key: keyof RendererCapabilities, value: boolean | null) => {
+    const save = ++saves.current
+    const next: RendererOverrides = { ...overrides.current, [key]: value }
+    overrides.current = next
+    setRecord((current) => ({ ...current, overrides: next }))
+    saving.current = saving.current
+      .then(() => setRendererCapabilities(renderer.id, next))
+      .then((saved) => {
+        if (save === saves.current) setRecord(saved)
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "The TV's settings weren't saved."))
+  }
   const [status, setStatus] = React.useState<RendererStatus | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [attempt, setAttempt] = React.useState(0)
@@ -272,12 +308,32 @@ export function TvRemote(props: TvRemoteProps) {
           <TelevisionSimpleIcon aria-hidden weight="fill" className="size-4 shrink-0 text-signal" />
           <span className="truncate">{renderer.name}</span>
         </span>
+        {admin && (
+          <button
+            type="button"
+            aria-label="What this TV plays"
+            aria-expanded={capabilitiesOpen}
+            onClick={() => {
+              setAudioOpen(false)
+              setCapabilitiesOpen((open) => !open)
+            }}
+            className={cn(
+              "flex size-10 shrink-0 items-center justify-center rounded-full backdrop-blur-md transition-[background-color,transform] active:scale-90",
+              capabilitiesOpen ? "bg-signal text-ink" : "bg-surface/12 text-surface hover:bg-surface/20",
+            )}
+          >
+            <SlidersHorizontalIcon weight="bold" className="size-5" />
+          </button>
+        )}
         {status && ours && !stopped && playingTrack && status.audioTracks.length > 1 && (
           <button
             type="button"
             aria-label="Audio track"
             aria-expanded={audioOpen}
-            onClick={() => setAudioOpen((open) => !open)}
+            onClick={() => {
+              setCapabilitiesOpen(false)
+              setAudioOpen((open) => !open)
+            }}
             className={cn(
               "ml-auto inline-flex h-10 min-w-0 shrink items-center gap-2 rounded-full px-4 text-[0.8125rem] font-medium backdrop-blur-md transition-[background-color,transform] active:scale-95",
               audioOpen ? "bg-signal text-ink" : "bg-surface/12 text-surface hover:bg-surface/20",
@@ -312,6 +368,16 @@ export function TvRemote(props: TvRemoteProps) {
               ))}
             </PanelGroup>
           </Panel>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {capabilitiesOpen && (
+          <TvCapabilities
+            record={record}
+            onClose={closeCapabilities}
+            onChange={changeCapability}
+          />
         )}
       </AnimatePresence>
 
@@ -404,6 +470,47 @@ export function TvRemote(props: TvRemoteProps) {
         {error && status && <p className="mt-4 text-[0.875rem] text-[oklch(0.78_0.14_35)]">{error}</p>}
       </motion.div>
     </div>
+  )
+}
+
+/** The capabilities an admin can set, in the order they are shown. */
+const CAPABILITIES: { key: keyof RendererCapabilities; label: string }[] = [
+  { key: "hevc", label: "HEVC" },
+  { key: "uhd", label: "4K" },
+  { key: "hdr", label: "HDR" },
+]
+
+interface TvCapabilitiesProps {
+  record: RendererRecord
+  /** Sets one capability: true or false, or null to follow the TV. */
+  onChange: (key: keyof RendererCapabilities, value: boolean | null) => void
+  onClose: () => void
+}
+
+/**
+ * What a TV plays, for admins: each capability follows what the TV says
+ * (Automatic, with that answer beside it), or is set to yes or no.
+ */
+function TvCapabilities({ record, onChange, onClose }: TvCapabilitiesProps) {
+  const set = onChange
+  return (
+    <Panel label="What this TV plays" onClose={onClose}>
+      {CAPABILITIES.map(({ key, label }) => (
+        <PanelGroup key={key} label={label}>
+          <PanelOption selected={record.overrides[key] === null} onClick={() => set(key, null)}>
+            <span className="truncate">Automatic</span>
+            <PanelDetail>{record.detected[key] ? "Yes" : "No"}</PanelDetail>
+          </PanelOption>
+          <PanelOption selected={record.overrides[key] === true} onClick={() => set(key, true)}>
+            Yes
+          </PanelOption>
+          <PanelOption selected={record.overrides[key] === false} onClick={() => set(key, false)}>
+            No
+          </PanelOption>
+        </PanelGroup>
+      ))}
+      <p className="px-3 pb-2 pt-1 text-micro leading-snug text-surface/55">Applies from the next video sent to this TV.</p>
+    </Panel>
   )
 }
 

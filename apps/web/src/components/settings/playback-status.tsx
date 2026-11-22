@@ -9,7 +9,7 @@ import {
   WarningCircleIcon,
   type Icon,
 } from "@phosphor-icons/react"
-import type { EncoderTestResult, NowPlayingRecord, PlaybackDevice } from "@findr/types/playback"
+import type { DecodeKind, EncoderTestResult, HardwareReport, NowPlayingRecord, PlaybackDevice, TranscodeRung } from "@findr/types/playback"
 import { fetchNowPlaying, stopNowPlaying, testEncoder } from "@/lib/api"
 import { cardKey } from "@/lib/title-cards"
 import { episodeCode } from "@/lib/format"
@@ -120,7 +120,7 @@ function NowPlayingRow({ session, onStop }: { session: NowPlayingRecord; onStop:
           <DeviceIcon aria-hidden weight="bold" className="size-3.5 shrink-0" />
           <span className="truncate">
             {session.user?.name || session.user?.email || "Unknown user"} · {session.deviceName ?? device.label} · {MODES[session.mode]}
-            {session.mode === "transcode" && (session.hardware ? " on hardware" : " on CPU")}
+            {session.mode === "transcode" && ` ${RUNGS[session.rung ?? "cpu"]}`}
           </span>
         </p>
         <div className="mt-1.5 flex items-center gap-2">
@@ -135,7 +135,42 @@ function NowPlayingRow({ session, onStop }: { session: NowPlayingRecord; onStop:
   )
 }
 
-/** Runs the saved encoder on a test picture and says whether it worked. */
+/** How much of a transcode ran on the hardware, as Now playing words it. */
+const RUNGS: Record<TranscodeRung, string> = {
+  device: "all on hardware",
+  decode: "decoded and encoded on hardware",
+  encode: "encoded on hardware",
+  cpu: "on CPU",
+}
+
+/** Decode kinds as people name them. */
+const DECODE_KINDS: Record<DecodeKind, string> = {
+  h264: "H.264",
+  hevc: "HEVC",
+  hevc10: "HEVC 10-bit",
+  av1: "AV1",
+  av1_10: "AV1 10-bit",
+  vp9: "VP9",
+  vp9_10: "VP9 10-bit",
+}
+
+/** One sentence on what runs on the hardware, from what the check found. */
+function describeHardware(report: HardwareReport): string {
+  if (report.api === "none") return "Transcodes run on the CPU."
+  const parts: string[] = []
+  if (report.decodes.length > 0) parts.push(`decoding ${listOf(report.decodes.map((kind) => DECODE_KINDS[kind]))}`)
+  if (report.scales) parts.push("scaling")
+  if (report.toneMaps) parts.push("HDR tone mapping")
+  parts.push("encoding")
+  return `On the hardware: ${listOf(parts)}.`
+}
+
+/** "a, b and c". */
+function listOf(items: string[]): string {
+  return items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`
+}
+
+/** Checks what the hardware does with the saved settings and says so. */
 function EncoderTest() {
   const [result, setResult] = React.useState<EncoderTestResult | null>(null)
   const [running, setRunning] = React.useState(false)
@@ -145,7 +180,7 @@ function EncoderTest() {
     try {
       setResult(await testEncoder())
     } catch (reason) {
-      setResult({ ok: false, encoder: "", message: reason instanceof Error ? reason.message : "The test could not run" })
+      setResult({ ok: false, encoder: "", message: reason instanceof Error ? reason.message : "The test could not run", hardware: null })
     } finally {
       setRunning(false)
     }
@@ -155,16 +190,22 @@ function EncoderTest() {
   return (
     <div className="flex flex-col gap-3 rounded-panel bg-sunken px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0 space-y-1">
-        <p className="text-micro font-semibold text-ink-3">Video encoder</p>
+        <p className="text-micro font-semibold text-ink-3">Hardware</p>
         <p className={cn("flex items-start gap-1.5 text-[0.8125rem] leading-relaxed", result ? (result.ok ? "text-ok" : "text-bad") : "text-ink-2")} aria-live="polite">
           {result && <ResultIcon aria-hidden weight="bold" className="mt-0.5 size-4 shrink-0" />}
           <span className="min-w-0 [overflow-wrap:anywhere]">
-            {result ? `${result.encoder ? `${result.encoder}: ` : ""}${result.message}` : "Checks the saved encoder setting by converting a few seconds of a test picture."}
+            {result ? `${result.encoder ? `${result.encoder}: ` : ""}${result.message}` : "Checks what this machine decodes, scales, tone maps and encodes on its graphics hardware."}
           </span>
         </p>
+        {result?.hardware && (
+          <p className="text-[0.8125rem] leading-relaxed text-ink-2 [overflow-wrap:anywhere]">
+            {describeHardware(result.hardware)}
+            {result.ok && result.hardware.message && <span className="text-ink-3"> Not on the hardware here: {result.hardware.message}</span>}
+          </p>
+        )}
       </div>
       <Button size="sm" icon={CpuIcon} loading={running} onClick={() => void run()} className="shrink-0 self-start sm:self-center">
-        Test encoder
+        Test hardware
       </Button>
     </div>
   )

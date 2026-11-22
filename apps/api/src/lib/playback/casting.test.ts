@@ -3,7 +3,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { PlaybackSettingsSchema } from "@findr/types/playback";
+import { type HardwareApi, HardwareApiSchema, type HardwareReport, PlaybackSettingsSchema } from "@findr/types/playback";
 import { migrateAuth } from "../auth/client";
 import { MediaItem } from "../db/models/MediaItem";
 import { SettingsStore } from "../db/models/SettingsStore";
@@ -14,10 +14,12 @@ import { DlnaRenderer } from "./dlna/DlnaRenderer";
 import { LocalRendererNetwork } from "./dlna/LocalRendererNetwork";
 import { Upnp, UpnpError } from "./dlna/Upnp";
 import { Ffmpeg } from "./Ffmpeg";
+import HardwareProbe, { TranscodeLadder } from "./HardwareProbe";
 import { type ProbeInfo, MediaProbe } from "./MediaProbe";
-import { PlaybackDecider } from "./PlaybackDecider";
+import { PlaybackDecider, type PlaybackPlan } from "./PlaybackDecider";
 import { ProgressiveSession } from "./ProgressiveSession";
 import { StreamToken } from "./StreamToken";
+import { RUNGS, type Rung, type TranscodeSource, TranscodePipeline, type VideoArgs, type VideoEncode } from "./TranscodePipeline";
 import { Trickplay } from "./Trickplay";
 
 const settings = PlaybackSettingsSchema.parse({});
@@ -80,32 +82,95 @@ describe("CastAccess", () => {
 
 // ---------- Encoders ---------- //
 
-describe("Ffmpeg.videoEncode", () => {
-  const encode = { scaleToHeight: 720, bitrateCap: null, bitrateEstimate: 4_000_000, toneMap: false, keyframeSeconds: 6 };
-  const args = (acceleration: (typeof settings)["hardwareAcceleration"], cap: number | null = null) =>
-    Ffmpeg.videoEncode({ ...settings, hardwareAcceleration: acceleration }, { ...encode, bitrateCap: cap });
+describe("TranscodePipeline", () => {
+  const encode: VideoEncode = { scaleToHeight: 720, bitrateCap: null, bitrateEstimate: 4_000_000, toneMap: false, keyframeSeconds: 6 };
+  const sdr: TranscodeSource = { width: 1920, height: 1080, bitDepth: 8 };
+  const hdr: TranscodeSource = { width: 3840, height: 2160, bitDepth: 10 };
+  const jellyfin = new Set(["tonemapx", "zscale", "tonemap"]);
+  const build = (api: HardwareApi, rung: Rung, extra: Partial<VideoEncode> = {}, source = sdr, filters: ReadonlySet<string> = jellyfin) =>
+    TranscodePipeline.build(api, rung, { ...encode, ...extra }, source, settings, filters);
+  const line = (args: VideoArgs) => [...args.input, "-i", "IN", ...args.output].join(" ");
 
   test("encodes on the CPU by quality, capped when asked", () => {
-    const { input, output } = args("none");
+    const { input, output } = build("none", "device");
     expect(input).toEqual([]);
     expect(output).toContain("libx264");
     expect(output.join(" ")).toContain("-crf 23");
     expect(output.join(" ")).toContain("-vf scale=-2:720,format=yuv420p");
-    expect(args("none", 3_000_000).output.join(" ")).toContain("-maxrate 3000000 -bufsize 6000000");
+    expect(build("none", "cpu", { bitrateCap: 3_000_000 }).output.join(" ")).toContain("-maxrate 3000000 -bufsize 6000000");
   });
 
-  test("every encoder places keyframes on segment boundaries without B-frames", () => {
-    for (const acceleration of ["none", "videotoolbox", "nvenc", "qsv", "vaapi", "amf", "rkmpp"] as const) {
-      const line = args(acceleration).output.join(" ");
-      expect(line).toContain("-bf 0 -force_key_frames expr:gte(t,n_forced*6)");
-      expect(line).toContain(`-c:v ${Ffmpeg.encoderName(acceleration)}`);
+  test("every API and rung places keyframes on segment boundaries without B-frames", () => {
+    for (const api of HardwareApiSchema.options) {
+      for (const rung of RUNGS) {
+        for (const [extra, source] of [[{}, sdr], [{ toneMap: true, scaleToHeight: 1080 }, hdr], [{ scaleToHeight: null }, hdr]] as const) {
+          const args = build(api, rung, extra, source);
+          expect(args.output.join(" ")).toContain("-bf 0 -force_key_frames expr:gte(t,n_forced*6)");
+          expect(args.output.join(" ")).toContain(`-c:v ${args.encoder}`);
+          expect(args.encoder).toBe(args.rung === "cpu" ? "libx264" : TranscodePipeline.encoderName(api));
+          // No empty filter steps, whatever was built
+          expect(line(args)).not.toMatch(/,,|-vf ,|,( |$)/);
+        }
+      }
     }
   });
 
-  test("VA-API opens its device and uploads frames after the CPU filters", () => {
-    const { input, output } = args("vaapi");
+  test("VA-API opens its device and uploads frames after the CPU filters when only encoding", () => {
+    const { input, output } = build("vaapi", "encode");
     expect(input).toEqual(["-vaapi_device", settings.vaapiDevice]);
     expect(output.join(" ")).toContain("-vf scale=-2:720,format=nv12,hwupload");
+  });
+
+  test("keeps 4K HDR on the device end to end where it can, scaling before tone mapping", () => {
+    const args = build("videotoolbox", "device", { scaleToHeight: 1080, toneMap: true }, hdr);
+    expect(args.rung).toBe("device");
+    expect(line(args)).toBe(
+      "-hwaccel videotoolbox -hwaccel_output_format videotoolbox_vld -i IN -c:v h264_videotoolbox -vf scale_vt=w=1920:h=1080:format=p010le,tonemap_videotoolbox=format=nv12:t=bt709:m=bt709:p=bt709:tonemap=bt2390 " +
+        "-profile:v high -allow_sw 1 -b:v 4000000 -g 9999 -bf 0 -force_key_frames expr:gte(t,n_forced*6) -sc_threshold 0",
+    );
+    expect(line(build("vaapi", "device", { scaleToHeight: 1080, toneMap: true }, hdr))).toContain("-vf scale_vaapi=w=1920:h=1080:format=p010,tonemap_vaapi=format=nv12");
+    expect(line(build("nvenc", "device", { scaleToHeight: 1080, toneMap: true }, hdr))).toContain("-hwaccel cuda -hwaccel_output_format cuda -i IN -c:v h264_nvenc -vf scale_cuda=w=1920:h=1080:format=p010le,tonemap_cuda=");
+    expect(line(build("qsv", "device", { scaleToHeight: 1080, toneMap: true }, hdr))).toContain("-hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi -i IN -c:v h264_qsv -vf hwmap=derive_device=qsv,vpp_qsv=w=1920:h=1080:format=p010,vpp_qsv=tonemap=1:format=nv12");
+  });
+
+  test("converts 10-bit SDR to 8-bit on the device, and passes 8-bit through untouched", () => {
+    expect(line(build("vaapi", "device", { scaleToHeight: null }, hdr))).toContain("-vf scale_vaapi=format=nv12 ");
+    expect(line(build("videotoolbox", "device", { scaleToHeight: null }))).not.toContain("-vf");
+  });
+
+  test("tone maps on Rockchip's Mali GPU through OpenCL, opened beside the decoder only when tone mapping", () => {
+    expect(TranscodePipeline.deviceRungPossible("rkmpp", { ...encode, toneMap: true }, hdr)).toBe(true);
+    const args = build("rkmpp", "device", { scaleToHeight: 1080, toneMap: true }, hdr);
+    expect(args.rung).toBe("device");
+    expect(line(args)).toContain(
+      "-init_hw_device rkmpp=rk -init_hw_device opencl=ocl@rk -filter_hw_device ocl -hwaccel rkmpp -hwaccel_device rk -hwaccel_output_format drm_prime -i IN -c:v h264_rkmpp " +
+        "-vf scale_rkrga=w=1920:h=1080:format=p010,hwmap=derive_device=opencl:mode=read,tonemap_opencl=format=nv12:t=bt709:m=bt709:p=bt709:tonemap=bt2390:peak=100:desat=0,hwmap=derive_device=rkmpp:mode=write:reverse=1,format=drm_prime ",
+    );
+    // Unscaled, the packed 10-bit frames still pass through the RGA to reach the GPU
+    expect(line(build("rkmpp", "device", { scaleToHeight: null, toneMap: true }, hdr))).toContain("-vf scale_rkrga=format=p010,hwmap=derive_device=opencl");
+    // Without tone mapping no OpenCL device is opened, so boards without it still decode on the hardware
+    const plain = line(build("rkmpp", "device", { scaleToHeight: 1080 }, hdr));
+    expect(plain).toContain("-vf scale_rkrga=w=1920:h=1080:format=nv12 ");
+    expect(plain).not.toContain("opencl");
+    // The decode rung still tone maps on the CPU, for when the GPU fails
+    expect(line(build("rkmpp", "decode", { scaleToHeight: 1080, toneMap: true }, hdr))).toContain("-hwaccel rkmpp -hwaccel_output_format drm_prime -i IN");
+  });
+
+  test("brings frames back to the CPU only where the decoder left them on the device", () => {
+    expect(line(build("amf", "device", { toneMap: true, scaleToHeight: 1080 }, hdr))).toContain("-hwaccel d3d11va -i IN -c:v h264_amf -vf scale=-2:1080,tonemapx=");
+    expect(line(build("qsv", "decode", { scaleToHeight: null }, hdr))).toContain("-vf hwdownload,format=p010le,format=nv12 ");
+  });
+
+  test("passes Rockchip's packed 10-bit frames through the RGA before downloading them", () => {
+    expect(line(build("rkmpp", "decode", { scaleToHeight: null, toneMap: true }, hdr))).toContain("-vf scale_rkrga=format=p010,hwdownload,format=p010le,tonemapx=");
+    expect(TranscodePipeline.decodeCheck("rkmpp", true, settings)?.filters).toEqual(["scale_rkrga=format=p010", "hwdownload", "format=p010le"]);
+    expect(TranscodePipeline.decodeCheck("rkmpp", false, settings)?.filters).toEqual(["hwdownload", "format=nv12"]);
+  });
+
+  test("tone maps on the CPU with tonemapx, else zscale, else not at all", () => {
+    expect(line(build("none", "cpu", { toneMap: true }, hdr))).toContain("-vf scale=-2:720,tonemapx=");
+    expect(line(build("none", "cpu", { toneMap: true }, hdr, new Set(["zscale", "tonemap"])))).toContain("-vf zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,scale=-2:720,format=yuv420p");
+    expect(line(build("none", "cpu", { toneMap: true }, hdr, new Set()))).toContain("-vf scale=-2:720,format=yuv420p");
   });
 
   test("tone maps only when asked and the filter exists", () => {
@@ -141,16 +206,22 @@ describe("Ffmpeg.transportStreamArgs", () => {
     });
   /** The output options between the input and `pipe:1`. */
   const output = (args: string[]) => args.slice(args.indexOf("-i") + 2).join(" ");
+  /** x264 for a plan that encodes, as a ladder on the CPU rung builds it. */
+  const video = (plan: PlaybackPlan) =>
+    plan.video === "encode"
+      ? TranscodePipeline.build("none", "cpu", { scaleToHeight: plan.scaleToHeight, bitrateCap: null, bitrateEstimate: 4_000_000, toneMap: plan.toneMap, keyframeSeconds: 2 }, { width: 1920, height: 1080, bitDepth: 8 }, settings, new Set())
+      : null;
+  const tsArgs = (plan: PlaybackPlan, startSeconds: number) => Ffmpeg.transportStreamArgs("/media/a.mkv", plan, startSeconds, video(plan));
 
   test("trims copied audio to the start when the video is re-encoded after a seek", () => {
-    const line = output(Ffmpeg.transportStreamArgs("/media/a.mkv", planFor(["aac"]), 600, settings));
+    const line = output(tsArgs(planFor(["aac"]), 600));
     expect(line).toContain("-c:a copy -ss 0 ");
   });
 
   test("leaves the stream alone from the start, with converted audio, or with copied video", () => {
-    expect(output(Ffmpeg.transportStreamArgs("/media/a.mkv", planFor(["aac"]), 0, settings))).not.toContain("-ss");
-    expect(output(Ffmpeg.transportStreamArgs("/media/a.mkv", planFor(["mp3"]), 600, settings))).not.toContain("-ss");
-    expect(output(Ffmpeg.transportStreamArgs("/media/a.mkv", planFor(["aac"], ["h264", "hevc"]), 600, settings))).not.toContain("-ss");
+    expect(output(tsArgs(planFor(["aac"]), 0))).not.toContain("-ss");
+    expect(output(tsArgs(planFor(["mp3"]), 600))).not.toContain("-ss");
+    expect(output(tsArgs(planFor(["aac"], ["h264", "hevc"]), 600))).not.toContain("-ss");
   });
 });
 
@@ -265,10 +336,51 @@ describe("DlnaRenderer", () => {
 
   test("reads a renderer's description and the formats it takes", async () => {
     const renderer = await DlnaRenderer.open(location);
-    expect(renderer?.toRecord()).toEqual({ id: "1234-abcd", name: "Living Room TV & Sound", manufacturer: "Acme", model: "Screen 9000", direct: true, place: null });
+    const listed = { hevc: true, uhd: false, hdr: false };
+    expect(renderer?.toRecord()).toEqual({
+      id: "1234-abcd",
+      name: "Living Room TV & Sound",
+      manufacturer: "Acme",
+      model: "Screen 9000",
+      direct: true,
+      place: null,
+      capabilities: listed,
+      detected: listed,
+      overrides: { hevc: null, uhd: null, hdr: null },
+    });
     expect(renderer?.transportStreamType).toBe("video/vnd.dlna.mpeg-tts");
+
+
     expect(renderer?.matroskaType).toBe("video/x-matroska");
-    expect(renderer?.profile).toEqual({ videoCodecs: ["h264", "hevc"], audioCodecs: ["aac", "mp3", "ac3"], maxHeight: 1080, hdr: false });
+    expect(renderer?.profile).toEqual({
+      videoCodecs: ["h264", "hevc"],
+      audioCodecs: ["aac", "mp3", "ac3"],
+      maxHeight: 1080,
+      hdr: false,
+      decoders: [{ codec: "hevc", maxHeight: 1080, tenBit: true, hdr: false }],
+    });
+  });
+
+  test("takes an admin's corrections, and narrows itself on copies it never starts", async () => {
+    // A renderer of its own, since what it learns sticks for as long as it runs
+    const tv = await DlnaRenderer.open(location);
+    if (!tv) throw new Error("the renderer wasn't read");
+
+    // An admin's corrections win over what it lists, field by field
+    tv.overrides = { hevc: null, uhd: true, hdr: true };
+    expect(tv.capabilities).toEqual({ hevc: true, uhd: true, hdr: true });
+    expect(tv.profile).toMatchObject({ maxHeight: 2160, hdr: true, decoders: [{ codec: "hevc", maxHeight: 2160, tenBit: true, hdr: true }] });
+
+    // Copies it never started narrow it, the most specific thing first, for as long as it runs
+    const hevc = { codec: "hevc", height: 2160, bitDepth: 10, hdr: true };
+    tv.recordCopyFailure(hevc);
+    expect(tv.capabilities).toEqual({ hevc: true, uhd: true, hdr: false });
+    tv.recordCopyFailure(hevc);
+    expect(tv.profile.decoders).toEqual([{ codec: "hevc", maxHeight: 2160, tenBit: false, hdr: false }]);
+    tv.recordCopyFailure(hevc);
+    expect(tv.capabilities).toEqual({ hevc: true, uhd: false, hdr: false });
+    tv.recordCopyFailure(hevc);
+    expect(tv.profile.videoCodecs).toEqual(["h264"]);
   });
 
   test("takes HEVC on a Hisense VIDAA TV whose formats never name it", async () => {
@@ -355,34 +467,34 @@ describe.skipIf(!hasFfmpeg)("Progressive streams and thumbnails", () => {
       maxBitrate: null,
       settings,
     });
-    return new ProgressiveSession({ id: "s", userId: "u", item, plan, settings, direct, transportStreamType: "video/mpeg", matroskaType: "video/x-mkv", deviceName: "TV", audioLanguage: null, startMs: 0 });
+    return new ProgressiveSession({ id: "s", userId: "u", item, plan, settings, ladder: null, direct, transportStreamType: "video/mpeg", matroskaType: "video/x-mkv", deviceName: "TV", audioLanguage: null, startMs: 0 });
   }
 
   test("serves the file as it is, whole or by byte range", async () => {
     const session = open(true);
-    const whole = session.serve(new Request("http://tv/media.mkv"), 0);
+    const whole = await session.serve(new Request("http://tv/media.mkv"), 0);
     expect(whole.status).toBe(200);
     expect(whole.headers.get("content-length")).toBe(String(item.size));
     // Labelled with the type the TV listed, not Findr's own name for it
     expect(whole.headers.get("content-type")).toBe("video/x-mkv");
     expect(whole.headers.get("contentfeatures.dlna.org")).toContain("DLNA.ORG_OP=01");
 
-    const part = session.serve(new Request("http://tv/media.mkv", { headers: { Range: "bytes=100-199" } }), 0);
+    const part = await session.serve(new Request("http://tv/media.mkv", { headers: { Range: "bytes=100-199" } }), 0);
     expect(part.status).toBe(206);
     expect(part.headers.get("content-range")).toBe(`bytes 100-199/${item.size}`);
     expect((await part.arrayBuffer()).byteLength).toBe(100);
 
-    const tail = session.serve(new Request("http://tv/media.mkv", { headers: { Range: "bytes=-50" } }), 0);
+    const tail = await session.serve(new Request("http://tv/media.mkv", { headers: { Range: "bytes=-50" } }), 0);
     expect(tail.headers.get("content-range")).toBe(`bytes ${item.size - 50}-${item.size - 1}/${item.size}`);
 
-    const beyond = session.serve(new Request("http://tv/media.mkv", { headers: { Range: `bytes=${item.size}-` } }), 0);
+    const beyond = await session.serve(new Request("http://tv/media.mkv", { headers: { Range: `bytes=${item.size}-` } }), 0);
     expect(beyond.status).toBe(416);
   });
 
   test("streams MPEG-TS from a start time, converting audio the TV can't take", async () => {
     const session = open(false);
     expect(session.plan.audio).toBe("encode");
-    const response = session.serve(new Request("http://tv/media.ts"), 20_000);
+    const response = await session.serve(new Request("http://tv/media.ts"), 20_000);
     const bytes = new Uint8Array(await response.arrayBuffer());
     await session.close();
 
@@ -400,6 +512,34 @@ describe.skipIf(!hasFfmpeg)("Progressive streams and thumbnails", () => {
     // ffprobe lists a transport stream's streams again under its program
     const codecs = new Set((await Bun.$`ffprobe -v error -show_entries stream=codec_name -of csv=p=0 ${file}`.text()).split("\n").filter(Boolean));
     expect([...codecs]).toEqual(["h264", "aac"]);
+  });
+
+  test("sends a TV a stream that started, stepping down from hardware that fails before its first bytes", async () => {
+    // HEVC only on an H.264 TV, so the video is re-encoded, with a ladder claiming VA-API works here
+    const plan = PlaybackDecider.decide({
+      probe: item.probe,
+      audioStream: item.probe.audio[0]?.index ?? 1,
+      profile: { videoCodecs: ["hevc"], audioCodecs: ["aac", "mp3"], maxHeight: 1080, hdr: false },
+      maxBitrate: null,
+      settings,
+    });
+    expect(plan.video).toBe("encode");
+    const report: HardwareReport = { configured: "vaapi", api: "vaapi", encoder: "h264_vaapi", encodes: true, decodes: ["h264"], scales: true, toneMaps: true, message: null, durationMs: 0 };
+    const hardware = HardwareProbe.getInstance();
+    hardware.forget();
+    const ladder = new TranscodeLadder(hardware, report, plan, { width: item.probe.video.width, height: item.probe.video.height, bitDepth: 8 }, settings, "h264");
+    const session = new ProgressiveSession({ id: "ladder", userId: "u", item, plan, settings, ladder, direct: false, transportStreamType: "video/mpeg", matroskaType: "video/x-mkv", deviceName: "TV", audioLanguage: null, startMs: 0 });
+    try {
+      const response = await session.serve(new Request("http://tv/media.ts"), 20_000);
+      expect(response.status).toBe(200);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      expect(bytes[0]).toBe(0x47);
+      expect(ladder.rung).toBe("cpu");
+      expect(session.hardware).toBe(false);
+    } finally {
+      await session.close();
+      hardware.forget();
+    }
   });
 
   test("makes scrubbing thumbnails and a storyboard pointing at their tiles", async () => {

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type DeviceProfile, PlaybackSettingsSchema } from "@findr/types/playback";
+import { type DeviceProfile, type HardwareAcceleration, type HardwareReport, PlaybackSettingsSchema } from "@findr/types/playback";
 import { migrateAuth } from "../auth/client";
 import { database } from "../db/client";
 import { MediaItem } from "../db/models/MediaItem";
@@ -13,7 +13,9 @@ import { HlsVariant } from "./HlsVariant";
 import { LocalNetwork } from "./LocalNetwork";
 import { type ProbeInfo, MediaProbe } from "./MediaProbe";
 import { PlaybackDecider, TranscodeRequiredError } from "./PlaybackDecider";
+import HardwareProbe, { TranscodeLadder } from "./HardwareProbe";
 import { PlaybackSession } from "./PlaybackSession";
+import { CAST_PROFILES } from "./PlaybackService";
 import { SegmentPlan } from "./SegmentPlan";
 import { StreamToken } from "./StreamToken";
 import { WatchHistory } from "./WatchHistory";
@@ -101,6 +103,67 @@ describe("PlaybackDecider", () => {
     expect(at(51).reasons).toEqual(["h264_level"]);
     expect(at(41).mode).toBe("remux");
     expect(at(null).mode).toBe("remux");
+  });
+
+  describe("with a measured decoder", () => {
+    /** A 1080p SDR screen whose browser decodes 4K HEVC Main 10 with HDR, mapping HDR down itself. */
+    const measured: DeviceProfile = {
+      ...browser,
+      decoders: [
+        { codec: "h264", maxHeight: 2160, tenBit: false, hdr: false },
+        { codec: "hevc", maxHeight: 2160, tenBit: true, hdr: true },
+      ],
+    };
+    const hevc4k = { codec: "hevc", height: 2160, bitDepth: 10, hdr: true, profile: "Main 10", level: 153, transfer: "smpte2084" };
+    const decideOn = (probe: ProbeInfo, profile: DeviceProfile, extra: { avoidCopy?: boolean; serverToneMap?: boolean } = {}) =>
+      PlaybackDecider.decide({ probe, audioStream: 1, profile, maxBitrate: null, settings, ...extra });
+
+    test("copies 4K HDR to a smaller SDR screen whose decoder takes it", () => {
+      const plan = decideOn(probeOf(hevc4k), measured);
+      expect(plan.mode).toBe("remux");
+      expect(plan.height).toBe(2160);
+    });
+
+    test("still transcodes what the decoder itself can't take", () => {
+      const noHdr: DeviceProfile = { ...measured, decoders: [{ codec: "hevc", maxHeight: 1080, tenBit: false, hdr: false }] };
+      expect(decideOn(probeOf(hevc4k), noHdr).reasons).toEqual(["bit_depth", "resolution", "hdr"]);
+    });
+
+    test("never copies 12-bit video, which no measured decoder is asked about", () => {
+      expect(decideOn(probeOf({ ...hevc4k, bitDepth: 12, hdr: false }), measured).reasons).toEqual(["bit_depth"]);
+    });
+
+    test("keeps 10-bit H.264 out of browsers whatever their decoder reports", () => {
+      const generous: DeviceProfile = { ...browser, decoders: [{ codec: "h264", maxHeight: 2160, tenBit: true, hdr: false }] };
+      expect(decideOn(probeOf({ bitDepth: 10 }), generous).reasons).toEqual(["bit_depth"]);
+    });
+
+    test("maps HDR down on the server when the user asks, but never for an HDR screen", () => {
+      const plan = decideOn(probeOf(hevc4k), measured, { serverToneMap: true });
+      expect(plan.reasons).toEqual(["hdr"]);
+      expect(plan.toneMap).toBe(true);
+      expect(plan.scaleToHeight).toBe(1080);
+      expect(decideOn(probeOf(hevc4k), { ...measured, hdr: true }, { serverToneMap: true }).mode).toBe("remux");
+    });
+
+    test("judges a codec without an entry by the screen, as before", () => {
+      const vp9 = { ...measured, videoCodecs: [...measured.videoCodecs, "vp9" as const] };
+      expect(decideOn(probeOf({ codec: "vp9", height: 2160 }), vp9).reasons).toEqual(["resolution"]);
+    });
+
+    test("re-encodes a file that would copy once the device has failed to decode it", () => {
+      const plan = decideOn(probeOf(), measured, { avoidCopy: true });
+      expect(plan.mode).toBe("transcode");
+      expect(plan.reasons).toEqual(["client_decode_failed"]);
+      expect(decideOn(probeOf({ audio: "dts" }), measured, { avoidCopy: true }).reasons).toEqual(["audio_codec:dts", "client_decode_failed"]);
+    });
+  });
+
+  test("copies 4K HDR HEVC to Chromecasts only when they are said to be the 4K models", () => {
+    const file = probeOf({ codec: "hevc", height: 2160, bitDepth: 10, hdr: true, profile: "Main 10", level: 153, transfer: "smpte2084" });
+    const castTo = (profile: DeviceProfile) => PlaybackDecider.decide({ probe: file, audioStream: 1, profile, maxBitrate: null, settings });
+    expect(castTo(CAST_PROFILES["1080p"]).reasons).toEqual(["video_codec:hevc", "resolution", "hdr"]);
+    expect(castTo(CAST_PROFILES["4k-hdr"]).mode).toBe("remux");
   });
 
   test("refuses when only a transcode would play and transcoding is off", () => {
@@ -352,7 +415,7 @@ describe.skipIf(!hasFfmpeg)("Packaging", () => {
   }
 
   /** A session over the test file under the given plan. */
-  async function openSession(mode: "copy" | "encode") {
+  async function openSession(mode: "copy" | "encode", acceleration: HardwareAcceleration = "none") {
     const title = Title.findOrCreate(42, "movie");
     const item = MediaItem.upsert({
       titleId: title.id,
@@ -367,16 +430,51 @@ describe.skipIf(!hasFfmpeg)("Packaging", () => {
     });
     const profile: DeviceProfile = mode === "copy" ? browser : { ...browser, videoCodecs: ["hevc"] };
     const plan = PlaybackDecider.decide({ probe, audioStream: 1, profile, maxBitrate: null, settings });
-    const directory = join(root, `session-${mode}`);
+    const directory = join(root, `session-${mode}-${acceleration}`);
     await Bun.$`mkdir -p ${directory}`;
+    const chosen = { ...settings, hardwareAcceleration: acceleration };
+    const ladder = plan.video === "encode" ? await HardwareProbe.getInstance().ladder(plan, probe, chosen) : null;
     return {
       directory,
-      session: new PlaybackSession({ id: mode, userId: "nobody", item, plan, settings, directory, startMs: 0, audioLanguage: null, device: "browser", warm: true }),
+      ladder,
+      session: new PlaybackSession({ id: mode, userId: "nobody", item, plan, settings: chosen, directory, startMs: 0, audioLanguage: null, device: "browser", warm: true, ladder }),
     };
   }
 
-  test.each(["copy", "encode"] as const)("serves %s segments on the file's timeline, before and after a seek", async (mode) => {
-    const { directory, session } = await openSession(mode);
+  // VideoToolbox is on every Mac, so the hardware rungs are checked there; elsewhere that case is skipped
+  const cases: Array<["copy" | "encode", HardwareAcceleration]> = [["copy", "none"], ["encode", "none"], ...(process.platform === "darwin" ? [["encode", "videotoolbox"] as ["encode", HardwareAcceleration]] : [])];
+  test("steps down the ladder when the hardware fails at play time, and remembers it", async () => {
+    const { directory, session: unused } = await openSession("encode");
+    await unused.close();
+    const item = MediaItem.findForKey({ titleId: Title.findOrCreate(42, "movie").id, season: null, episode: null });
+    if (!item) throw new Error("the test item wasn't found");
+    const plan = PlaybackDecider.decide({ probe, audioStream: 1, profile: { ...browser, videoCodecs: ["hevc"] }, maxBitrate: null, settings });
+
+    // A report claiming VA-API does everything, on a machine where every VA-API run fails
+    const report: HardwareReport = { configured: "vaapi", api: "vaapi", encoder: "h264_vaapi", encodes: true, decodes: ["h264"], scales: true, toneMaps: true, message: null, durationMs: 0 };
+    const hardware = HardwareProbe.getInstance();
+    hardware.forget();
+    const ladder = new TranscodeLadder(hardware, report, plan, { width: 320, height: 180, bitDepth: 8 }, settings, "h264");
+    expect(ladder.rung).toBe("device");
+
+    const session = new PlaybackSession({ id: "ladder", userId: "nobody", item, plan, settings, directory: `${directory}-ladder`, startMs: 0, audioLanguage: null, device: "browser", warm: false, ladder });
+    await Bun.$`mkdir -p ${directory}-ladder`;
+    try {
+      await session.init();
+      await session.segment(0);
+      expect(ladder.rung).toBe("cpu");
+      expect([...hardware.failed(ladder.key)].sort()).toEqual(["decode", "device", "encode"]);
+      // The next transcode of the kind starts where this one ended up
+      expect(new TranscodeLadder(hardware, report, plan, { width: 320, height: 180, bitDepth: 8 }, settings, "h264").rung).toBe("cpu");
+    } finally {
+      await session.close();
+      hardware.forget();
+    }
+  }, 60_000);
+
+  test.each(cases)("serves %s segments on the file's timeline, before and after a seek (%s)", async (mode, acceleration) => {
+    const { directory, session, ladder } = await openSession(mode, acceleration);
+    if (acceleration !== "none") expect(ladder?.hardware).toBe(true);
     try {
       // Copied video cuts on its 2.5 s keyframes; encoded video every 6 s
       expect(session.segments.count).toBe(mode === "copy" ? 4 : 5);

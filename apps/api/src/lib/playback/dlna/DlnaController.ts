@@ -21,6 +21,7 @@
 import {
   type PlaybackItemKey,
   type RendererCommand,
+  type RendererOverrides,
   type RendererPlay,
   type RendererRecord,
   type RendererState,
@@ -29,6 +30,7 @@ import {
 } from "@findr/types/playback";
 import { MediaItem } from "../../db/models/MediaItem";
 import { PlaybackPrefs } from "../../db/models/PlaybackPrefs";
+import { RendererOverride } from "../../db/models/RendererOverride";
 import SelfManagedSingleton from "../../other/SelfManagedSingleton";
 import BridgeHub from "../bridge/BridgeHub";
 import { CastAccess } from "../CastAccess";
@@ -114,6 +116,9 @@ const MAX_FAILURES = 5;
 /** A file the renderer took but hasn't started playing in this long is sent again as a stream. */
 const DIRECT_START_MS = 15_000;
 
+/** A stream of copied video the renderer hasn't started in this long is sent again converted. */
+const COPY_START_MS = 15_000;
+
 /** How long a file may take to really start before the resume seek gives up and the item is sent as a stream from there. */
 const RESUME_WAIT_MS = 30_000;
 
@@ -193,7 +198,9 @@ export default class DlnaController extends SelfManagedSingleton {
             }
             // One device answering badly mustn't hide the others
             const renderer = await DlnaRenderer.open(location, network).catch(() => null);
-            if (renderer) this.renderers.set(renderer.id, renderer);
+            if (!renderer) return;
+            renderer.overrides = RendererOverride.get(renderer.id);
+            this.renderers.set(renderer.id, renderer);
           }),
         );
 
@@ -330,6 +337,17 @@ export default class DlnaController extends SelfManagedSingleton {
   }
 
   /** What a renderer is doing, as far as Findr knows, and whether `userId` started it. */
+  /**
+   * Replaces an admin's corrections to what a renderer plays, kept for the
+   * next time it is found too. They apply from the next item it is sent.
+   */
+  public setOverrides(rendererId: string, overrides: RendererOverrides): RendererRecord {
+    const renderer = this.renderers.get(rendererId);
+    if (!renderer) throw new PlaybackError("renderer_not_found", 404);
+    renderer.overrides = RendererOverride.set(rendererId, overrides);
+    return renderer.toRecord();
+  }
+
   public status(rendererId: string, userId: string | null): RendererStatus {
     const active = this.active.get(rendererId);
     const renderer = active?.renderer ?? this.renderers.get(rendererId);
@@ -427,7 +445,7 @@ export default class DlnaController extends SelfManagedSingleton {
    */
   private async start(
     renderer: DlnaRenderer,
-    request: RendererPlay,
+    request: RendererPlay & { avoidCopy?: boolean },
     userId: string,
     base: string,
     label: string,
@@ -456,20 +474,34 @@ export default class DlnaController extends SelfManagedSingleton {
     return { session, url, offsetMs };
   }
 
+  /** Whether a stream of copied video has failed to start, or not started in time; files are judged on their own. */
+  private copyStalled(active: Active, failed: boolean): boolean {
+    if (active.session.direct || active.session.plan.video !== "copy") return false;
+    return failed || Date.now() - active.loadedAt > COPY_START_MS;
+  }
+
   /**
-   * Sends a renderer that took the file but never played it the same item
-   * as a transport stream, from where it was meant to start, and stops
-   * offering it files. The remote keeps showing it as starting meanwhile.
+   * Sends a renderer that never played what it took the same item again,
+   * from where it was meant to start. A file (`file`) comes back as a
+   * transport stream and the renderer is offered no more files; copied video
+   * in a stream (`copy`) comes back converted, and the renderer remembers
+   * what it couldn't take. The remote keeps showing it as starting meanwhile.
    */
-  private async fallBack(rendererId: string, active: Active): Promise<void> {
+  private async fallBack(rendererId: string, active: Active, kind: "file" | "copy"): Promise<void> {
     const base = active.renderer.network.mediaBase();
-    console.warn(`[Playback] ${active.renderer.name} took the file but didn't play it; sending a stream instead`);
-    active.renderer.refuseMatroska();
-    active.busy = true;
     const previous = active.session;
+    if (kind === "file") {
+      console.warn(`[Playback] ${active.renderer.name} took the file but didn't play it; sending a stream instead`);
+      active.renderer.refuseMatroska();
+    } else {
+      const video = previous.item.probe.video;
+      console.warn(`[Playback] ${active.renderer.name} didn't play ${video.codec} ${video.height}p ${video.bitDepth}-bit${video.hdr ? " HDR" : ""} as it is; converting it instead`);
+      active.renderer.recordCopyFailure({ codec: video.codec, height: video.height, bitDepth: video.bitDepth, hdr: video.hdr });
+    }
+    active.busy = true;
     try {
       if (!base) throw new Error("no address for TVs");
-      const request = { ...active.request, startMs: active.positionMs };
+      const request = { ...active.request, startMs: active.positionMs, avoidCopy: kind === "copy" };
       const next = await this.start(active.renderer, request, previous.userId, base, active.label);
       if (this.active.get(rendererId) !== active) {
         // Stopped meanwhile
@@ -561,7 +593,7 @@ export default class DlnaController extends SelfManagedSingleton {
     }
     if (this.active.get(rendererId) === active && active.resumeAt !== null) {
       console.warn(`[Playback] ${active.renderer.name} didn't resume the file at ${DlnaRenderer.clock(positionMs)}`);
-      await this.fallBack(rendererId, active);
+      await this.fallBack(rendererId, active, "file");
     }
   }
 
@@ -605,11 +637,14 @@ export default class DlnaController extends SelfManagedSingleton {
       if (advancing) active.started = true;
       else if (active.session.direct || state === "playing") {
         // A file that errors or never gets going is sent again as a stream
-        if (active.session.direct && (failed || Date.now() - active.loadedAt > DIRECT_START_MS)) return this.fallBack(rendererId, active);
+        if (active.session.direct && (failed || Date.now() - active.loadedAt > DIRECT_START_MS)) return this.fallBack(rendererId, active, "file");
+        if (this.copyStalled(active, failed)) return this.fallBack(rendererId, active, "copy");
         active.state = "loading";
         active.session.touch();
         return;
       }
+      // A stream of copied video the TV refused or stopped without playing is sent again converted; paused is the viewer's doing
+      if (state !== "paused" && this.copyStalled(active, failed)) return this.fallBack(rendererId, active, "copy");
     }
 
     // Only a playing or paused renderer's position means anything

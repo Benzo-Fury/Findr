@@ -7,10 +7,11 @@
  * replaces the previous run.
  */
 
-import type { PlaybackSettings } from "@findr/types/playback";
+import type { PlaybackSettings, TranscodeRung } from "@findr/types/playback";
 import type { MediaItem } from "../db/models/MediaItem";
 import { FfmpegLocator } from "../media/FfmpegLocator";
 import { Ffmpeg } from "./Ffmpeg";
+import type { TranscodeLadder } from "./HardwareProbe";
 import type { PlaybackPlan } from "./PlaybackDecider";
 
 // ---------- Types ---------- //
@@ -21,6 +22,8 @@ export interface ProgressiveOptions {
   item: MediaItem;
   plan: PlaybackPlan;
   settings: PlaybackSettings;
+  /** Where the transcode is on the hardware ladder; null when video is copied. */
+  ladder: TranscodeLadder | null;
   /** Serve the file as it is rather than through ffmpeg. */
   direct: boolean;
   /** The MIME type the renderer listed for MPEG-TS. */
@@ -51,6 +54,7 @@ export class ProgressiveSession {
   public positionMs: number;
 
   private readonly settings: PlaybackSettings;
+  private readonly ladder: TranscodeLadder | null;
   private readonly transportStreamType: string;
   private readonly matroskaType: string;
   private child: ReturnType<typeof Bun.spawn<"ignore", "pipe", "pipe">> | null = null;
@@ -66,6 +70,7 @@ export class ProgressiveSession {
     this.item = options.item;
     this.plan = options.plan;
     this.settings = options.settings;
+    this.ladder = options.ladder;
     this.direct = options.direct;
     this.transportStreamType = options.transportStreamType;
     this.matroskaType = options.matroskaType;
@@ -77,6 +82,16 @@ export class ProgressiveSession {
   /** Whether the session encodes video, which counts toward the transcode limit. */
   public get transcoding(): boolean {
     return !this.direct && this.plan.video === "encode";
+  }
+
+  /** How much of the transcode runs on the hardware, or null when nothing is encoded. */
+  public get rung(): TranscodeRung | null {
+    return this.transcoding && this.ladder ? this.ladder.rung : null;
+  }
+
+  /** Whether video is encoded on the hardware. */
+  public get hardware(): boolean {
+    return this.transcoding && (this.ladder?.hardware ?? false);
   }
 
   /** The file name the renderer is given, whose extension some renderers go by. */
@@ -109,7 +124,7 @@ export class ProgressiveSession {
   }
 
   /** Answers a renderer's request for the media; `startMs` positions a transport stream. */
-  public serve(request: Request, startMs: number): Response {
+  public async serve(request: Request, startMs: number): Promise<Response> {
     this.touch();
     if (!this.fetched) {
       this.fetched = true;
@@ -169,7 +184,7 @@ export class ProgressiveSession {
   }
 
   /** A transport stream from `startMs`, produced while the renderer reads it. */
-  private serveTransportStream(request: Request, headers: Headers, startMs: number): Response {
+  private async serveTransportStream(request: Request, headers: Headers, startMs: number): Promise<Response> {
     if (request.method === "HEAD" || this.closed) return new Response(null, { status: this.closed ? 404 : 200, headers });
 
     // A renderer that drops its connection (a stall, a network blip) asks for the same URL again,
@@ -183,30 +198,59 @@ export class ProgressiveSession {
       this.servedStartMs = startMs;
     }
 
-    // One run at a time: a new request replaces the last
-    this.child?.kill("SIGKILL");
-    const args = Ffmpeg.transportStreamArgs(this.item.path, this.plan, startMs / 1000, this.settings);
-    let child: NonNullable<typeof this.child>;
-    try {
-      child = Bun.spawn([FfmpegLocator.path("ffmpeg"), ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    } catch {
-      return new Response(null, { status: 503, headers });
-    }
-    this.child = child;
-    void new Response(child.stderr).text().then((stderr) => {
-      if (stderr.trim() && this.child === child) console.warn(`[Playback] DLNA stream ${this.id}: ${stderr.trim().slice(-300)}`);
-    });
+    // One run at a time: a new request replaces the last. A transcode that fails before its first
+    // bytes tries the next rung down, so the renderer only ever sees a stream that started
+    for (;;) {
+      this.child?.kill("SIGKILL");
+      const args = Ffmpeg.transportStreamArgs(this.item.path, this.plan, startMs / 1000, this.ladder?.args(2) ?? null);
+      let child: NonNullable<typeof this.child>;
+      try {
+        child = Bun.spawn([FfmpegLocator.path("ffmpeg"), ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      } catch {
+        return new Response(null, { status: 503, headers });
+      }
+      this.child = child;
+      const stderr = new Response(child.stderr).text();
 
-    // The renderer hanging up ends the run; every chunk it reads keeps the session alive
-    request.signal.addEventListener("abort", () => child.kill("SIGKILL"), { once: true });
-    const body = child.stdout.pipeThrough(
-      new TransformStream<Uint8Array, Uint8Array>({
-        transform: (chunk, controller) => {
+      // The renderer hanging up ends the run
+      const onAbort = () => child.kill("SIGKILL");
+      request.signal.addEventListener("abort", onAbort, { once: true });
+      const reader = child.stdout.getReader();
+      const first = await reader.read().catch(() => ({ done: true as const, value: undefined }));
+
+      if (first.done) {
+        // Nothing came out: hung up or replaced meanwhile, a rung that failed, or a real failure
+        request.signal.removeEventListener("abort", onAbort);
+        const exitCode = await child.exited;
+        const complaint = (await stderr).trim();
+        if (request.signal.aborted || this.child !== child || this.closed) return new Response(null, { status: 499, headers });
+        if (exitCode !== 0 && this.ladder?.stepDown(complaint || `ffmpeg exited with ${exitCode}`)) continue;
+        if (complaint) console.warn(`[Playback] DLNA stream ${this.id}: ${complaint.slice(-300)}`);
+        return new Response(null, { status: 500, headers });
+      }
+
+      void stderr.then((text) => {
+        if (text.trim() && this.child === child) console.warn(`[Playback] DLNA stream ${this.id}: ${text.trim().slice(-300)}`);
+      });
+
+      // The first bytes, then the rest; every chunk the renderer reads keeps the session alive
+      this.touch();
+      const body = new ReadableStream<Uint8Array>({
+        start: (controller) => controller.enqueue(first.value),
+        pull: async (controller) => {
+          const next = await reader.read().catch(() => ({ done: true as const, value: undefined }));
+          if (next.done) {
+            controller.close();
+            return;
+          }
           this.touch();
-          controller.enqueue(chunk);
+          controller.enqueue(next.value);
         },
-      }),
-    );
-    return new Response(body, { status: 200, headers });
+        cancel: () => {
+          child.kill("SIGKILL");
+        },
+      });
+      return new Response(body, { status: 200, headers });
+    }
   }
 }

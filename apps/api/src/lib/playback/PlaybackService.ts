@@ -16,6 +16,7 @@ import { isAbsolute, join } from "node:path";
 import type {
   CreateCastUrl,
   CreateSession,
+  ChromecastProfile,
   DeviceProfile,
   NowPlayingRecord,
   PlaybackItemKey,
@@ -34,6 +35,7 @@ import { CastAddress } from "./CastAddress";
 import { CastTicket, type CastTicketData } from "./CastTicket";
 import DlnaController from "./dlna/DlnaController";
 import { Ffmpeg } from "./Ffmpeg";
+import HardwareProbe from "./HardwareProbe";
 import MediaIndexer from "./MediaIndexer";
 import type { ProbeInfo } from "./MediaProbe";
 import { PlaybackDecider, type PlaybackPlan, TranscodeRequiredError } from "./PlaybackDecider";
@@ -81,12 +83,23 @@ export interface RendererTarget {
 }
 
 /**
- * What a Google Cast receiver is assumed to decode. The Default Media
- * Receiver on every Chromecast plays H.264 High up to level 4.1 and AAC, up to
- * 1080p (Google's Cast supported media list); newer ones do more, but a cast
- * must work on all of them.
+ * What a Google Cast receiver is assumed to decode, by the `chromecastProfile`
+ * setting, since a receiver can't say. The Default Media Receiver on every
+ * Chromecast plays H.264 High up to level 4.1 and AAC, up to 1080p (Google's
+ * Cast supported media list). The Chromecast Ultra and the Google TV models
+ * add HEVC Main 10, 4K and HDR10, and H.264 up to level 5.1.
  */
-const CAST_PROFILE: DeviceProfile = { videoCodecs: ["h264"], audioCodecs: ["aac", "mp3"], maxHeight: 1080, hdr: false, maxH264Level: 41 };
+export const CAST_PROFILES: Record<ChromecastProfile, DeviceProfile> = {
+  "1080p": { videoCodecs: ["h264"], audioCodecs: ["aac", "mp3"], maxHeight: 1080, hdr: false, maxH264Level: 41 },
+  "4k-hdr": {
+    videoCodecs: ["h264", "hevc"],
+    audioCodecs: ["aac", "mp3"],
+    maxHeight: 2160,
+    hdr: true,
+    maxH264Level: 51,
+    decoders: [{ codec: "hevc", maxHeight: 2160, tenBit: true, hdr: true }],
+  },
+};
 
 /** A session with no request or progress report for this long is ended. */
 const IDLE_MS = 60_000;
@@ -105,6 +118,8 @@ interface PrepareRequest extends PlaybackItemKey {
   audioTrack: number | null;
   maxBitrate: number | null;
   startMs: number | null;
+  /** Re-encode even where the profile says the original plays. */
+  avoidCopy?: boolean;
 }
 
 // ---------- Service ---------- //
@@ -128,6 +143,9 @@ export default class PlaybackService extends SelfManagedSingleton {
    */
   public async applySettings(): Promise<void> {
     const settings = SettingsStore.section("playback");
+    // The hardware is checked again for the new settings, in the background, before anyone presses Play
+    HardwareProbe.getInstance().forget();
+    if (settings.enabled) void HardwareProbe.getInstance().report(settings);
     if (settings.enabled && !this.running) await this.turnOn();
     else if (!settings.enabled && this.running) await this.turnOff();
     else if (this.running) {
@@ -169,6 +187,7 @@ export default class PlaybackService extends SelfManagedSingleton {
       startMs,
       height: plan.height,
       bitrate: plan.bitrate,
+      sourceVideo: { codec: item.probe.video.codec, height: item.probe.video.height, bitDepth: item.probe.video.bitDepth, hdr: item.probe.video.hdr },
       remoteUrl: base ? `${base}${playlistUrl}` : null,
       castUrl: base ? this.castPlaylist(base, item, request, client) : null,
       trickplayUrl: Trickplay.url(item.id, settings),
@@ -218,7 +237,7 @@ export default class PlaybackService extends SelfManagedSingleton {
     if (session instanceof PlaybackSession) return session;
     if (!SettingsStore.section("playback").casting) throw new PlaybackError("casting_disabled", 404);
 
-    const prepared = await this.prepare({ ...data, startMs: 0 }, CAST_PROFILE, { userId: data.userId, local: true });
+    const prepared = await this.prepare({ ...data, startMs: 0 }, CAST_PROFILES[SettingsStore.section("playback").chromecastProfile], { userId: data.userId, local: true });
 
     // A new ticket for the same item replaces the receiver's stream, as when the viewer switches audio
     // track, so the old one's work stops now rather than counting toward the transcode limit until reaped
@@ -232,12 +251,17 @@ export default class PlaybackService extends SelfManagedSingleton {
   }
 
   /** Starts a progressive session for a DLNA renderer, returning it with its stream path. */
-  public async createProgressive(request: RendererPlay, renderer: RendererTarget, userId: string): Promise<{ session: ProgressiveSession; path: string }> {
+  public async createProgressive(
+    request: RendererPlay & { avoidCopy?: boolean },
+    renderer: RendererTarget,
+    userId: string,
+  ): Promise<{ session: ProgressiveSession; path: string }> {
     const prepared = await this.prepare({ ...request, maxBitrate: null }, renderer.profile, { userId, local: renderer.local });
     const { item, plan, audio, startMs, settings } = prepared;
     // A TV given the file as it is plays the track it picks itself, so any other track goes as a stream
     const direct = renderer.acceptsMatroska && plan.mode === "remux" && audio.index === item.defaultAudioStream;
     this.checkTranscodeLimit(!direct && plan.video === "encode", settings);
+    const ladder = !direct && plan.video === "encode" ? await HardwareProbe.getInstance().ladder(plan, item.probe, settings) : null;
 
     const session = new ProgressiveSession({
       id: crypto.randomUUID(),
@@ -245,6 +269,7 @@ export default class PlaybackService extends SelfManagedSingleton {
       item,
       plan,
       settings,
+      ladder,
       direct,
       transportStreamType: renderer.transportStreamType,
       matroskaType: renderer.matroskaType,
@@ -260,7 +285,6 @@ export default class PlaybackService extends SelfManagedSingleton {
   public nowPlaying(): NowPlayingRecord[] {
     const sessions = [...this.sessions.values()];
     const users = UserAccount.names(sessions.map((session) => session.userId));
-    const hardware = SettingsStore.section("playback").hardwareAcceleration !== "none";
 
     return sessions
       .map((session): NowPlayingRecord | null => {
@@ -278,7 +302,8 @@ export default class PlaybackService extends SelfManagedSingleton {
           deviceName: session.deviceName,
           mode: session instanceof ProgressiveSession && session.direct ? "direct" : session.plan.mode,
           reasons: session.plan.reasons,
-          hardware: hardware && session.transcoding,
+          hardware: session.hardware,
+          rung: session.rung,
           positionMs: session.positionMs,
           durationMs: session.item.durationMs,
           startedAt: session.createdAt,
@@ -382,7 +407,15 @@ export default class PlaybackService extends SelfManagedSingleton {
     let plan: PlaybackPlan;
     const maxBitrate = this.bitrateCap(request.maxBitrate, settings, client.local);
     try {
-      plan = PlaybackDecider.decide({ probe: item.probe, audioStream: audio.index, profile, maxBitrate, settings });
+      plan = PlaybackDecider.decide({
+        probe: item.probe,
+        audioStream: audio.index,
+        profile,
+        maxBitrate,
+        settings,
+        avoidCopy: request.avoidCopy ?? false,
+        serverToneMap: prefs.serverToneMap,
+      });
     } catch (error) {
       if (error instanceof TranscodeRequiredError) throw new PlaybackError("transcode_required", 409, error.message);
       throw error;
@@ -402,6 +435,7 @@ export default class PlaybackService extends SelfManagedSingleton {
     const id = crypto.randomUUID();
     const directory = join(this.scratchRoot(settings), id);
     await mkdir(directory, { recursive: true });
+    const ladder = plan.video === "encode" ? await HardwareProbe.getInstance().ladder(plan, item.probe, settings) : null;
 
     const session = new PlaybackSession({
       id,
@@ -413,6 +447,7 @@ export default class PlaybackService extends SelfManagedSingleton {
       startMs,
       audioLanguage: audio.language,
       device,
+      ladder,
       warm: device === "browser",
     });
     this.sessions.set(id, session);
@@ -436,7 +471,8 @@ export default class PlaybackService extends SelfManagedSingleton {
     return root;
   }
 
-  private scratchRootOrNull(settings: PlaybackSettings): string | null {
+  /** Where session directories go under these settings, or null when neither the transcodes nor the downloads path is set. */
+  public scratchRootOrNull(settings: PlaybackSettings): string | null {
     if (settings.transcodesPath) return settings.transcodesPath;
     const downloads = SettingsStore.section("paths").downloads;
     return downloads && isAbsolute(downloads) ? join(downloads, ".transcodes") : null;

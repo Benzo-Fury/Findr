@@ -174,6 +174,14 @@ export class MediaItem extends Model {
     return this.db.query<{ id: string; path: string; size: number; mtime: number }, []>("SELECT id, path, size, mtime FROM media_items").all();
   }
 
+  /** What was probed of every indexed file, without the keyframes, for looking over the whole library. */
+  public static probes(): ProbeInfo[] {
+    return this.db
+      .query<{ probe: string }, []>("SELECT probe FROM media_items")
+      .all()
+      .map((row) => JSON.parse(row.probe) as ProbeInfo);
+  }
+
   // ---------- Mutations ---------- //
 
   /** Records a probed file, replacing what was known about the same path. */

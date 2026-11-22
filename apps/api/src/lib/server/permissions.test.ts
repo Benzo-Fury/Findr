@@ -45,6 +45,7 @@ const EXPECTED: Record<string, Access> = {
   "/api/playback/progress": "user",
   "/api/playback/renderers": "user",
   "/api/playback/renderers/:id": "user",
+  "/api/playback/renderers/:id/capabilities": "admin",
   "/api/playback/renderers/:id/command": "user",
   "/api/playback/renderers/:id/play": "user",
   "/api/playback/renderers/:id/splash": "user",

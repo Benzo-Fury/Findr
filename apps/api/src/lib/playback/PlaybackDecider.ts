@@ -1,7 +1,10 @@
 /**
  * Decides how a library file reaches one device. Video is copied when the
- * device can decode it as it is and it fits the bitrate cap; otherwise it is
- * re-encoded to H.264, if transcoding is allowed. Audio is copied when the
+ * device's decoder takes it as it is and it fits the bitrate cap; otherwise it
+ * is re-encoded to H.264, if transcoding is allowed. What the decoder takes is
+ * judged per codec where the device measured it (`DeviceProfile.decoders`),
+ * so a 4K or HDR file a smaller or SDR screen still decodes is copied, and
+ * the device scales or maps it down itself. Audio is copied when the
  * device takes the codec and converted to stereo AAC otherwise, which is
  * cheap enough to allow always. Every reason for re-encoding is recorded so it
  * can be shown to the user.
@@ -24,6 +27,10 @@ export interface DecisionInput {
   /** Highest total bitrate to send in bits per second, or null for no cap. */
   maxBitrate: number | null;
   settings: PlaybackSettings;
+  /** Re-encode the video even if the profile says a copy plays, as after a copy failed to decode there. */
+  avoidCopy?: boolean;
+  /** Map HDR down on the server for an SDR screen, even when the device's decoder would do it. */
+  serverToneMap?: boolean;
 }
 
 /** How one session sends its file. */
@@ -56,7 +63,7 @@ export class TranscodeRequiredError extends Error {
 
 /** ffprobe codec names Findr can send as they are, by the name devices report. */
 const VIDEO_CODECS: Record<string, PlaybackVideoCodec> = { h264: "h264", hevc: "hevc", av1: "av1", vp9: "vp9" };
-const AUDIO_CODECS: Record<string, PlaybackAudioCodec> = { aac: "aac", mp3: "mp3", opus: "opus", flac: "flac", ac3: "ac3", eac3: "eac3" };
+export const AUDIO_CODECS: Record<string, PlaybackAudioCodec> = { aac: "aac", mp3: "mp3", opus: "opus", flac: "flac", ac3: "ac3", eac3: "eac3" };
 
 /** Picture heights of each transcode cap. */
 const RESOLUTION_HEIGHTS: Record<PlaybackSettings["maxTranscodeResolution"], number> = {
@@ -92,7 +99,8 @@ export class PlaybackDecider {
     const reasons: string[] = copyAudio ? [] : [`audio_codec:${audio.codec}`];
 
     // Video: every way the device or the cap can rule out a copy
-    const videoReasons = this.videoReasons(probe, profile, maxBitrate);
+    const videoReasons = this.videoReasons(probe, profile, maxBitrate, input.serverToneMap ?? false);
+    if (input.avoidCopy && videoReasons.length === 0) videoReasons.push("client_decode_failed");
     reasons.push(...videoReasons);
 
     if (videoReasons.length === 0) {
@@ -136,17 +144,25 @@ export class PlaybackDecider {
   }
 
   /** Why the video can't be copied to this device; empty when it can. */
-  private static videoReasons(probe: ProbeInfo, profile: DeviceProfile, maxBitrate: number | null): string[] {
+  private static videoReasons(probe: ProbeInfo, profile: DeviceProfile, maxBitrate: number | null, serverToneMap: boolean): string[] {
     const reasons: string[] = [];
     const codec = VIDEO_CODECS[probe.video.codec];
+    // What the device measured of its decoder for this codec, if it did
+    const decoder = codec ? profile.decoders?.find((entry) => entry.codec === codec) : undefined;
 
     if (!codec || !profile.videoCodecs.includes(codec)) reasons.push(`video_codec:${probe.video.codec}`);
-    // Browsers decode only 8-bit H.264
-    else if (codec === "h264" && probe.video.bitDepth > 8) reasons.push("bit_depth");
+    // Browsers decode only 8-bit H.264, whatever they report, and nothing deeper than 10-bit; otherwise as the decoder says
+    else if (probe.video.bitDepth > 10 || (probe.video.bitDepth > 8 && (codec === "h264" || decoder?.tenBit === false))) reasons.push("bit_depth");
     // Older Chromecasts stop at level 4.1; a file probed without its level is assumed to fit
     else if (codec === "h264" && profile.maxH264Level !== undefined && (probe.video.level ?? 0) > profile.maxH264Level) reasons.push("h264_level");
-    if (probe.video.height > profile.maxHeight) reasons.push("resolution");
-    if (probe.video.hdr && !profile.hdr) reasons.push("hdr");
+
+    // A decoder that takes a taller picture than the screen scales it down itself
+    if (probe.video.height > (decoder?.maxHeight ?? profile.maxHeight)) reasons.push("resolution");
+
+    // HDR plays on an HDR screen, or through a decoder that maps it down itself unless the user wants that done here
+    const showsHdr = decoder ? decoder.hdr && (profile.hdr || !serverToneMap) : profile.hdr;
+    if (probe.video.hdr && !showsHdr) reasons.push("hdr");
+
     if (maxBitrate !== null && probe.bitrate > maxBitrate) reasons.push("bitrate_cap");
     return reasons;
   }

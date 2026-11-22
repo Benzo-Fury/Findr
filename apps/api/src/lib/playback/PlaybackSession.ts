@@ -9,11 +9,12 @@
 import { existsSync } from "node:fs";
 import { rm, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import type { PlaybackDevice, PlaybackSettings } from "@findr/types/playback";
+import type { PlaybackDevice, PlaybackSettings, TranscodeRung } from "@findr/types/playback";
 import type { MediaItem } from "../db/models/MediaItem";
 import { HlsJob } from "./HlsJob";
 import { HlsVariant } from "./HlsVariant";
 import type { PlaybackPlan } from "./PlaybackDecider";
+import type { TranscodeLadder } from "./HardwareProbe";
 import { SegmentPlan } from "./SegmentPlan";
 
 
@@ -42,6 +43,8 @@ export interface SessionOptions {
   audioLanguage: string | null;
   /** The browser playing it, or a cast receiver. */
   device: PlaybackDevice;
+  /** Where the transcode is on the hardware ladder; null when video is copied. */
+  ladder: TranscodeLadder | null;
   /** Whether to start packaging before the first request; a cast session waits for its receiver. */
   warm: boolean;
 }
@@ -83,6 +86,7 @@ export class PlaybackSession {
 
   private readonly settings: PlaybackSettings;
   private readonly directory: string;
+  private readonly ladder: TranscodeLadder | null;
   private job: HlsJob | null = null;
   private initReady = false;
   private readonly ready = new Set<number>();
@@ -101,6 +105,7 @@ export class PlaybackSession {
     this.audioLanguage = options.audioLanguage;
     this.device = options.device;
     this.warm = options.warm;
+    this.ladder = options.ladder;
     this.positionMs = options.startMs;
 
     // Copied video cuts on its keyframes; encoded video places its own every segment length
@@ -114,6 +119,16 @@ export class PlaybackSession {
   /** Whether the session encodes video, which counts toward the transcode limit. */
   public get transcoding(): boolean {
     return this.plan.video === "encode";
+  }
+
+  /** How much of the transcode runs on the hardware, or null when nothing is encoded. */
+  public get rung(): TranscodeRung | null {
+    return this.ladder ? this.ladder.rung : null;
+  }
+
+  /** Whether video is encoded on the hardware. */
+  public get hardware(): boolean {
+    return this.ladder?.hardware ?? false;
   }
 
   /** Starts packaging from where playback will begin, so the first segments are ready sooner. */
@@ -202,6 +217,7 @@ export class PlaybackSession {
       plan: this.plan,
       segments: this.segments,
       settings: this.settings,
+      video: this.ladder?.args(this.settings.segmentSeconds) ?? null,
       startIndex: index,
       startTime: this.item.probe.startTime,
       directory: this.directory,
@@ -210,10 +226,16 @@ export class PlaybackSession {
         this.ready.add(segment);
         this.resolveWaiters(segment, this.segmentPath(segment));
       },
-      onEnd: (error) => {
+      onEnd: (error, produced) => {
         // A run replaced by a seek ends quietly; its successor serves the waiters
         if (this.job !== job) return;
         this.job = null;
+        // A transcode that failed before producing anything tries the next rung down, from the same place.
+        // Once the init section is out, only rungs with the same encoder keep it valid
+        if (error && !produced && this.ladder?.stepDown(error.message, this.initReady)) {
+          this.restart(index);
+          return;
+        }
         if (error) console.warn(`[Playback] Session ${this.id} run failed: ${error.message}`);
         this.rejectWaiters(() => true, error?.message ?? "The run ended");
       },
