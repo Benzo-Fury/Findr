@@ -117,6 +117,8 @@ export function WatchPage() {
     (automatic: boolean) => {
       if (!next) return
       writeAutoplayed(automatic ? readAutoplayed() + 1 : 0)
+      // Set with the navigation, so the player never sees this episode's start point for the next
+      setStartMs(0)
       navigate(`${watchPath(next.key)}${next.key.season !== null ? "&" : "?"}from=0`, { replace: true })
     },
     [navigate, next],
@@ -193,8 +195,8 @@ export function WatchPage() {
   }
 
   return (
+    // Not keyed by episode: the player swaps the next one into the same video element, keeping fullscreen
     <Player
-      key={`${key.titleId}:${key.season}:${key.episode}`}
       item={key}
       startMs={startMs ?? 0}
       title={title}

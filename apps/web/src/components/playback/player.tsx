@@ -11,7 +11,7 @@ import { ApiError, createCastUrl, createPlaybackSession, endPlaybackSession, fet
 import { deviceProfile } from "@/lib/device-profile"
 import { googleCastConnected, loadOnGoogleCast } from "@/lib/google-cast"
 import { FADE } from "@/lib/motion"
-import { audioTrackDetail, audioTrackLabel, usePlayback } from "@/lib/playback"
+import { audioTrackDetail, audioTrackLabel, itemKey, usePlayback } from "@/lib/playback"
 import { rendererDetail, useRenderers } from "@/lib/renderers"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -30,6 +30,10 @@ import { VideoSkin } from "@/components/videojs/video/skin"
  * a fresh session at the same moment, since the server packages one stream
  * per session, and swaps it into the same video element once it is ready,
  * so playback carries on (on AirPlay too) rather than starting over.
+ *
+ * A new movie or episode (the next one, chiefly) is swapped into the same
+ * video element in the same way, so fullscreen holds and it plays at once:
+ * a new element, or the container leaving the page, would lose both.
  *
  * Next episode: once the credits start (where the server says they do), a
  * Next Episode button counts down and moves on. Pausing holds it; seeking
@@ -81,6 +85,8 @@ interface Choice {
 
 /** A running session and the choice it was made with. */
 interface Stream {
+  /** The movie or episode it plays. */
+  item: PlaybackItemKey
   session: PlaybackSessionRecord
   choice: Choice
   /** Whether it replaced a paused stream, and so waits to be played rather than autoplaying. */
@@ -196,14 +202,15 @@ export function Player(props: PlayerProps) {
           return
         }
         const previous = streamRef.current
-        streamRef.current = { session, choice: next, paused }
+        streamRef.current = { item, session, choice: next, paused }
         setStream(streamRef.current)
         if (previous) void endPlaybackSession(previous.session.id).catch(() => {})
       } catch (reason) {
         if (request !== requestRef.current) return
         const message = reason instanceof Error ? reason.message : "Playback could not start."
         const current = streamRef.current
-        if (current) {
+        // A switch within this item leaves its stream playing; one to another item can't
+        if (current && itemKey(current.item) === itemKey(item)) {
           setChoice(current.choice)
           setNotice(message)
         } else setError(message)
@@ -212,16 +219,27 @@ export function Player(props: PlayerProps) {
     [item],
   )
 
-  // The first session; leaving ends whatever plays and abandons anything still starting
+  // Each item's first session, keeping the quality but not the last file's audio track; the stream it
+  // replaces plays on until it is ready
   const initial = React.useRef(choice)
+  const { startMs } = props
   React.useEffect(() => {
-    void start(initial.current)
-    return () => {
+    positionRef.current = startMs
+    const first = { quality: streamRef.current?.choice.quality ?? initial.current.quality, audioTrack: null }
+    setChoice(first)
+    setNotice(null)
+    void start(first)
+  }, [start, startMs])
+
+  // Leaving ends whatever plays and abandons anything still starting
+  React.useEffect(
+    () => () => {
       requestRef.current++
       if (streamRef.current) void endPlaybackSession(streamRef.current.session.id).catch(() => {})
       streamRef.current = null
-    }
-  }, [start])
+    },
+    [],
+  )
 
   /**
    * Applies a new choice: on the Google Cast receiver when one is playing,
@@ -274,6 +292,8 @@ export function Player(props: PlayerProps) {
   }
 
   const session = stream?.session ?? null
+  // The last item's stream, still on screen while this one's session starts
+  const switching = stream !== null && itemKey(stream.item) !== itemKey(item)
 
   return (
     <div className="fixed inset-0 bg-[oklch(0.13_0.01_265)] text-surface">
@@ -338,13 +358,18 @@ export function Player(props: PlayerProps) {
             </VideoSkin>
             {casting && session.castUrl && <GoogleCast src={session.castUrl} contentType={HLS_TYPE} streamType="on-demand" />}
             <PageHotkeys />
-            <Session
-              {...props}
-              session={session}
-              positionRef={positionRef}
-              onRemoteEnded={onRemoteEnded}
-              onLost={(paused) => void start(stream?.choice ?? choice, paused)}
-            />
+            {switching ? (
+              <Switching />
+            ) : (
+              <Session
+                key={itemKey(item)}
+                {...props}
+                session={session}
+                positionRef={positionRef}
+                onRemoteEnded={onRemoteEnded}
+                onLost={(paused) => void start(stream?.choice ?? choice, paused)}
+              />
+            )}
             <Notice message={notice} onDone={clearNotice} />
           </Container>
         </VideoPlayer>
@@ -383,6 +408,19 @@ function PageHotkeys() {
       <Hotkey target="document" keys=">" action="speedUp" />
       <Hotkey target="document" keys="<" action="speedDown" />
     </>
+  )
+}
+
+/** Over the last item's final frame while the next one's session starts: it stops, and a spinner shows. */
+function Switching() {
+  const store = usePlayer()
+  React.useEffect(() => {
+    store.pause()
+  }, [store])
+  return (
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[oklch(0.13_0.01_265/0.6)]">
+      <Spinner className="size-8 text-signal" />
+    </div>
   )
 }
 
