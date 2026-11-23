@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -362,6 +362,39 @@ describe("WatchHistory", () => {
     WatchHistory.report(userId, { ...episode(2), sessionId: null, positionMs: 1_800_000, event: "tick" });
     library = WatchHistory.library(userId);
     expect(library.continueWatching).toEqual([episode(2)]);
+    expect(library.nextUp).toEqual([]);
+  });
+
+  test("continues only the latest of a show's part-watched episodes", () => {
+    setSystemTime(new Date(1_000));
+    WatchHistory.report(userId, { ...episode(1), sessionId: null, positionMs: 1_200_000, event: "stop" });
+    setSystemTime(new Date(2_000));
+    WatchHistory.report(userId, { titleId: movie.id, season: null, episode: null, sessionId: null, positionMs: 300_000, event: "stop" });
+    setSystemTime(new Date(3_000));
+    WatchHistory.report(userId, { ...episode(3), sessionId: null, positionMs: 1_800_000, event: "stop" });
+    setSystemTime();
+
+    const library = WatchHistory.library(userId);
+    expect(library.continueWatching).toEqual([episode(3), { titleId: movie.id, season: null, episode: null }]);
+    expect(library.nextUp).toEqual([]);
+  });
+
+  test("suggests a show once, by whichever of its episodes was watched last", () => {
+    // An episode left part-way, then a later one finished: the next episode wins
+    setSystemTime(new Date(1_000));
+    WatchHistory.report(userId, { ...episode(1), sessionId: null, positionMs: 1_200_000, event: "stop" });
+    setSystemTime(new Date(2_000));
+    WatchHistory.markPlayed(userId, episode(2), true);
+    let library = WatchHistory.library(userId);
+    expect(library.continueWatching).toEqual([]);
+    expect(library.nextUp).toEqual([episode(3)]);
+
+    // Going back to the part-watched one makes it the suggestion again
+    setSystemTime(new Date(3_000));
+    WatchHistory.report(userId, { ...episode(1), sessionId: null, positionMs: 1_500_000, event: "stop" });
+    setSystemTime();
+    library = WatchHistory.library(userId);
+    expect(library.continueWatching).toEqual([episode(1)]);
     expect(library.nextUp).toEqual([]);
   });
 

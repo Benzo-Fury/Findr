@@ -15,6 +15,12 @@ function keyOf(key: PlaybackItemKey): string {
   return `${key.titleId}:${key.season ?? "-"}:${key.episode ?? "-"}`;
 }
 
+/** A movie or episode to suggest, with when its show or movie was last watched. */
+interface Suggestion {
+  key: PlaybackItemKey;
+  at: number;
+}
+
 export class WatchHistory {
   /**
    * Records where a user is in an item. Under the minimum share or for a
@@ -69,15 +75,34 @@ export class WatchHistory {
       });
     }
 
-    return { items, continueWatching: this.continueWatching(items), nextUp: this.nextUp(items) };
+    // One suggestion per show: whichever of its part-watched episode and its next episode was touched last
+    const resuming = this.continueWatching(items);
+    const upNext = this.nextUp(items);
+    const latestAt = new Map<string, number>();
+    for (const entry of [...resuming, ...upNext]) {
+      latestAt.set(entry.key.titleId, Math.max(latestAt.get(entry.key.titleId) ?? 0, entry.at));
+    }
+    const kept = (entries: Suggestion[]) => entries.filter((entry) => entry.at === latestAt.get(entry.key.titleId)).map((entry) => entry.key);
+    const continueWatching = kept(resuming);
+    const shown = new Set(continueWatching.map((key) => key.titleId));
+    const nextUp = kept(upNext).filter((key) => !shown.has(key.titleId));
+
+    return { items, continueWatching, nextUp };
   }
 
-  /** Items part-way through, most recently played first. */
-  private static continueWatching(items: PlayableItem[]): PlaybackItemKey[] {
+  /** Items part-way through, most recently played first, with only the latest episode of each show. */
+  private static continueWatching(items: PlayableItem[]): Suggestion[] {
+    const seen = new Set<string>();
     return items
       .filter((item) => item.positionMs > 0 && item.lastPlayedAt !== null)
       .sort((a, b) => (b.lastPlayedAt ?? 0) - (a.lastPlayedAt ?? 0))
-      .map(({ titleId, season, episode }) => ({ titleId, season, episode }));
+      .filter((item) => {
+        if (item.mediaType !== "tv") return true;
+        if (seen.has(item.titleId)) return false;
+        seen.add(item.titleId);
+        return true;
+      })
+      .map(({ titleId, season, episode, lastPlayedAt }) => ({ key: { titleId, season, episode }, at: lastPlayedAt ?? 0 }));
   }
 
   /**
@@ -85,7 +110,7 @@ export class WatchHistory {
    * skipping shows whose next episode is already in continue-watching.
    * Ordered by when the show was last watched.
    */
-  private static nextUp(items: PlayableItem[]): PlaybackItemKey[] {
+  private static nextUp(items: PlayableItem[]): Suggestion[] {
     // Group episodes by show, in season and episode order
     const shows = new Map<string, PlayableItem[]>();
     for (const item of items) {
@@ -95,7 +120,7 @@ export class WatchHistory {
       shows.set(item.titleId, list);
     }
 
-    const suggestions: Array<{ key: PlaybackItemKey; at: number }> = [];
+    const suggestions: Suggestion[] = [];
     for (const episodes of shows.values()) {
       episodes.sort((a, b) => (a.season ?? 0) - (b.season ?? 0) || (a.episode ?? 0) - (b.episode ?? 0));
 
@@ -114,7 +139,7 @@ export class WatchHistory {
       if (!next || next.positionMs > 0) continue;
       suggestions.push({ key: { titleId: next.titleId, season: next.season, episode: next.episode }, at: latestAt });
     }
-    return suggestions.sort((a, b) => b.at - a.at).map((entry) => entry.key);
+    return suggestions.sort((a, b) => b.at - a.at);
   }
 
   /** What a stopping position means under the resume rules. */
