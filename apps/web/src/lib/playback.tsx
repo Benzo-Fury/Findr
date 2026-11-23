@@ -61,11 +61,12 @@ export function itemKey(key: PlaybackItemKey): string {
   return `${key.titleId}:${key.season ?? "-"}:${key.episode ?? "-"}`
 }
 
-/** The watch page's path for a movie or episode. */
-export function watchPath(key: PlaybackItemKey): string {
+/** The watch page's path for a movie or episode; `fromStart` skips its saved position. */
+export function watchPath(key: PlaybackItemKey, fromStart = false): string {
   const params = new URLSearchParams()
   if (key.season !== null) params.set("s", String(key.season))
   if (key.episode !== null) params.set("e", String(key.episode))
+  if (fromStart) params.set("from", "0")
   const search = params.toString()
   return `/watch/${key.titleId}${search ? `?${search}` : ""}`
 }

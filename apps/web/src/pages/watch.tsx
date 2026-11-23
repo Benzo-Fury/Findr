@@ -1,24 +1,20 @@
 import * as React from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
-import { motion } from "motion/react"
-import { ArrowCounterClockwiseIcon, PlayIcon } from "@phosphor-icons/react"
-import type { PlayableItem, PlaybackItemKey, PlaybackPrefs, RendererRecord } from "@findr/types/playback"
+import type { PlaybackItemKey, PlaybackPrefs, RendererRecord } from "@findr/types/playback"
 import { PlaybackPrefsSchema } from "@findr/types/playback"
 import { fetchPlaybackPrefs } from "@/lib/api"
 import { episodeCode } from "@/lib/format"
 import { useLibrary } from "@/lib/library"
-import { EASE_OUT } from "@/lib/motion"
-import { formatClock, itemKey, resumePosition, usePlayback, watchPath } from "@/lib/playback"
+import { itemKey, resumePosition, usePlayback, watchPath } from "@/lib/playback"
 import { tmdbImage } from "@/lib/tmdb-image"
-import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { Player, PlayerMessage } from "@/components/playback/player"
 import { TvRemote } from "@/components/playback/tv-remote"
 
 /**
- * Watching one movie or episode, full screen. A saved position is offered
- * as Resume or Start over before anything loads; episodes chain into the
- * next one on disk. Leaving goes back where the viewer came from.
+ * Watching one movie or episode, full screen. Playback starts at once, from
+ * the saved position unless `?from=0` asks for the beginning; episodes chain
+ * into the next one on disk. Leaving goes back where the viewer came from.
  *
  * With a TV picked to cast to, the page becomes that TV's remote at once,
  * picking up from the saved position without asking, and the next episode
@@ -77,14 +73,20 @@ export function WatchPage() {
     void fetchPlaybackPrefs().then(setPrefs).catch(() => {})
   }, [])
 
-  // Resume is asked once per visit; `?from=0` or a choice settles it
-  const [startMs, setStartMs] = React.useState<number | null>(params.get("from") === "0" ? 0 : null)
-  React.useEffect(() => setStartMs(params.get("from") === "0" ? 0 : null), [key, params])
+  const id = itemKey(key)
+
+  // Where the browser player starts, settled once per movie or episode (during render, and only
+  // once, so a later progress refresh can't restart the stream): the saved position, or the top
+  const [start, setStart] = React.useState<{ id: string; ms: number } | null>(null)
+  let startMs = start?.id === id ? start.ms : null
+  if (item && startMs === null) {
+    startMs = params.get("from") === "0" ? 0 : resumePosition(item)
+    setStart({ id, ms: startMs })
+  }
 
   // The TV this plays on, settled from the cast target once per movie or episode
   // (during render, so the browser player never starts first, and only once, so
   // a later progress refresh can't send it to the TV again)
-  const id = itemKey(key)
   const [decided, setDecided] = React.useState<{ id: string; tv: TvChoice | null } | null>(null)
   let current = decided
   if (item && decided?.id !== id) {
@@ -117,9 +119,7 @@ export function WatchPage() {
     (automatic: boolean) => {
       if (!next) return
       writeAutoplayed(automatic ? readAutoplayed() + 1 : 0)
-      // Set with the navigation, so the player never sees this episode's start point for the next
-      setStartMs(0)
-      navigate(`${watchPath(next.key)}${next.key.season !== null ? "&" : "?"}from=0`, { replace: true })
+      navigate(watchPath(next.key, true), { replace: true })
     },
     [navigate, next],
   )
@@ -176,7 +176,7 @@ export function WatchPage() {
         onWatchHere={(positionMs) => {
           playback.setCastTarget(null)
           setDecided({ id, tv: null })
-          setStartMs(positionMs)
+          setStart({ id, ms: positionMs })
         }}
         onPlayNext={() => {
           // The next episode stays on this TV, even when the remote was opened through `?tv=`
@@ -187,11 +187,6 @@ export function WatchPage() {
         onExit={exit}
       />
     )
-  }
-
-  // A saved position: resume or start over
-  if (startMs === null && item.positionMs > 0) {
-    return <ResumePrompt item={item} title={title} subtitle={subtitle} backdrop={backdrop} onChoose={setStartMs} onExit={exit} />
   }
 
   return (
@@ -213,47 +208,5 @@ export function WatchPage() {
       }}
       onExit={exit}
     />
-  )
-}
-
-interface ResumePromptProps {
-  item: PlayableItem
-  title: string
-  subtitle: string | null
-  backdrop: string | null
-  onChoose: (startMs: number) => void
-  onExit: () => void
-}
-
-/** Resume or start over, over the title's artwork. */
-function ResumePrompt({ item, title, subtitle, backdrop, onChoose, onExit }: ResumePromptProps) {
-  return (
-    <div className="fixed inset-0 overflow-hidden bg-[oklch(0.13_0.01_265)] text-surface">
-      {backdrop && <img src={backdrop} alt="" className="absolute inset-0 size-full object-cover opacity-35" />}
-      <div className="absolute inset-0 bg-gradient-to-t from-[oklch(0.13_0.01_265)] via-[oklch(0.13_0.01_265/0.6)] to-transparent" />
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.45, ease: EASE_OUT }}
-        className="absolute inset-x-0 bottom-0 mx-auto max-w-[1600px] px-6 pb-14 md:px-12 md:pb-20"
-      >
-        {subtitle && <p className="font-mono text-[0.8125rem] text-surface/70 tabular">{subtitle}</p>}
-        <h1 className="display mt-1 max-w-3xl text-4xl md:text-6xl">{title}</h1>
-        <div className="mt-6 h-1 w-full max-w-md overflow-hidden rounded-full bg-surface/15">
-          <div className="h-full rounded-full bg-signal" style={{ width: `${Math.min(100, (item.positionMs / item.durationMs) * 100)}%` }} />
-        </div>
-        <div className="mt-6 flex flex-wrap gap-3">
-          <Button variant="signal" size="lg" icon={PlayIcon} onClick={() => onChoose(item.positionMs)}>
-            Resume from {formatClock(item.positionMs)}
-          </Button>
-          <Button variant="ghost" size="lg" icon={ArrowCounterClockwiseIcon} className="text-surface/85 hover:bg-surface/10 hover:text-surface" onClick={() => onChoose(0)}>
-            Start over
-          </Button>
-          <Button variant="ghost" size="lg" className="text-surface/60 hover:bg-surface/10 hover:text-surface" onClick={onExit}>
-            Back
-          </Button>
-        </div>
-      </motion.div>
-    </div>
   )
 }

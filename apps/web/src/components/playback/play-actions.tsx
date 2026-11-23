@@ -1,6 +1,6 @@
 import * as React from "react"
 import { useNavigate } from "react-router-dom"
-import { CheckCircleIcon, CheckIcon, CircleIcon, PlayIcon } from "@phosphor-icons/react"
+import { ArrowCounterClockwiseIcon, CheckCircleIcon, CheckIcon, CircleIcon, PlayIcon } from "@phosphor-icons/react"
 import type { PlayableItem } from "@findr/types/playback"
 import { markPlayed } from "@/lib/api"
 import { episodeCode } from "@/lib/format"
@@ -61,6 +61,11 @@ export function PlayActions({ titleId, mediaType, season, separated }: PlayActio
           {resuming ? "Resume" : "Play"}
           {code && <span className="font-mono tabular">{code}</span>}
         </Button>
+        {resuming && (
+          <Button variant="ghost" icon={ArrowCounterClockwiseIcon} onClick={() => navigate(watchPath(featured, true))}>
+            Start over
+          </Button>
+        )}
         {mediaType === "movie" && (
           <Button variant="ghost" icon={featured.played ? CheckCircleIcon : CircleIcon} onClick={() => toggleWatched(featured)}>
             {featured.played ? "Watched" : "Mark watched"}
