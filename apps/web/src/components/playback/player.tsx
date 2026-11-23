@@ -409,8 +409,10 @@ export function Player(props: PlayerProps) {
                 key={itemKey(item)}
                 {...props}
                 session={session}
+                autoplay={!stream?.paused}
                 positionRef={positionRef}
                 onRemoteEnded={onRemoteEnded}
+                onNotice={setNotice}
                 onLost={(paused, decodeFailed) => void recover(session, paused, decodeFailed)}
               />
             )}
@@ -470,9 +472,13 @@ function Switching() {
 
 interface SessionProps extends PlayerProps {
   session: PlaybackSessionRecord
+  /** Start playing as soon as the stream can, rather than waiting to be played. */
+  autoplay: boolean
   positionRef: React.RefObject<number>
   /** Casting or AirPlay ended. */
   onRemoteEnded: () => void
+  /** Shows a passing message over the player. */
+  onNotice: (message: string) => void
   /**
    * The stream failed or its session is gone; start a fresh session where it
    * stopped, paused if it was. `decodeFailed` says the media itself couldn't be
@@ -483,14 +489,33 @@ interface SessionProps extends PlayerProps {
 
 /** What goes on alongside the video: progress reports, recovery, the top bar, and the next-episode offer. */
 function Session(props: SessionProps) {
-  const { session, item, positionRef, onRemoteEnded } = props
+  const { session, item, positionRef, onRemoteEnded, autoplay, onNotice } = props
   const store = usePlayer()
   const currentTime = usePlayer((state) => state.currentTime)
   const paused = usePlayer((state) => state.paused)
+  const canPlay = usePlayer((state) => state.canPlay)
   const ended = usePlayer((state) => state.ended)
   const controlsVisible = usePlayer((state) => state.controlsVisible)
   const mediaError = usePlayer((state) => state.error)
   const remote = usePlayer((state) => state.remotePlaybackState)
+
+  // Start each stream once it can play, as the autoplay attribute alone is dropped silently when the browser
+  // won't allow it. Sound first, as the viewer just asked to play; a browser that refuses (Safari, once the
+  // click is too long ago) plays muted instead
+  const autoplayed = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    if (!autoplay || !canPlay || autoplayed.current === session.id) return
+    autoplayed.current = session.id
+    if (!paused) return
+    store.play().catch((reason: unknown) => {
+      if (reason instanceof DOMException && reason.name !== "NotAllowedError") return
+      store.setMuted(true)
+      store
+        .play()
+        .then(() => onNotice("Playing muted: this browser blocked sound. Press M to unmute."))
+        .catch(() => {})
+    })
+  }, [autoplay, canPlay, paused, session.id, store, onNotice])
 
   // Keep the restart point current
   React.useEffect(() => {
