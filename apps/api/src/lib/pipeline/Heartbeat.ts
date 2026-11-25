@@ -1,7 +1,7 @@
 /**
  * Catches an attempt that has stopped doing anything at all. The work beats
  * whenever it shows a sign of life — a torrent poll coming back, a line of
- * mkvmerge progress, a chunk copied into the library — and if the beats stop
+ * ffmpeg progress, a chunk copied into the library — and if the beats stop
  * for longer than the limit, the attempt is declared stuck.
  *
  * This is deliberately not a progress check. A torrent crawling along or
@@ -10,7 +10,7 @@
  * has hung outright: a client call that never returns, a remux that stopped
  * writing, a copy that froze.
  *
- * When it trips it aborts its signal, so cooperative work (sleeps, mkvmerge,
+ * When it trips it aborts its signal, so cooperative work (sleeps, ffmpeg,
  * copies) stops, and rejects any work passed through `guard()` at once, so
  * even a promise that never settles cannot hold the attempt.
  */

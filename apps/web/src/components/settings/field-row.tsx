@@ -1,9 +1,11 @@
 import * as React from "react"
-import { ProhibitIcon } from "@phosphor-icons/react"
+import { CaretUpDownIcon, CheckIcon, ProhibitIcon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Field, INPUT_CLASS } from "@/components/ui/field"
 import { Highlight } from "@/components/ui/highlight"
+import { Menu, MenuItem } from "@/components/ui/menu"
 import { NumberField } from "@/components/ui/number-field"
+import { Segmented } from "@/components/ui/segmented"
 import { Switch } from "@/components/ui/switch"
 import { ResolutionOrder } from "@/components/settings/resolution-order"
 import type { FieldDef } from "@/components/settings/registry"
@@ -19,6 +21,43 @@ interface FieldRowProps {
   configured?: boolean
   onClearSecret?: () => void
   onFocusField?: (key: string | null) => void
+}
+
+/** Choices with more options than this open a menu rather than lining up as segments. */
+const CHOICE_SEGMENTS = 4
+
+interface ChoiceMenuProps {
+  label: string
+  value: string
+  options: readonly string[]
+  labels?: Record<string, string>
+  onChange: (value: string) => void
+}
+
+/** One choice from many: a pill showing the current option, opening a menu of all of them. */
+function ChoiceMenu({ label, value, options, labels, onChange }: ChoiceMenuProps) {
+  const name = (option: string) => labels?.[option] ?? option
+  return (
+    <Menu
+      trigger={
+        <button
+          type="button"
+          aria-label={`${label}: ${name(value)}`}
+          className="inline-flex h-10 min-w-36 items-center justify-between gap-3 rounded-full bg-sunken pl-4 pr-3 text-sm font-medium text-ink transition-colors hover:bg-line data-[popup-open]:bg-line"
+        >
+          {name(value)}
+          <CaretUpDownIcon aria-hidden weight="bold" className="size-4 text-ink-3" />
+        </button>
+      }
+    >
+      {options.map((option) => (
+        <MenuItem key={option} onClick={() => onChange(option)}>
+          <CheckIcon aria-hidden weight="bold" className={cn("size-4 shrink-0 text-signal-ink", option !== value && "invisible")} />
+          {name(option)}
+        </MenuItem>
+      ))}
+    </Menu>
+  )
 }
 
 /**
@@ -80,6 +119,19 @@ export function FieldRow({ field, value, onChange, error, words, configured, onC
             {control.kind === "toggle" && <Switch id={id} aria-describedby={describedBy} checked={Boolean(value)} onChange={onChange} />}
             {control.kind === "order" && <ResolutionOrder options={control.options} value={value as string[]} onChange={onChange} />}
             {control.kind === "multi" && <MultiToggle options={control.options} value={value as string[]} onChange={onChange} />}
+            {control.kind === "choice" && control.options.length > CHOICE_SEGMENTS && (
+              <ChoiceMenu label={field.label} value={String(value)} options={control.options} labels={control.labels} onChange={onChange} />
+            )}
+            {control.kind === "choice" && control.options.length <= CHOICE_SEGMENTS && (
+              <Segmented
+                label={field.label}
+                size="sm"
+                value={String(value)}
+                onChange={onChange}
+                options={control.options.map((option) => ({ value: option, label: control.labels?.[option] ?? option }))}
+                className="max-w-full overflow-x-auto"
+              />
+            )}
           </div>
         )}
       </Field>

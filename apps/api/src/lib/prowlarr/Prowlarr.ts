@@ -62,6 +62,8 @@ export interface SearchOptions {
   limit?: number;
   /** Restrict the search to specific indexer ids. Defaults to all enabled. */
   indexerIds?: number[];
+  /** Aborts the search, such as when its download is cancelled. */
+  signal?: AbortSignal;
 }
 
 /** Subset of Prowlarr's `ReleaseResource` that Findr reads. */
@@ -124,6 +126,23 @@ export default class Prowlarr extends SelfManagedSingleton {
       .map((release) => this.toRelease(release))
       .filter((release) => release.magnetUri || release.downloadUrl || release.infoHash)
       .sort((a, b) => b.seeders - a.seeders);
+  }
+
+  /**
+   * Whether Prowlarr answers at the configured URL and accepts the configured
+   * key. Never throws; an unconfigured Prowlarr is simply not reachable.
+   */
+  public async reachable(): Promise<boolean> {
+    try {
+      const { baseUrl, apiKey } = this.credentials();
+      const response = await fetch(new URL("/api/v1/system/status", baseUrl), {
+        headers: { "X-Api-Key": apiKey },
+        signal: AbortSignal.timeout(5_000),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -271,10 +290,16 @@ export default class Prowlarr extends SelfManagedSingleton {
       url.searchParams.append("indexerIds", String(id));
     }
 
+    // Give up after the configured timeout, or as soon as the caller aborts
+    const { prowlarrTimeoutSeconds } = SettingsStore.section("services");
+    const timeout = AbortSignal.timeout(prowlarrTimeoutSeconds * 1000);
     const res = await fetch(url, {
       headers: { "X-Api-Key": apiKey },
-      signal: AbortSignal.timeout(TIMEOUT_MS * 4),
+      signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
     }).catch((error: unknown) => {
+      if (timeout.aborted && !options.signal?.aborted) {
+        throw new ProwlarrError(`Prowlarr did not answer within ${prowlarrTimeoutSeconds}s (it waits for its slowest indexer)`);
+      }
       throw new ProwlarrError(`Prowlarr request failed: ${error}`);
     });
 

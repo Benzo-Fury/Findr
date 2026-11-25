@@ -1,0 +1,529 @@
+/**
+ * Runs playback: starts and ends sessions, enforces the transcode limit,
+ * reaps sessions whose player has gone away, and switches the whole feature
+ * on and off with its setting. Turning playback off ends every session, kills
+ * their ffmpeg runs, stops any TV Findr is driving and stops the indexer;
+ * what was indexed and watched is kept for when it is turned back on.
+ *
+ * Sessions come in three kinds that share the limit and the reaper: HLS for
+ * a browser, HLS for a Google Cast receiver (made when the receiver first
+ * asks for its cast URL), and a single progressive stream for a DLNA
+ * renderer.
+ */
+
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
+import type {
+  CreateCastUrl,
+  CreateSession,
+  ChromecastProfile,
+  DeviceProfile,
+  NowPlayingRecord,
+  PlaybackItemKey,
+  PlaybackSessionRecord,
+  PlaybackSettings,
+  RendererPlay,
+} from "@findr/types/playback";
+import { MediaItem } from "../db/models/MediaItem";
+import { PlaybackPrefs } from "../db/models/PlaybackPrefs";
+import { PlaybackProgress } from "../db/models/PlaybackProgress";
+import { PlayLog } from "../db/models/PlayLog";
+import { SettingsStore } from "../db/models/SettingsStore";
+import { Title } from "../db/models/Title";
+import { UserAccount } from "../db/models/UserAccount";
+import SelfManagedSingleton from "../other/SelfManagedSingleton";
+import { CastAddress } from "./CastAddress";
+import { CastTicket, type CastTicketData } from "./CastTicket";
+import DlnaController from "./dlna/DlnaController";
+import { Ffmpeg } from "./Ffmpeg";
+import HardwareProbe from "./HardwareProbe";
+import MediaIndexer from "./MediaIndexer";
+import type { ProbeInfo } from "./MediaProbe";
+import { PlaybackDecider, type PlaybackPlan, TranscodeRequiredError } from "./PlaybackDecider";
+import { PlaybackSession } from "./PlaybackSession";
+import { ProgressiveSession } from "./ProgressiveSession";
+import { StreamToken } from "./StreamToken";
+import { Trickplay } from "./Trickplay";
+
+// ---------- Errors ---------- //
+
+/** A request playback can't serve, with the API error code and status to answer with. */
+export class PlaybackError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly status: 400 | 403 | 404 | 409 | 502 | 503,
+    message = code,
+  ) {
+    super(message);
+    this.name = "PlaybackError";
+  }
+}
+
+/** Who is asking for a session. */
+export interface SessionClient {
+  userId: string;
+  /** Whether the request came from the local network, which the remote bitrate cap does not apply to. */
+  local: boolean;
+}
+
+/** Any kind of session. */
+export type AnySession = PlaybackSession | ProgressiveSession;
+
+/** A DLNA renderer a progressive session is made for. */
+export interface RendererTarget {
+  name: string;
+  profile: DeviceProfile;
+  /** Whether it takes Matroska files as they are. */
+  acceptsMatroska: boolean;
+  /** The MIME type it lists for MPEG-TS. */
+  transportStreamType: string;
+  /** The MIME type it lists for Matroska. */
+  matroskaType: string;
+  /** Whether it is on the server's network; one reached through a cast bridge gets the remote bitrate cap. */
+  local: boolean;
+}
+
+/**
+ * What a Google Cast receiver is assumed to decode, by the `chromecastProfile`
+ * setting, since a receiver can't say. The Default Media Receiver on every
+ * Chromecast plays H.264 High up to level 4.1 and AAC, up to 1080p (Google's
+ * Cast supported media list). The Chromecast Ultra and the Google TV models
+ * add HEVC Main 10, 4K and HDR10, and H.264 up to level 5.1.
+ */
+export const CAST_PROFILES: Record<ChromecastProfile, DeviceProfile> = {
+  "1080p": { videoCodecs: ["h264"], audioCodecs: ["aac", "mp3"], maxHeight: 1080, hdr: false, maxH264Level: 41 },
+  "4k-hdr": {
+    videoCodecs: ["h264", "hevc"],
+    audioCodecs: ["aac", "mp3"],
+    maxHeight: 2160,
+    hdr: true,
+    maxH264Level: 51,
+    decoders: [{ codec: "hevc", maxHeight: 2160, tenBit: true, hdr: true }],
+  },
+};
+
+/** A session with no request or progress report for this long is ended. */
+const IDLE_MS = 60_000;
+
+/** A session's scratch folder, named for its id; the only folders cleared on start, since the scratch folder may be shared. */
+const SESSION_FOLDER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** What `prepare` settles before a session of any kind is made. */
+interface Prepared {
+  item: MediaItem;
+  plan: PlaybackPlan;
+  audio: ProbeInfo["audio"][number];
+  startMs: number;
+  settings: PlaybackSettings;
+}
+
+/** The parts of a request every kind of session is made from. */
+interface PrepareRequest extends PlaybackItemKey {
+  audioTrack: number | null;
+  maxBitrate: number | null;
+  startMs: number | null;
+  /** Re-encode even where the profile says the original plays. */
+  avoidCopy?: boolean;
+}
+
+// ---------- Service ---------- //
+
+export default class PlaybackService extends SelfManagedSingleton {
+  private readonly sessions = new Map<string, AnySession>();
+  /** Cast sessions by the ticket that made them, so a receiver's requests share one. */
+  private readonly castSessions = new Map<string, string>();
+  private reaper: ReturnType<typeof setInterval> | null = null;
+  private running = false;
+
+  /** Starts playback if it is enabled. */
+  public async start(): Promise<void> {
+    await this.applySettings();
+  }
+
+  /**
+   * Brings the service in line with the settings: started when enabled,
+   * stopped otherwise. While running, TVs are let go when casting is turned
+   * off and thumbnails are brought up to date.
+   */
+  public async applySettings(): Promise<void> {
+    const settings = SettingsStore.section("playback");
+    // The hardware is checked again for the new settings, in the background, before anyone presses Play
+    HardwareProbe.getInstance().forget();
+    if (settings.enabled) void HardwareProbe.getInstance().report(settings);
+    if (settings.enabled && !this.running) await this.turnOn();
+    else if (!settings.enabled && this.running) await this.turnOff();
+    else if (this.running) {
+      if (!settings.casting) await this.endCasts();
+      MediaIndexer.getInstance().refreshThumbnails();
+    }
+  }
+
+  /** Ends everything; used before the process restarts. */
+  public async stop(): Promise<void> {
+    if (this.running) await this.turnOff();
+  }
+
+  /** Whether playback is on. */
+  public get enabled(): boolean {
+    return SettingsStore.section("playback").enabled;
+  }
+
+  // ---------- Sessions ---------- //
+
+  /** Starts a session for a movie or episode on the asking device. */
+  public async create(request: CreateSession, client: SessionClient): Promise<PlaybackSessionRecord> {
+    const prepared = await this.prepare(request, request.deviceProfile, client);
+    const session = await this.openHls(prepared, client.userId, "browser");
+    const { item, plan, audio, startMs, settings } = prepared;
+
+    // TVs beside the client get absolute URLs: the same stream for AirPlay, a ticket for Cast
+    const playlistUrl = `/api/playback/stream/${StreamToken.issue(session.id)}/index.m3u8`;
+    const base = settings.casting ? CastAddress.forClient(client.local) : null;
+
+    return {
+      id: session.id,
+      playlistUrl,
+      mode: plan.mode,
+      reasons: plan.reasons,
+      durationMs: item.durationMs,
+      audioTracks: item.audioTracks(),
+      audioTrack: item.audioTrackOf(audio.index),
+      startMs,
+      height: plan.height,
+      bitrate: plan.bitrate,
+      sourceVideo: { codec: item.probe.video.codec, height: item.probe.video.height, bitDepth: item.probe.video.bitDepth, hdr: item.probe.video.hdr },
+      remoteUrl: base ? `${base}${playlistUrl}` : null,
+      castUrl: base ? this.castPlaylist(base, item, request, client) : null,
+      trickplayUrl: Trickplay.url(item.id, settings),
+    };
+  }
+
+  /**
+   * A Google Cast URL for an item, as a receiver already casting switches to
+   * another audio track or quality. Nothing is started until the receiver
+   * asks for it.
+   */
+  public castUrl(request: CreateCastUrl, client: SessionClient): string {
+    if (!this.running) throw new PlaybackError("playback_disabled", 404);
+    if (!SettingsStore.section("playback").casting) throw new PlaybackError("casting_disabled", 404);
+    const item = MediaItem.findForKey(request);
+    if (!item) throw new PlaybackError("not_playable", 404);
+    if (request.audioTrack !== null && !item.probe.audio[request.audioTrack]) throw new PlaybackError("audio_track_not_found", 404);
+    const base = CastAddress.forClient(client.local);
+    if (!base) throw new PlaybackError("cast_address_unknown", 503);
+    return this.castPlaylist(base, item, request, client);
+  }
+
+  /**
+   * The playlist URL a cast ticket stands for. A TV away from the server's
+   * network fetches over the internet, so its ticket keeps the remote cap.
+   */
+  private castPlaylist(base: string, item: MediaItem, request: Pick<CreateCastUrl, "audioTrack" | "maxBitrate">, client: SessionClient): string {
+    const ticket = CastTicket.issue({
+      userId: client.userId,
+      titleId: item.titleId,
+      season: item.season,
+      episode: item.episode,
+      audioTrack: request.audioTrack,
+      maxBitrate: this.bitrateCap(request.maxBitrate, SettingsStore.section("playback"), client.local),
+    });
+    return `${base}/api/playback/cast/${ticket}/index.m3u8`;
+  }
+
+  /**
+   * The session a cast ticket stands for, made on the receiver's first
+   * request. The receiver is told where to start by the sender, so packaging
+   * waits for its first segment request rather than guessing.
+   */
+  public async castSession(ticket: string, data: CastTicketData): Promise<PlaybackSession> {
+    const existing = this.castSessions.get(ticket);
+    const session = existing ? this.sessions.get(existing) : undefined;
+    if (session instanceof PlaybackSession) return session;
+    if (!SettingsStore.section("playback").casting) throw new PlaybackError("casting_disabled", 404);
+
+    const prepared = await this.prepare({ ...data, startMs: 0 }, CAST_PROFILES[SettingsStore.section("playback").chromecastProfile], { userId: data.userId, local: true });
+
+    // A new ticket for the same item replaces the receiver's stream, as when the viewer switches audio
+    // track, so the old one's work stops now rather than counting toward the transcode limit until reaped
+    for (const session of [...this.sessions.values()]) {
+      if (session.device === "cast" && session.userId === data.userId && session.item.id === prepared.item.id) await this.end(session.id, null);
+    }
+
+    const created = await this.openHls(prepared, data.userId, "cast");
+    this.castSessions.set(ticket, created.id);
+    return created;
+  }
+
+  /** Starts a progressive session for a DLNA renderer, returning it with its stream path. */
+  public async createProgressive(
+    request: RendererPlay & { avoidCopy?: boolean },
+    renderer: RendererTarget,
+    userId: string,
+  ): Promise<{ session: ProgressiveSession; path: string }> {
+    const prepared = await this.prepare({ ...request, maxBitrate: null }, renderer.profile, { userId, local: renderer.local });
+    const { item, plan, audio, startMs, settings } = prepared;
+    // A TV given the file as it is plays the track it picks itself, so any other track goes as a stream
+    const direct = renderer.acceptsMatroska && plan.mode === "remux" && audio.index === item.defaultAudioStream;
+    this.checkTranscodeLimit(!direct && plan.video === "encode", settings);
+    const ladder = !direct && plan.video === "encode" ? await HardwareProbe.getInstance().ladder(plan, item.probe, settings) : null;
+
+    const session = new ProgressiveSession({
+      id: crypto.randomUUID(),
+      userId,
+      item,
+      plan,
+      settings,
+      ladder,
+      direct,
+      transportStreamType: renderer.transportStreamType,
+      matroskaType: renderer.matroskaType,
+      deviceName: renderer.name,
+      audioLanguage: audio.language,
+      startMs,
+    });
+    this.sessions.set(session.id, session);
+    return { session, path: `/api/playback/stream/${StreamToken.issue(session.id)}/${session.fileName}` };
+  }
+
+  /** Every running session, for the admin's Now playing list. */
+  public nowPlaying(): NowPlayingRecord[] {
+    const sessions = [...this.sessions.values()];
+    const users = UserAccount.names(sessions.map((session) => session.userId));
+
+    return sessions
+      .map((session): NowPlayingRecord | null => {
+        const title = Title.find(session.item.titleId);
+        if (!title) return null;
+        return {
+          id: session.id,
+          user: users.get(session.userId) ?? null,
+          titleId: title.id,
+          tmdbId: title.tmdbId,
+          mediaType: title.mediaType,
+          season: session.item.season,
+          episode: session.item.episode,
+          device: session.device,
+          deviceName: session.deviceName,
+          mode: session instanceof ProgressiveSession && session.direct ? "direct" : session.plan.mode,
+          reasons: session.plan.reasons,
+          hardware: session.hardware,
+          rung: session.rung,
+          positionMs: session.positionMs,
+          durationMs: session.item.durationMs,
+          startedAt: session.createdAt,
+        };
+      })
+      .filter((record): record is NowPlayingRecord => record !== null)
+      .sort((a, b) => b.startedAt - a.startedAt);
+  }
+
+  /** A running session. */
+  public get(id: string): AnySession | null {
+    return this.sessions.get(id) ?? null;
+  }
+
+  /**
+   * Ends a session; only its owner may, unless `userId` is null. A DLNA
+   * session's renderer is stopped too.
+   */
+  public async end(id: string, userId: string | null): Promise<boolean> {
+    const session = this.sessions.get(id);
+    if (!session || (userId !== null && session.userId !== userId)) return false;
+    this.sessions.delete(id);
+    for (const [ticket, sessionId] of this.castSessions) if (sessionId === id) this.castSessions.delete(ticket);
+    this.log(session);
+    if (session instanceof ProgressiveSession) await DlnaController.getInstance().released(id);
+    await session.close();
+    return true;
+  }
+
+  /** Records an ending session for the Admin page's playback figures. Never throws. */
+  private log(session: AnySession): void {
+    try {
+      PlayLog.record({
+        userId: session.userId,
+        titleId: session.item.titleId,
+        season: session.item.season,
+        episode: session.item.episode,
+        device: session.device,
+        mode: session instanceof ProgressiveSession && session.direct ? "direct" : session.plan.mode,
+        rung: session.rung,
+        startedAt: session.createdAt,
+        // When the player last asked for anything: a reaped session ended a minute before it was reaped
+        endedAt: Math.min(session.lastSeen, Date.now()),
+      });
+    } catch (error) {
+      // A title deleted while it played takes its rows with it
+      console.warn("[Playback] Could not log the session:", error);
+    }
+  }
+
+  /** Ends every session playing any file of a title, such as one being deleted. */
+  public async endForTitle(titleId: string): Promise<void> {
+    for (const session of [...this.sessions.values()]) {
+      if (session.item.titleId === titleId) await this.end(session.id, null);
+    }
+  }
+
+  // ---------- Lifecycle ---------- //
+
+  private async turnOn(): Promise<void> {
+    this.running = true;
+
+    // Clear the session folders a previous process left behind, and nothing else the folder holds
+    const root = this.scratchRootOrNull(SettingsStore.section("playback"));
+    if (root) {
+      const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+      const stale = entries.filter((entry) => entry.isDirectory() && SESSION_FOLDER.test(entry.name));
+      await Promise.all(stale.map((entry) => rm(join(root, entry.name), { recursive: true, force: true }).catch(() => {})));
+    }
+
+    this.reaper = setInterval(() => void this.reap(), IDLE_MS / 4);
+    this.reaper.unref?.();
+    MediaIndexer.getInstance().start();
+    console.log("[Playback] Enabled");
+  }
+
+  private async turnOff(): Promise<void> {
+    this.running = false;
+    if (this.reaper) clearInterval(this.reaper);
+    this.reaper = null;
+    MediaIndexer.getInstance().stop();
+    await DlnaController.getInstance().stopAll();
+    for (const id of [...this.sessions.keys()]) await this.end(id, null);
+    console.log("[Playback] Disabled");
+  }
+
+  /** Ends every session on another device, as when casting is turned off. */
+  private async endCasts(): Promise<void> {
+    await DlnaController.getInstance().stopAll();
+    for (const session of [...this.sessions.values()]) {
+      if (session.device !== "browser") await this.end(session.id, null);
+    }
+  }
+
+  /** Ends sessions whose player has stopped asking for anything. */
+  private async reap(): Promise<void> {
+    const now = Date.now();
+    for (const session of [...this.sessions.values()]) {
+      if (now - session.lastSeen > IDLE_MS) await this.end(session.id, null);
+    }
+  }
+
+  // ---------- Making sessions ---------- //
+
+  /**
+   * Everything a session of any kind needs settled first: the file, still on
+   * disk; the audio track; how to send it to this device; and where to start.
+   */
+  private async prepare(request: PrepareRequest, profile: DeviceProfile, client: SessionClient): Promise<Prepared> {
+    if (!this.running) throw new PlaybackError("playback_disabled", 404);
+    if (!(await Ffmpeg.available())) throw new PlaybackError("ffmpeg_missing", 503);
+    const settings = SettingsStore.section("playback");
+
+    // The file must be indexed and still on disk
+    const item = MediaItem.findForKey(request);
+    if (!item) throw new PlaybackError("not_playable", 404);
+    if (!(await stat(item.path).catch(() => null))?.isFile()) {
+      MediaItem.remove(item.id);
+      throw new PlaybackError("not_playable", 404);
+    }
+
+    // Audio: the asked-for track, else the user's language, else the file's default
+    const prefs = PlaybackPrefs.get(client.userId);
+    const remembered = PlaybackProgress.lastAudioLanguage(client.userId, item.titleId);
+    const audio = this.chooseAudio(item.probe, request.audioTrack, remembered ?? prefs.audioLanguage);
+
+    let plan: PlaybackPlan;
+    const maxBitrate = this.bitrateCap(request.maxBitrate, settings, client.local);
+    try {
+      plan = PlaybackDecider.decide({
+        probe: item.probe,
+        audioStream: audio.index,
+        profile,
+        maxBitrate,
+        settings,
+        avoidCopy: request.avoidCopy ?? false,
+        serverToneMap: prefs.serverToneMap,
+      });
+    } catch (error) {
+      if (error instanceof TranscodeRequiredError) throw new PlaybackError("transcode_required", 409, error.message);
+      throw error;
+    }
+
+    // Resume where the user left off unless told where to start; a finished item keeps no position, so one is a rewatch part-way
+    const resume = PlaybackProgress.find(client.userId, request)?.positionMs ?? 0;
+    const startMs = Math.min(request.startMs ?? resume, Math.max(item.durationMs - 1000, 0));
+    return { item, plan, audio, startMs, settings };
+  }
+
+  /** Opens an HLS session in its own scratch directory. */
+  private async openHls(prepared: Prepared, userId: string, device: "browser" | "cast"): Promise<PlaybackSession> {
+    const { item, plan, audio, startMs, settings } = prepared;
+    this.checkTranscodeLimit(plan.video === "encode", settings);
+
+    const id = crypto.randomUUID();
+    const directory = join(this.scratchRoot(settings), id);
+    await mkdir(directory, { recursive: true });
+    const ladder = plan.video === "encode" ? await HardwareProbe.getInstance().ladder(plan, item.probe, settings) : null;
+
+    const session = new PlaybackSession({
+      id,
+      userId,
+      item,
+      plan,
+      settings,
+      directory,
+      startMs,
+      audioLanguage: audio.language,
+      device,
+      ladder,
+      warm: device === "browser",
+    });
+    this.sessions.set(id, session);
+    session.warmUp();
+    return session;
+  }
+
+  /** Refuses another video transcode once the limit is reached. */
+  private checkTranscodeLimit(encodes: boolean, settings: PlaybackSettings): void {
+    if (!encodes) return;
+    const running = [...this.sessions.values()].filter((session) => session.transcoding).length;
+    if (running >= settings.maxConcurrentTranscodes) throw new PlaybackError("transcode_limit", 503);
+  }
+
+  // ---------- Helpers ---------- //
+
+  /** Where session directories go. */
+  private scratchRoot(settings: PlaybackSettings): string {
+    const root = this.scratchRootOrNull(settings);
+    if (!root) throw new PlaybackError("transcodes_path_unset", 503);
+    return root;
+  }
+
+  /** Where session directories go under these settings, or null when neither the transcodes nor the downloads path is set. */
+  public scratchRootOrNull(settings: PlaybackSettings): string | null {
+    if (settings.transcodesPath) return settings.transcodesPath;
+    const downloads = SettingsStore.section("paths").downloads;
+    return downloads && isAbsolute(downloads) ? join(downloads, ".transcodes") : null;
+  }
+
+  /** The lower of the device's own bitrate cap and, off the local network, the server's; null for none. */
+  private bitrateCap(requested: number | null, settings: PlaybackSettings, local: boolean): number | null {
+    const remoteCap = !local && settings.remoteMaxBitrateMbps > 0 ? Math.round(settings.remoteMaxBitrateMbps * 1_000_000) : null;
+    const caps = [requested, remoteCap].filter((cap): cap is number => cap !== null);
+    return caps.length > 0 ? Math.min(...caps) : null;
+  }
+
+  /** Picks the audio track to send. */
+  private chooseAudio(probe: ProbeInfo, requested: number | null, language: string): ProbeInfo["audio"][number] {
+    const tracks = probe.audio;
+    const first = tracks[0];
+    if (!first) throw new PlaybackError("not_playable", 404);
+
+    if (requested !== null && tracks[requested]) return tracks[requested];
+    const wanted = language.toLowerCase();
+    const inLanguage = wanted ? tracks.filter((track) => track.language === wanted) : [];
+    return inLanguage.find((track) => track.isDefault) ?? inLanguage[0] ?? tracks.find((track) => track.isDefault) ?? first;
+  }
+}

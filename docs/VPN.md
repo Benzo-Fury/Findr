@@ -119,4 +119,4 @@ Give Findr a network where the VPN is the only way out. Then there is nothing to
 
 ### Prowlarr and FlareSolverr
 
-They run from `docker/`, so the same trick works for them: add a gluetun service to your `compose.yml` and give each one `network_mode: "service:gluetun"`, moving their `ports:` onto gluetun. Their searches and `.torrent` fetches then go through the VPN too. Findr reaches Prowlarr at the same URL.
+They run from `docker/` alongside Findr, so the same trick works for them: add a gluetun service to your `compose.yml` and give each one `network_mode: "service:gluetun"`, moving their `ports:` onto gluetun. Their searches and `.torrent` fetches then go through the VPN too. Findr reaches Prowlarr at the same URL.

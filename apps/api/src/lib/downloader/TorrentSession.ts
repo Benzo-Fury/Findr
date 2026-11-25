@@ -7,7 +7,7 @@
  * `discard()`, which removes the torrent and its data from the client.
  */
 
-import { join } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { WatchdogSettings } from "@findr/types/settings";
 import { AttemptFailure, sleep, throwIfCancelled } from "../pipeline/errors";
 import type { Downloader, TorrentInput } from "./Downloader";
@@ -24,6 +24,11 @@ export interface FetchRequest {
   tag: string;
   target: InspectionTarget;
   signal: AbortSignal;
+  /**
+   * Called with the chosen files once inspection passes, before any payload is
+   * requested. Throwing here ends the attempt without downloading a byte.
+   */
+  beforeDownload?: (files: SelectedFile[]) => Promise<void>;
   /** Called when the payload transfer begins, after inspection passes. */
   onDownloadStart: () => void;
   /** Called with 0–1 progress on each poll while downloading. */
@@ -74,6 +79,7 @@ export class TorrentSession {
     // Decide what to fetch before a single payload byte arrives
     const inspection = this.inspector.inspect(files, request.target);
     if (!inspection.accepted) throw new AttemptFailure(inspection.reason);
+    await request.beforeDownload?.(inspection.files);
 
     // Download only the chosen files
     await this.downloader.start(handle, inspection.files.map((file) => file.index));
@@ -99,7 +105,13 @@ export class TorrentSession {
     await this.downloader.stop(handle);
     request.onProgress(1);
 
-    return inspection.files.map((file) => ({ ...file, absolutePath: join(request.directory, file.path) }));
+    // The engine refuses paths that leave the directory; check again before anything opens them
+    return inspection.files.map((file) => {
+      const absolutePath = resolve(request.directory, file.path);
+      const inside = relative(resolve(request.directory), absolutePath);
+      if (!inside || inside.startsWith("..") || isAbsolute(inside)) throw new AttemptFailure(`Unsafe file path in torrent: ${file.path}`);
+      return { ...file, absolutePath };
+    });
   }
 
   /** Removes the torrent and its data from the client. Never throws; cleanup is best effort. */

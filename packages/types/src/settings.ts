@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ReleaseTypeSchema, ResolutionSchema } from "./media";
+import { PlaybackSettingsSchema } from "./playback";
 
 /**
  * User-tunable settings, stored in the database and edited by admins from the
@@ -125,6 +126,11 @@ export const ServicesSettingsSchema = z.object({
   /** Base URL of the Prowlarr instance searched for releases. */
   prowlarrUrl: serviceUrl.default(""),
   prowlarrApiKey: z.string().trim().default(""),
+  /**
+   * How long a Prowlarr search may take. Prowlarr answers only once its
+   * slowest indexer has, so one slow indexer can hold back every search.
+   */
+  prowlarrTimeoutSeconds: z.number().int().min(10).max(600).default(60),
   /** Enables the wrong-title filter. */
   anthropicApiKey: z.string().trim().default(""),
 });
@@ -233,6 +239,7 @@ export const SettingsSchema = z.object({
   access: AccessSettingsSchema.prefault({}),
   vpn: VpnSettingsSchema.prefault({}),
   updates: UpdatesSettingsSchema.prefault({}),
+  playback: PlaybackSettingsSchema.prefault({}),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -283,6 +290,7 @@ export const SettingsPatchSchema = z
     access: patchOf(AccessSettingsSchema),
     vpn: patchOf(VpnSettingsSchema),
     updates: patchOf(UpdatesSettingsSchema),
+    playback: patchOf(PlaybackSettingsSchema),
   })
   .partial()
   .strict();

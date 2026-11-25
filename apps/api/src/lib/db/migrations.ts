@@ -126,4 +126,104 @@ export const migrations: Migration[] = [
       )`,
     ],
   },
+  {
+    name: "playback",
+    statements: [
+      // A library file that can be played, probed once when it is saved
+      `CREATE TABLE media_items (
+        id           TEXT PRIMARY KEY NOT NULL,
+        title_id     TEXT NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+        download_id  TEXT REFERENCES downloads(id) ON DELETE SET NULL,
+        season       INTEGER,
+        episode      INTEGER,
+        path         TEXT NOT NULL UNIQUE,
+        size         INTEGER NOT NULL,
+        mtime        INTEGER NOT NULL,
+        duration_ms  INTEGER NOT NULL,
+        probe        TEXT NOT NULL,
+        keyframes    BLOB NOT NULL,
+        indexed_at   INTEGER NOT NULL
+      )`,
+      "CREATE INDEX media_items_title_idx ON media_items (title_id, season, episode)",
+
+      // How far each user got through each item
+      `CREATE TABLE playback_progress (
+        user_id        TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+        title_id       TEXT NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+        season         INTEGER NOT NULL DEFAULT -1,
+        episode        INTEGER NOT NULL DEFAULT -1,
+        position_ms    INTEGER NOT NULL DEFAULT 0,
+        duration_ms    INTEGER NOT NULL DEFAULT 0,
+        played         INTEGER NOT NULL DEFAULT 0,
+        play_count     INTEGER NOT NULL DEFAULT 0,
+        audio_language TEXT,
+        last_played_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, title_id, season, episode)
+      )`,
+
+      // Each user's playback preferences, one JSON document per user
+      `CREATE TABLE playback_prefs (
+        user_id    TEXT PRIMARY KEY NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+        value      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+    ],
+  },
+  {
+    name: "cast bridges",
+    statements: [
+      // Findr run on another network to reach the TVs there; only a hash of its token is kept
+      `CREATE TABLE cast_bridges (
+        id           TEXT PRIMARY KEY NOT NULL,
+        name         TEXT NOT NULL,
+        token_hash   TEXT NOT NULL UNIQUE,
+        created_at   INTEGER NOT NULL,
+        last_seen_at INTEGER
+      )`,
+    ],
+  },
+  {
+    name: "episode credits",
+    statements: [
+      // Where each episode's end credits start, how that was found, and when to look again (null: never)
+      "ALTER TABLE media_items ADD COLUMN credits_ms INTEGER",
+      "ALTER TABLE media_items ADD COLUMN credits_source TEXT",
+      "ALTER TABLE media_items ADD COLUMN credits_retry_at INTEGER",
+    ],
+  },
+  {
+    name: "renderer overrides",
+    statements: [
+      // An admin's corrections to what each TV says it plays, by renderer id, as one JSON document
+      `CREATE TABLE renderer_overrides (
+        renderer_id TEXT PRIMARY KEY NOT NULL,
+        value       TEXT NOT NULL,
+        updated_at  INTEGER NOT NULL
+      )`,
+    ],
+  },
+  {
+    name: "admin statistics",
+    statements: [
+      // How many bytes an attempt chose to download, and milliseconds spent in each phase as JSON
+      "ALTER TABLE attempts ADD COLUMN bytes INTEGER",
+      "ALTER TABLE attempts ADD COLUMN timings TEXT",
+      "CREATE INDEX attempts_finished_idx ON attempts (finished_at)",
+
+      // One row per finished playback session: who watched what, on which kind of device, and how it was sent
+      `CREATE TABLE play_log (
+        id          TEXT PRIMARY KEY NOT NULL,
+        user_id     TEXT REFERENCES user(id) ON DELETE SET NULL,
+        title_id    TEXT NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+        season      INTEGER,
+        episode     INTEGER,
+        device      TEXT NOT NULL,
+        mode        TEXT NOT NULL,
+        rung        TEXT,
+        started_at  INTEGER NOT NULL,
+        ended_at    INTEGER NOT NULL
+      )`,
+      "CREATE INDEX play_log_started_idx ON play_log (started_at)",
+    ],
+  },
 ];

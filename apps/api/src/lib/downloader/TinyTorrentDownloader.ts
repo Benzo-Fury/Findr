@@ -29,7 +29,8 @@ import { Engine, type Magnet, type Metainfo, parseMagnet, parseTorrent, type Tor
 import { z } from "zod";
 import { AppState } from "../db/models/AppState";
 import { SettingsStore } from "../db/models/SettingsStore";
-import { AttemptFailure, SuspendedError } from "../pipeline/errors";
+import { DiskSpace } from "../pipeline/DiskSpace";
+import { AttemptFailure, DiskFullError, SuspendedError } from "../pipeline/errors";
 import VpnGuard from "../vpn/VpnGuard";
 import { VpnTransport } from "../vpn/VpnTransport";
 import type { AddOptions, Downloader, TorrentFile, TorrentInput, TorrentStatus } from "./Downloader";
@@ -60,6 +61,8 @@ interface Entry {
   suspended: string | null;
   /** The torrent's error, once it has failed. */
   error: string | null;
+  /** Whether that error was the disk filling up. */
+  noSpace?: boolean;
 }
 
 /** The DHT's known nodes as stored between restarts: the engine's compact form, base64-encoded. */
@@ -102,6 +105,7 @@ export class TinyTorrentDownloader implements Downloader {
     // A torrent error (most often a disk write failing) belongs to this attempt
     torrent.on("error", (error: Error) => {
       entry.error = error.message;
+      entry.noSpace = DiskSpace.isNoSpace(error);
     });
     torrent.on("warning", (message: string) => console.warn(`[Downloader] ${torrent.name}: ${message}`));
 
@@ -112,6 +116,7 @@ export class TinyTorrentDownloader implements Downloader {
   public async files(handle: string): Promise<TorrentFile[] | null> {
     const entry = this.entry(handle);
     if (!entry) throw new AttemptFailure("The torrent was removed from the download client");
+    if (entry.noSpace) throw TinyTorrentDownloader.diskFull(entry);
     if (entry.error) throw new AttemptFailure(`The torrent failed: ${entry.error}`);
 
     // Available once the file list is known; paths are reported relative to the save directory
@@ -128,6 +133,7 @@ export class TinyTorrentDownloader implements Downloader {
     entry.started = true;
     entry.torrent.select(fileIndexes).catch((error: unknown) => {
       entry.error = error instanceof Error ? error.message : String(error);
+      entry.noSpace = DiskSpace.isNoSpace(error);
     });
   }
 
@@ -137,7 +143,9 @@ export class TinyTorrentDownloader implements Downloader {
     const { torrent } = entry;
     const base = { speedBytesPerSecond: Math.round(torrent.downloadRate), peers: torrent.peers.size };
 
-    // A failed torrent, one still waiting for its file list, or one verifying data on disk
+    // A failed torrent, one still waiting for its file list, or one verifying data on disk.
+    // A full disk is no fault of the release, so it stops the download instead
+    if (entry.noSpace) throw TinyTorrentDownloader.diskFull(entry);
     if (entry.error) {
       return { ...base, state: "error", downloadedBytes: 0, totalBytes: 0, progress: 0, error: entry.error };
     }
@@ -246,6 +254,11 @@ export class TinyTorrentDownloader implements Downloader {
   private static applySettings(engine: Engine): void {
     engine.options.maxPeersPerTorrent = SettingsStore.section("torrent").maxConnections;
     engine.options.encryption = SettingsStore.section("vpn").enabled ? "prefer-plaintext" : "prefer";
+  }
+
+  /** The error for a torrent whose disk write failed for lack of space. */
+  private static diskFull(entry: Entry): DiskFullError {
+    return new DiskFullError(`Torrent write failed: ${entry.error}`);
   }
 
   /** Explains an engine warning in terms a user can act on, rather than the socket error. */

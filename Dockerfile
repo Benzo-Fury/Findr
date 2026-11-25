@@ -1,5 +1,6 @@
-# Findr's container image: the compiled Linux executable plus the tools its
-# pipeline and VPN killswitch run (mkvmerge, ffmpeg, ip).
+# Findr's container image: the compiled Linux executable, which carries its own
+# ffmpeg, plus what that ffmpeg and the VPN killswitch need from the system
+# (hardware video drivers, ip).
 #
 # It packages executables that are already built rather than compiling them,
 # so the image runs exactly what the release ships. Build them first, then the
@@ -14,8 +15,28 @@ FROM debian:trixie-slim
 
 ARG TARGETARCH
 
+# The Mali G610's OpenCL driver (Rockchip's libmali, headless GBM build), which
+# lets an RK3588 tone map HDR on its GPU. Pinned by URL and SHA-256, as the
+# ffmpeg builds are; it is the build Jellyfin's image ships
+ARG LIBMALI_URL=https://github.com/tsukumijima/libmali-rockchip/releases/download/v1.9-1-20260923-ec78b74/libmali-valhall-g610-g24p0-gbm_1.9-1_arm64.deb
+ARG LIBMALI_SHA256=1432646b23750cedea0f19a276e6d19d6e620805bf5564b41efa575468cab0c4
+
+# The embedded ffmpeg loads hardware drivers from the system: libva and its
+# drivers let it encode on Intel and AMD graphics once /dev/dri is passed
+# through, and Intel's media driver and Quick Sync runtime are only built for
+# amd64. NVIDIA's libraries come from the NVIDIA container runtime. Rockchip's
+# decoder and encoder need nothing here but their devices; its GPU needs the
+# Mali driver above, installed on arm64 only, which registers itself with
+# OpenCL (/etc/OpenCL/vendors/mali.icd)
 RUN apt-get update \
- && apt-get install -y --no-install-recommends mkvtoolnix ffmpeg iproute2 ca-certificates curl tzdata \
+ && apt-get install -y --no-install-recommends iproute2 ca-certificates curl tzdata libva2 libva-drm2 mesa-va-drivers \
+ && if [ "$TARGETARCH" = amd64 ]; then apt-get install -y --no-install-recommends intel-media-va-driver libmfx-gen1.2; fi \
+ && if [ "$TARGETARCH" = arm64 ]; then \
+      curl -fsSL -o /tmp/libmali.deb "$LIBMALI_URL" \
+      && echo "$LIBMALI_SHA256  /tmp/libmali.deb" | sha256sum -c - \
+      && apt-get install -y --no-install-recommends /tmp/libmali.deb \
+      && rm /tmp/libmali.deb; \
+    fi \
  && rm -rf /var/lib/apt/lists/*
 
 # Pick the executable built for this platform (Docker's amd64 is Bun's x64)

@@ -15,6 +15,7 @@ const STATUS: Record<ResetRefusal, ContentfulStatusCode> = {
   reset_not_required: 409,
   email_unchanged: 400,
   email_taken: 409,
+  invalid_setup_code: 403,
 }
 
 export default factory({

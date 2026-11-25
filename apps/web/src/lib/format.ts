@@ -63,3 +63,29 @@ export function dayGroup(epochMs: number, now = Date.now()): string {
   const sameYear = date.getFullYear() === startOfToday.getFullYear()
   return date.toLocaleDateString(undefined, sameYear ? { month: "long" } : { month: "long", year: "numeric" })
 }
+
+/** Renders a byte count as MB, GB or TB, with more precision for small values of each. */
+export function formatBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"]
+  let value = Math.max(bytes, 0)
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  const digits = unit === 0 ? 0 : value >= 100 ? 0 : value >= 10 ? 1 : 2
+  return `${value.toFixed(digits)} ${units[unit]}`
+}
+
+/** Renders milliseconds as the two largest units, seconds only under ten minutes: `45s`, `8m 5s`, `12m`, `3h 20m`, `2d 4h`. */
+export function formatDuration(ms: number): string {
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 10) return seconds % 60 ? `${minutes}m ${seconds % 60}s` : `${minutes}m`
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return minutes % 60 ? `${hours}h ${minutes % 60}m` : `${hours}h`
+  const days = Math.floor(hours / 24)
+  return hours % 24 ? `${days}d ${hours % 24}h` : `${days}d`
+}

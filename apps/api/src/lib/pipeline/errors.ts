@@ -5,7 +5,7 @@
  * - `AttemptFailure` — this release is bad (stalled, dangerous files, broken
  *   container). Reject it and move on to the next candidate.
  * - `FatalDownloadError` — the environment is broken (library paths unset,
- *   mkvmerge missing). Trying another release would fail the same way, so
+ *   ffmpeg missing, a full disk: `OutOfSpaceError`). Trying another release would fail the same way, so
  *   stop without blaming the candidate.
  * - `SuspendedError` — the VPN killswitch cut torrent traffic. Put the
  *   candidate back and leave the download queued, to resume once the VPN is up.
@@ -19,7 +19,26 @@ export class AttemptFailure extends Error {
 
 /** Something outside the release is wrong; no candidate can succeed until it is fixed. */
 export class FatalDownloadError extends Error {
-  override readonly name = "FatalDownloadError";
+  override readonly name: string = "FatalDownloadError";
+}
+
+/**
+ * A disk Findr writes to is too full for the attempt, or filled up during it.
+ * Fatal, since every other release would need room too; the message says
+ * which disk and what to do.
+ */
+export class OutOfSpaceError extends FatalDownloadError {
+  override readonly name = "OutOfSpaceError";
+}
+
+/**
+ * A write failed because a disk is full, raised where it happened (the
+ * torrent engine, ffmpeg). The attempt runner turns it into an
+ * `OutOfSpaceError` that names the step and the folder to clear; the
+ * technical detail stays in the log.
+ */
+export class DiskFullError extends Error {
+  override readonly name = "DiskFullError";
 }
 
 /** The VPN killswitch has stopped torrent traffic. Carries why the VPN counts as down. */

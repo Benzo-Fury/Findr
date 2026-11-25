@@ -2,7 +2,7 @@
  * Application-level configuration read from the process environment.
  *
  * Only settings that belong to the deployment rather than the user live here:
- * the database location, proxy trust, the mkvmerge binary, a port override,
+ * the database location, proxy trust, the ffmpeg and ffprobe binaries, a port override,
  * and where updates come from. None is required, so Findr starts with no `.env` at all.
  * Everything an admin tunes while running Findr — library paths, naming,
  * preferences, the watchdog, service URLs and API keys, the ports, remote
@@ -24,6 +24,9 @@ const flag = z
   .default("false")
   .transform((value) => value === "true" || value === "1");
 
+/** A value that may be left unset, where an empty one counts as unset. */
+const optionalString = z.preprocess((value) => (value === "" ? undefined : value), z.string().optional());
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 
@@ -43,11 +46,29 @@ const EnvSchema = z.object({
   TRUST_PROXY: flag,
 
   /**
-   * The mkvmerge binary. Deliberately an env var rather than a UI setting: an
-   * executable path editable from the browser would let a hijacked admin
-   * session run arbitrary programs on the server.
+   * The ffmpeg binary, which cleans every download and packages library files
+   * for playback. Unset means the copy inside a compiled executable, else the
+   * one on `PATH` (`FfmpegLocator`). Deliberately an env var rather than a UI
+   * setting: an executable path editable from the browser would let a
+   * hijacked admin session run arbitrary programs on the server.
    */
-  MKVMERGE_PATH: z.string().default("mkvmerge"),
+  FFMPEG_PATH: optionalString,
+
+  /** The ffprobe binary, which reads a file's streams. Found the same way as ffmpeg, and an env var for the same reason. */
+  FFPROBE_PATH: optionalString,
+
+  /**
+   * A Prowlarr URL to start from, such as `http://prowlarr:9696` in the Docker
+   * stack. Only fills the Prowlarr URL setting while it is empty (`SetupDefaults`).
+   */
+  PROWLARR_URL: z.preprocess((value) => (value === "" ? undefined : value), z.url().optional()),
+
+  /**
+   * Prowlarr's `config.xml`, mounted read-only in the Docker stack. Its API
+   * key fills the Prowlarr API key setting while that is empty, so nobody has
+   * to copy it across.
+   */
+  PROWLARR_CONFIG: optionalString,
 
   /** Where new versions are looked for: a GitHub API "latest release" URL. Lets a fork follow its own releases. */
   UPDATES_URL: z.url().default("https://api.github.com/repos/Benzo-Fury/Findr/releases/latest"),

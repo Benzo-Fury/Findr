@@ -12,7 +12,7 @@ import {
   SortAscendingIcon,
   SquaresFourIcon,
 } from "@phosphor-icons/react"
-import { DOWNLOAD_STATUS, isActive } from "@/lib/download-status"
+import { DOWNLOAD_STATUS, downloadStatus, filesMissing, isActive } from "@/lib/download-status"
 import { formatPercent, formatRelativeTime, plural } from "@/lib/format"
 import { useLibrary, type LibraryEntry } from "@/lib/library"
 import { EASE_OUT, FADE, staggerDelay } from "@/lib/motion"
@@ -37,6 +37,8 @@ import { Segmented } from "@/components/ui/segmented"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StatusLabel } from "@/components/ui/status-label"
 import { UpdateBanner } from "@/components/updates/update-banner"
+import { PlaybackProblemsBanner } from "@/components/playback/playback-problems-banner"
+import { ContinueWatchingRow } from "@/components/playback/continue-watching-row"
 
 /**
  * Everything Findr has fetched or tried to fetch. The whole library is held
@@ -84,6 +86,7 @@ function statusGroup(entry: LibraryEntry): Exclude<StatusFilter, "all"> | null {
   const downloads = entry.title.downloads
   if (downloads.some((download) => isActive(download.status))) return "active"
   const latest = entry.latest?.status
+  if (entry.latest && filesMissing(entry.latest)) return "attention"
   if (latest === "completed") return "ready"
   if (latest === "failed" || latest === "partial") return "attention"
   return null
@@ -185,7 +188,7 @@ export function LibraryPage() {
   const signature = `${words.join(" ")}|${type}|${status}|${genre}|${prefs.sort}|${prefs.view}`
 
   return (
-    <div className="mx-auto max-w-[1600px] px-4 md:px-8">
+    <div className="mx-auto max-w-[1600px] px-4 pb-16 md:px-8">
       <PageHeader title="Library" count={loading ? undefined : entries.length}>
         <Segmented
           label="Layout"
@@ -199,7 +202,9 @@ export function LibraryPage() {
       </PageHeader>
 
       <UpdateBanner updates={updates} dismissible className="mt-5" />
+      <PlaybackProblemsBanner className="mt-5" />
       <ActivityRibbon count={active.length} progress={active[0]?.activeAttempt?.progress} onOpen={() => navigate("/downloads")} />
+      <ContinueWatchingRow className="mt-8" />
 
       {/* Sticky toolbar: search, facets, sort */}
       <div className="bleed-band z-[2] mt-6 pb-3 pt-3 md:sticky md:top-[var(--chrome-height)]">
@@ -458,11 +463,11 @@ interface CardProps {
   onOpen: (entry: LibraryEntry, layoutId?: string) => void
 }
 
-/** What a library card says about status: nothing when the title is simply ready. */
+/** What a library card says about status: nothing when the title is simply ready to play. */
 function cardStatus(entry: LibraryEntry) {
   const running = entry.title.downloads.find((download) => isActive(download.status))
   if (running) return { status: DOWNLOAD_STATUS[running.status], progress: running.activeAttempt?.progress ?? null }
-  if (entry.latest && entry.latest.status !== "completed") return { status: DOWNLOAD_STATUS[entry.latest.status], progress: undefined }
+  if (entry.latest && (entry.latest.status !== "completed" || filesMissing(entry.latest))) return { status: downloadStatus(entry.latest), progress: undefined }
   return { status: undefined, progress: undefined }
 }
 

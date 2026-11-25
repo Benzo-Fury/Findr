@@ -93,6 +93,8 @@ export interface DownloadSummary {
   createdAt: number;
   updatedAt: number;
   activeAttempt: ActiveAttempt | null;
+  /** How many of the files a finished download saved are no longer on disk, as when deleted or moved by hand. */
+  missingFiles: number;
 }
 
 export interface EpisodeRecord {

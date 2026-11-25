@@ -19,6 +19,8 @@ import { Accounts } from "@/components/settings/accounts"
 import { FieldRow } from "@/components/settings/field-row"
 import { FIELDS, SECTIONS, WEIGHT_KEYS, type FieldDef, type SectionDef } from "@/components/settings/registry"
 import { SaveDock } from "@/components/settings/save-dock"
+import { CastBridgesPanel } from "@/components/settings/cast-bridges"
+import { PlaybackStatusPanel } from "@/components/settings/playback-status"
 import { UpdateStatusPanel } from "@/components/settings/update-status"
 import { VpnStatusPanel } from "@/components/settings/vpn-status"
 import { WeightBar } from "@/components/settings/weight-bar"
@@ -193,6 +195,13 @@ export function SettingsPage() {
     return () => observer.disconnect()
   }, [visible, server])
 
+  // A link to a section (`/settings#playback`, from the playback problems banner) scrolls to it once the settings are in
+  const loaded = server !== null
+  React.useEffect(() => {
+    const id = window.location.hash.slice(1)
+    if (loaded && id) window.requestAnimationFrame(() => document.getElementById(`section-${id}`)?.scrollIntoView({ block: "start" }))
+  }, [loaded])
+
   function jump(id: string) {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
     document.getElementById(`section-${id}`)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" })
@@ -285,6 +294,12 @@ export function SettingsPage() {
                           {section.id === "vpn" && words.length === 0 && (
                             <div className="pt-5">
                               <VpnStatusPanel revision={vpnRevision} />
+                            </div>
+                          )}
+                          {section.id === "playback" && words.length === 0 && server.settings.playback.enabled && (
+                            <div className="space-y-3 pt-5">
+                              <PlaybackStatusPanel />
+                              {server.settings.playback.casting && <CastBridgesPanel />}
                             </div>
                           )}
                           {/* Alone in the card (a container or source checkout, or a search matching only the section), it is inset below too */}

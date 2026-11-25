@@ -1,0 +1,44 @@
+/**
+ * Finds this machine's address on the local network: the private IPv4
+ * address of a physical interface. DLNA searches leave from it, and TVs are
+ * sent URLs on it. Reads no settings, so a cast bridge can use it without a
+ * database.
+ */
+
+import { networkInterfaces } from "node:os";
+import { LocalNetwork } from "./LocalNetwork";
+
+/**
+ * Interfaces that are never the local network: VPN tunnels, container and
+ * VM bridges, and Apple's peer-to-peer links.
+ */
+const VIRTUAL_INTERFACE = /^(utun|tun|tap|wg|ppp|ipsec|docker|br-|veth|virbr|vboxnet|vmnet|bridge|llw|awdl|anpi|zt|tailscale)/i;
+
+/** Physical interfaces, preferred in this order when several qualify. */
+const PREFERRED_INTERFACE = [/^en\d/i, /^eth\d/i, /^wl/i, /^e/i];
+
+export class LanInterface {
+  /**
+   * This machine's private IPv4 address on a physical interface, or null.
+   * IPv6 and link-local addresses are skipped: TVs handle them poorly.
+   */
+  public static address(): string | null {
+    const candidates: Array<{ name: string; address: string }> = [];
+    for (const [name, addresses] of Object.entries(networkInterfaces())) {
+      if (VIRTUAL_INTERFACE.test(name)) continue;
+      for (const entry of addresses ?? []) {
+        if (entry.internal || entry.family !== "IPv4") continue;
+        if (!LocalNetwork.isPrivate(entry.address) || entry.address.startsWith("169.254.") || entry.address.startsWith("127.")) continue;
+        candidates.push({ name, address: entry.address });
+      }
+    }
+
+    // Wired and Wi-Fi interfaces before anything else
+    const rank = (name: string) => {
+      const index = PREFERRED_INTERFACE.findIndex((pattern) => pattern.test(name));
+      return index === -1 ? PREFERRED_INTERFACE.length : index;
+    };
+    candidates.sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
+    return candidates[0]?.address ?? null;
+  }
+}

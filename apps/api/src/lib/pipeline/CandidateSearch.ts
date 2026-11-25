@@ -13,7 +13,7 @@ import { Candidate, type NewCandidate } from "../db/models/Candidate";
 import Prowlarr, { ProwlarrError, type ProwlarrRelease, type TitleQuery } from "../prowlarr/Prowlarr";
 import { ReleaseParser } from "../releases/ReleaseParser";
 import { ReleaseScorer, type ScoreTarget } from "../releases/ReleaseScorer";
-import { FatalDownloadError } from "./errors";
+import { FatalDownloadError, throwIfCancelled } from "./errors";
 import { RelevanceFilter, type RelevanceContext } from "./RelevanceFilter";
 
 // ---------- Types ---------- //
@@ -26,6 +26,8 @@ export interface SearchRequest {
   target: ScoreTarget;
   relevance: RelevanceContext;
   settings: Settings;
+  /** The download's cancel signal. */
+  signal: AbortSignal;
 }
 
 /** A tally of what the search found, for status messages. */
@@ -45,11 +47,13 @@ export class CandidateSearch {
    * adds what is new.
    */
   public async run(request: SearchRequest): Promise<SearchSummary> {
-    // Query indexers; a dead or unconfigured Prowlarr fails the whole download
+    // Query indexers; a dead or unconfigured Prowlarr fails the whole download,
+    // but a search cut short by a cancel is just cancelled
     let releases: ProwlarrRelease[];
     try {
-      releases = await Prowlarr.getInstance().search(request.query);
+      releases = await Prowlarr.getInstance().search(request.query, { signal: request.signal });
     } catch (error) {
+      throwIfCancelled(request.signal);
       if (error instanceof ProwlarrError) throw new FatalDownloadError(`Indexer search failed: ${error.message}`);
       throw error;
     }
@@ -82,6 +86,7 @@ export class CandidateSearch {
     const drops = await new RelevanceFilter(request.settings.llmFilter, request.settings.services.anthropicApiKey).screen(
       request.relevance,
       eligible.map((entry, index) => ({ id: String(index), title: entry.release.title })),
+      request.signal,
     );
     const dropReasons = new Map(
       eligible.flatMap((entry, index) => {
@@ -90,7 +95,9 @@ export class CandidateSearch {
       }),
     );
 
-    // Persist everything, rejected releases included
+    // Persist everything, rejected releases included, unless cancelled, which
+    // may have cut the screening short
+    throwIfCancelled(request.signal);
     const rows: NewCandidate[] = evaluated.map((entry) => {
       const llmReason = dropReasons.get(entry);
       const rejection = !entry.verdict.accepted ? entry.verdict.reason : llmReason ? `Wrong title: ${llmReason}` : null;

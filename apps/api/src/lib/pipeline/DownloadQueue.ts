@@ -30,6 +30,7 @@ import { TinyTorrentDownloader } from "../downloader/TinyTorrentDownloader";
 import SelfManagedSingleton from "../other/SelfManagedSingleton";
 import VpnGuard from "../vpn/VpnGuard";
 import { AttemptRunner } from "./AttemptRunner";
+import type { DiskSpace } from "./DiskSpace";
 import { DownloadRunner } from "./DownloadRunner";
 
 // ---------- Errors ---------- //
@@ -62,10 +63,13 @@ export default class DownloadQueue extends SelfManagedSingleton {
     VpnGuard.getInstance().subscribe((status, previous) => this.onVpnChange(status, previous));
   }
 
-  /** Swaps the torrent client backend. Used by tests; must be called before any download runs. */
-  public useDownloader(downloader: Downloader): this {
+  /**
+   * Swaps the torrent client backend, and optionally the disk space checker.
+   * Used by tests; must be called before any download runs.
+   */
+  public useDownloader(downloader: Downloader, space?: DiskSpace): this {
     this.downloader = downloader;
-    this.attempts = new AttemptRunner(downloader);
+    this.attempts = new AttemptRunner(downloader, space);
     return this;
   }
 

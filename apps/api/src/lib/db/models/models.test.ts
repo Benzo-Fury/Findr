@@ -1,5 +1,8 @@
 import { SettingsPatchSchema } from "@findr/types/settings";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { migrateAuth } from "../../auth/client";
 import { ReleaseParser } from "../../releases/ReleaseParser";
 import { database } from "../client";
@@ -109,6 +112,25 @@ describe("Download", () => {
     download.finish("completed", "Saved");
     expect(Download.findUnfinished(title.id, 1)).toBeNull();
     expect(Download.find(download.id)?.toSummary().result).toEqual({ files: ["/lib/a.mkv"] });
+  });
+
+  test("counts saved files that are gone from disk once finished", () => {
+    const dir = mkdtempSync(join(tmpdir(), "findr-missing-"));
+    const kept = join(dir, "kept.mkv");
+    writeFileSync(kept, "");
+    try {
+      const download = Download.create(Title.findOrCreate(1399, "tv"), 1, null);
+      download.recordSavedFiles([kept, join(dir, "deleted.mkv")]);
+      // Still running: its files may not be written yet
+      expect(download.toSummary().missingFiles).toBe(0);
+
+      download.finish("completed", "Saved");
+      expect(Download.find(download.id)?.toSummary().missingFiles).toBe(1);
+      rmSync(kept);
+      expect(Download.find(download.id)?.toSummary().missingFiles).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("a new run re-queues and increments the run counter", () => {

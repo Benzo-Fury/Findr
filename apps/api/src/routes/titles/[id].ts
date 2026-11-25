@@ -1,12 +1,13 @@
 /**
  * One requested title. `GET` returns it with all of its downloads. `DELETE`
- * forgets it: running downloads are cancelled and every download is removed
- * with its history. Files already saved to the library are kept.
+ * forgets it: running downloads are cancelled, anyone playing it is stopped,
+ * and every download is removed with its history. Files already saved to the library are kept.
  */
 
 import { Download } from "../../lib/db/models/Download"
 import { Title } from "../../lib/db/models/Title"
 import DownloadQueue from "../../lib/pipeline/DownloadQueue"
+import PlaybackService from "../../lib/playback/PlaybackService"
 import { factory } from "../../lib/routing/factory"
 import { withQueue } from "../../lib/routing/queueErrors"
 
@@ -29,6 +30,7 @@ export default factory({
       for (const download of Download.forTitles([title.id]).get(title.id) ?? []) {
         await queue.remove(download.id)
       }
+      await PlaybackService.getInstance().endForTitle(title.id)
       title.delete()
       return c.body(null, 204)
     }),

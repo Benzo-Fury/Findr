@@ -20,9 +20,15 @@ const DANGEROUS_EXTENSIONS = new Set([
   ".js", ".jse", ".wsf", ".hta", ".pif", ".com", ".jar", ".dll", ".apk", ".app", ".dmg",
 ]);
 
-const VIDEO_EXTENSIONS = new Set([
-  ".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".webm", ".mpg", ".mpeg", ".vob", ".flv",
-]);
+/**
+ * Videos in the containers the sterilizer takes (Matroska, WebM, MP4/MOV).
+ * Others — AVI, MPEG-TS, VOB and the rest — would be refused once downloaded,
+ * so a release holding only those is rejected before any of it is fetched.
+ */
+const VIDEO_EXTENSIONS = new Set([".mkv", ".webm", ".mp4", ".m4v", ".mov"]);
+
+/** Videos in containers Findr doesn't take, to say why a release with only these was turned down. */
+const UNSUPPORTED_VIDEO_EXTENSIONS = new Set([".avi", ".wmv", ".ts", ".m2ts", ".mpg", ".mpeg", ".vob", ".flv", ".divx", ".ogm", ".rmvb"]);
 
 const ARCHIVE_EXTENSIONS = new Set([".rar", ".zip", ".7z", ".tar", ".gz", ".iso"]);
 
@@ -44,6 +50,8 @@ export type InspectionTarget =
 export interface SelectedFile {
   index: number;
   path: string;
+  /** Size in bytes, as the torrent lists it. */
+  sizeBytes: number;
   /** Empty for movies. More than one for multi-episode files. */
   episodes: number[];
 }
@@ -71,7 +79,10 @@ export class FileInspector {
     // Archive-only releases are rejected, not unpacked
     if (videos.length === 0) {
       const archived = files.some((file) => ARCHIVE_EXTENSIONS.has(this.extension(file)));
-      return { accepted: false, reason: archived ? "Archive-only release with no video file" : "No video files" };
+      if (archived) return { accepted: false, reason: "Archive-only release with no video file" };
+      const unsupported = files.find((file) => UNSUPPORTED_VIDEO_EXTENSIONS.has(this.extension(file)));
+      if (unsupported) return { accepted: false, reason: `Video is in a container Findr doesn't take (${this.extension(unsupported)})` };
+      return { accepted: false, reason: "No video files" };
     }
 
     switch (target.kind) {
@@ -92,7 +103,7 @@ export class FileInspector {
     if (largest.sizeBytes < MIN_FEATURE_BYTES) {
       return { accepted: false, reason: "No full-length video (largest file is under 100 MB)" };
     }
-    return { accepted: true, files: [{ index: largest.index, path: largest.path, episodes: [] }] };
+    return { accepted: true, files: [{ index: largest.index, path: largest.path, sizeBytes: largest.sizeBytes, episodes: [] }] };
   }
 
   /**
@@ -124,7 +135,7 @@ export class FileInspector {
     for (const episode of required) {
       const entry = byEpisode.get(episode);
       if (entry && !selected.has(entry.file.index)) {
-        selected.set(entry.file.index, { index: entry.file.index, path: entry.file.path, episodes: entry.episodes });
+        selected.set(entry.file.index, { index: entry.file.index, path: entry.file.path, sizeBytes: entry.file.sizeBytes, episodes: entry.episodes });
       }
     }
     return { accepted: true, files: [...selected.values()] };
@@ -139,12 +150,12 @@ export class FileInspector {
     });
     if (named.length > 0) {
       const file = this.largest(named);
-      return { accepted: true, files: [{ index: file.index, path: file.path, episodes: [episode] }] };
+      return { accepted: true, files: [{ index: file.index, path: file.path, sizeBytes: file.sizeBytes, episodes: [episode] }] };
     }
 
     // A single unnamed video in an episode release is that episode
     if (videos.length === 1 && videos[0]) {
-      return { accepted: true, files: [{ index: videos[0].index, path: videos[0].path, episodes: [episode] }] };
+      return { accepted: true, files: [{ index: videos[0].index, path: videos[0].path, sizeBytes: videos[0].sizeBytes, episodes: [episode] }] };
     }
 
     return { accepted: false, reason: `No file for S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` };

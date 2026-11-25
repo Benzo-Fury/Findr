@@ -7,12 +7,14 @@
  * blanked, and say only which of them are set.
  *
  * A change to the VPN killswitch is checked straight away, so turning it on
- * stops torrents at once when the VPN is not up.
+ * stops torrents at once when the VPN is not up. Switching playback on or
+ * off takes effect at once too: turning it off ends every session.
  */
 
 import { SECRET_FIELDS, SettingsPatchSchema, type Settings, type SettingsResponse } from "@findr/types/settings"
 import { SettingsStore } from "../../lib/db/models/SettingsStore"
 import VpnGuard from "../../lib/vpn/VpnGuard"
+import PlaybackService from "../../lib/playback/PlaybackService"
 import { factory } from "../../lib/routing/factory"
 import { bodyOf } from "../../lib/routing/input"
 
@@ -41,6 +43,7 @@ export default factory({
       const patch = bodyOf(c, SettingsPatchSchema)
       const settings = SettingsStore.update(patch)
       if (patch.vpn) await VpnGuard.getInstance().check({ lookupIp: true })
+      if (patch.playback) await PlaybackService.getInstance().applySettings()
       return c.json(response(settings))
     },
   },

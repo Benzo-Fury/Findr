@@ -4,7 +4,7 @@ Findr has two kinds of configuration, stored in two places:
 
 | Kind | Where | Changed by | Examples |
 |---|---|---|---|
-| **Deployment** - how and where the server runs | Environment variables (`.env`), all optional | Whoever runs the server; needs a restart | Database file, mkvmerge path, proxy trust, port override |
+| **Deployment** - how and where the server runs | Environment variables (`.env`), all optional | Whoever runs the server; needs a restart | Database file, ffmpeg paths, proxy trust, port override |
 | **Settings** - everything else | The database, edited on the **Settings** page | Admins, in the browser; most apply to the next download | Service URLs and API keys, library paths, naming, release preferences, scoring, watchdog, VPN killswitch, remote access |
 
 There is no config file. API keys are stored in the database but never sent back to the browser, and nothing the browser can edit can point Findr at an executable.
@@ -25,9 +25,25 @@ None is required, so Findr starts without a `.env`. Startup fails with a list of
 | `PORT` | No | - | Overrides the port set under [Access](#access--access). Leave it unset; it is the way back in when the configured port is taken. |
 | `DATABASE_PATH` | No | `data/findr.db` | SQLite file (the folder is created on first run). Relative paths resolve from the repo root in development, and from the working directory for the compiled binary. |
 | `TRUST_PROXY` | No | `false` | Believe the first `X-Forwarded-For` address, for rate limiting and for the remote access check. Only enable behind a reverse proxy you control. |
-| `MKVMERGE_PATH` | No | `mkvmerge` | mkvmerge binary, from [MKVToolNix](https://mkvtoolnix.download/). An env var on purpose - an executable path should not be editable from a browser. |
+| `FFMPEG_PATH` | No | see below | ffmpeg binary, which cleans every download and packages library files for [playback](#playback--playback). An env var on purpose - an executable path should not be editable from a browser. |
+| `FFPROBE_PATH` | No | see below | ffprobe binary, used to read a file's streams before it is cleaned and each library file's streams and keyframes for playback. |
+| `PROWLARR_URL` | No | - | A Prowlarr address to start from, such as `http://prowlarr:9696` in the Docker stack. Fills the `prowlarrUrl` setting only while it is empty. |
+| `PROWLARR_CONFIG` | No | - | Path to Prowlarr's `config.xml`, mounted read-only in the Docker stack. Its API key fills the `prowlarrApiKey` setting only while that is empty, so the key never has to be copied across. Read again whenever setup checks, since Prowlarr writes the file on its own first start. |
 | `UPDATES_URL` | No | `https://api.github.com/repos/Benzo-Fury/Findr/releases/latest` | Where new versions are looked for: a GitHub API "latest release" URL. Point a fork at its own releases. See [Updates](#updates--updates). |
 | `FINDR_CONTAINER` | No | detected | Whether Findr runs in a container, which only notifies of updates. Unset means detect it from `/.dockerenv` (Docker) or `/run/.containerenv` (Podman); set `true` or `false` to decide. See [Updates](#updates--updates). |
+
+**Finding ffmpeg.** Each binary is looked for in order: the path in `FFMPEG_PATH` / `FFPROBE_PATH`, then the copy inside a compiled executable, then the one on `PATH`. A candidate counts only once it answers `-version`. The executables for Linux, macOS and Windows carry a pinned FFmpeg build (see [ThirdParty.md](ThirdParty.md)), written out to `bin/` beside the database the first time it is used and checked against its hash on every start. The Docker image uses the copy inside its executable too. These builds include every hardware encoder Findr offers; the encoder's driver still comes from the system (see [converting video](Playback.md#converting-video)). Without ffmpeg nothing can be downloaded or played; setup and the startup log say so.
+
+### Cast bridge
+
+Read only by `findr bridge`, which runs Findr as a [cast bridge](Playback.md#tvs-on-another-network) on another network. Each stands in for the command-line option of the same name, which wins when both are given. A bridge uses no database and none of the variables above.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `FINDR_SERVER` | Yes | - | Findr's address, as the browser opens it (`--server`). |
+| `FINDR_BRIDGE_TOKEN` | Yes | - | The token shown when the bridge was added under **Settings → Playback** (`--token`). |
+| `FINDR_BRIDGE_PORT` | No | `34572` | The port TVs fetch video from (`--port`). |
+| `FINDR_BRIDGE_MEDIA_URL` | No | this machine's address | The address TVs fetch video from, when the bridge's own address on its network isn't it (`--media-url`). |
 
 ---
 
@@ -43,9 +59,13 @@ It is kept out of the database on purpose: the database stores session tokens, a
 
 Sign-up is disabled. When the database has no accounts, Findr creates one admin that signs in as **`admin`** / **`admin`** (it is stored as `admin@findr.local`; typing either works). That account must set its own email and password before it can do anything else - every other page and API call is refused until it does - and doing so signs out any other session that used the old credentials. New passwords must be at least 8 characters.
 
-Because remote access is off by default (see [Access](#access--access)), the first sign-in can only happen from the machine Findr runs on. Further accounts are created on the Settings page.
+Because remote access is off by default (see [Access](#access--access)), `admin` / `admin` only works from the machine Findr runs on. Further accounts are created on the Settings page.
 
-On a headless VPS with no local browser, reach that first sign-in by forwarding the port over SSH instead of opening Findr to the network: `ssh -L 34571:localhost:34571 user@your-vps`, then open `http://localhost:34571` in a browser on your own machine. The request arrives at Findr from the VPS's own loopback interface, so it is accepted under the default settings - no need to touch `allowRemote` or `TRUST_PROXY` just to get in the door. Once signed in, turn on `allowRemote` (and set `publicUrl` if you'll reach it by name) if you actually want remote access going forward; otherwise keep using the tunnel.
+**From another machine** - a container, a headless server - use the **setup code** instead. While the initial admin still has to set its credentials, Findr prints a random code in its log every time it starts (`docker compose logs findr` in the Docker stack). Opening Findr from elsewhere then shows a claim screen rather than the sign-in form: enter the code with your own email and password, and Findr replaces `admin` / `admin` with them and turns on `allowRemote`, so you can sign in from that browser. Until the server is claimed, remote requests reach only the web app and the claim itself; `admin` / `admin` stays local. The code lives only in memory, changes with every restart, and stops working once the credentials are replaced either way.
+
+An SSH tunnel works too: `ssh -L 34571:localhost:34571 user@your-vps`, then open `http://localhost:34571` on your own machine. The request arrives from the server's own loopback interface, so `admin` / `admin` is accepted and remote access can stay off.
+
+After the account, an admin is walked through the rest of first-run setup: the TMDB and Prowlarr keys, the library paths and a check that ffmpeg was found. It can't be dismissed while something downloads need is missing, and everything in it stays editable under Settings.
 
 ---
 
@@ -59,8 +79,9 @@ The same data is available at `GET /api/settings` and `PATCH /api/settings` (adm
 
 | Field | Description |
 |---|---|
-| `prowlarrUrl` | Base URL of your [Prowlarr](https://prowlarr.com/) instance, e.g. `http://localhost:9696`. Required. |
-| `prowlarrApiKey` | Prowlarr API key (Prowlarr → Settings → General; the Docker setup pins it from `docker/.env`). Required. Prowlarr's download links are saved with the key removed, and it is re-attached only when Findr fetches from this URL. |
+| `prowlarrUrl` | Base URL of your [Prowlarr](https://prowlarr.com/) instance, e.g. `http://localhost:9696` (`http://prowlarr:9696` in the Docker stack). Required. |
+| `prowlarrApiKey` | Prowlarr API key (Prowlarr → Settings → General; the Docker stack reads it from Prowlarr's config, see `PROWLARR_CONFIG`). Required. Prowlarr's download links are saved with the key removed, and it is re-attached only when Findr fetches from this URL. |
+| `prowlarrTimeoutSeconds` | How long a search may wait for Prowlarr, 10–600 seconds (default `60`). Prowlarr answers only once its slowest indexer has, so one slow or stalled indexer can push every search past this. Prefer disabling that indexer in Prowlarr; raise this if your indexers are simply slow. |
 | `tmdbApiKey` | [TMDB](https://developer.themoviedb.org/) API key, for browsing, metadata, episode lists and naming. Required. |
 | `anthropicApiKey` | Enables the wrong-title filter (see below). Optional; without it the filter is skipped. |
 
@@ -68,7 +89,7 @@ The three keys are secrets: stored in the database, never sent to the browser. O
 
 ### Library paths - `paths`
 
-Absolute paths on the server. They must be set before the first download.
+Absolute paths on the server. They must be set before the first download. In a container they start as `/media/downloads`, `/media/movies` and `/media/tv`, all on the Docker stack's one media mount.
 
 | Field | Description |
 |---|---|
@@ -139,7 +160,7 @@ A torrent that trips any of these is abandoned, its files deleted, and the next 
 | `minSpeedKBps` | `50` | Average speed floor, judged over a full `speedWindowMinutes`. `0` disables it. |
 | `speedWindowMinutes` | `10` | The window the average speed is measured over. |
 | `pollIntervalSeconds` | `5` | How often progress is checked. |
-| `stuckTimeoutMinutes` | `10` | How long any step of an attempt - fetching, downloading, sterilizing, saving - may show no sign of life before it counts as stuck. A sign of life is a torrent poll answering (however little arrived), mkvmerge reporting progress, or bytes copied into the library, so a slow or seedless torrent is never caught by this; the checks above handle those. |
+| `stuckTimeoutMinutes` | `10` | How long any step of an attempt - fetching, downloading, sterilizing, saving - may show no sign of life before it counts as stuck. A sign of life is a torrent poll answering (however little arrived), ffmpeg reporting progress, or bytes copied into the library, so a slow or seedless torrent is never caught by this; the checks above handle those. |
 
 ### Wrong-title filter - `llmFilter`
 
@@ -167,6 +188,38 @@ An optional pass that asks Claude which of the best-scoring releases are clearly
 | `homeIps` | - | Optional. Your home connection's public IPv4/IPv6 addresses, comma separated. When set, the public address is looked up and torrents stop if it is one of these or the lookup fails. |
 
 How each check works, what it can't cover, and how to add a killswitch outside Findr: **[VPN.md](VPN.md)**.
+
+### Playback - `playback`
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Let signed-in users watch library files in Findr. Turning it off at once ends every session, stops their ffmpeg runs and hides playback in the web app; what was indexed and watched is kept for when it comes back on. |
+| `transcoding` | `true` | Re-encode video a device can't play as it is. Off means such files fail with `transcode_required`; audio is still converted. |
+| `transcodesPath` | - | Scratch folder for prepared segments. Empty uses `.transcodes` inside the downloads path. Session folders left from a previous run are cleared when Findr starts; anything else in it is left alone. |
+| `maxConcurrentTranscodes` | `2` | Video transcodes at once. Sessions that copy the video are cheap and not counted. |
+| `remoteMaxBitrateMbps` | `0` | Bitrate cap for clients outside the local network (anything not loopback, private, link-local or unique-local). `0` means none. |
+| `maxTranscodeResolution` | `1080p` | The tallest picture a transcode produces. |
+| `hardwareAcceleration` | `auto` | Hardware for transcodes: `auto` (the first that works on this machine), `videotoolbox` (Apple), `nvenc` (NVIDIA), `qsv` (Intel Quick Sync), `vaapi` (Intel or AMD on Linux), `amf` (AMD on Windows), `rkmpp` (Rockchip), or `none` (the CPU alone, with x264). Decoding, scaling, tone mapping and encoding each run on the hardware where it can, and fall back to the CPU where it can't; a choice that doesn't work here converts on the CPU. The bundled ffmpeg has all of them; the machine needs the driver. **Test hardware** on the Settings page shows what runs where. See [Converting video](Playback.md#converting-video). |
+| `vaapiDevice` | `/dev/dri/renderD128` | The render node VA-API and Quick Sync use on Linux. A container needs it passed through. |
+| `encoderPreset` | `veryfast` | x264 preset for transcodes. CPU encoder only. |
+| `h264Crf` | `23` | Quality for transcodes; lower is better and larger. Hardware encoders take it as their constant-quality level, except VideoToolbox, which encodes to a target bitrate. A device's bitrate choice caps it further. |
+| `threads` | `0` | ffmpeg threads per transcode; `0` lets ffmpeg decide. CPU encoder only. |
+| `toneMapping` | `true` | Map HDR to SDR when transcoding for a screen that can't show HDR, and in scrubbing thumbnails: on the hardware where it can, else with `tonemapx` (the bundled ffmpeg has it), else zscale; with none of them HDR is converted as it is and looks washed out. A browser that maps HDR down itself is sent HDR as it is, unless its user turns on **Convert HDR on the server** in the player. |
+| `casting` | `true` | Offer Google Cast, AirPlay and DLNA TVs. While on, a device on the local network may fetch media with the token in its URL even when `access.allowRemote` is off; nothing else is opened. |
+| `chromecastProfile` | `1080p` | What Chromecasts on this network decode, since they can't say: `1080p` (H.264 up to 1080p, every Chromecast) or `4k-hdr` (HEVC Main 10, 4K and HDR10 as well: the Chromecast Ultra, Chromecast with Google TV 4K and Google TV Streamer). Files they can't take are converted. |
+| `castBaseUrl` | - | The address TVs on the server's network fetch media from. Empty uses this machine's private IPv4 address and Findr's port. Set it when that address isn't reachable from the TV, as in a container on a bridge network. Chromecast and AirPlay TVs cast to from a browser outside that network use `access.publicUrl` instead, or this when it is a public address. See [Casting](Playback.md#casting). |
+| `trickplay` | `true` | Make scrubbing thumbnails for every library file in the background, kept beside the database. |
+| `trickplayIntervalSeconds` | `10` | Seconds between thumbnails. Changing it makes them again. |
+| `trickplayWidth` | `320` | Thumbnail width in pixels. Changing it makes them again. |
+| `throttleTranscodes` | `true` | Stop producing segments once `throttleAheadSeconds` ahead of the player. |
+| `throttleAheadSeconds` | `180` | How far ahead segments are prepared before pausing. |
+| `segmentSeconds` | `6` | Target segment length. Copied video cuts on its own keyframes, so its segments can run longer. |
+| `segmentKeepSeconds` | `600` | Segments further behind the player than this are deleted. |
+| `minResumePercent` | `5` | Stopping before this share of the runtime keeps no resume point. |
+| `maxResumePercent` | `90` | Stopping after this share marks the item watched. |
+| `minResumeDurationSeconds` | `300` | Items shorter than this always start from the beginning. |
+
+How playback works and what each decision means: **[Playback.md](Playback.md)**.
 
 ### Access - `access`
 
@@ -205,7 +258,7 @@ For reference, every check a release goes through, in order:
 1. **Search** - Prowlarr results are de-duplicated (the same torrent from several indexers counts once).
 2. **Hard filters** - wrong structure (a TV release for a movie, a single episode for a season, a multi-season pack), blacklisted type, too few seeders, over the size limit, or a movie from a different year. Rejected with the reason; never downloaded.
 3. **Wrong-title filter** - optional, see above.
-4. **File inspection** - after the torrent's file list arrives but *before any payload downloads*: any executable or script (`.exe`, `.scr`, `.lnk`, `.bat`, `.cmd`, `.ps1`, `.msi`, `.js`, …) rejects the whole torrent, as does an archive-only release or one with no full-length video. Season packs must contain every aired episode. Only the needed video files are downloaded.
+4. **File inspection** - after the torrent's file list arrives but *before any payload downloads*: any executable or script (`.exe`, `.scr`, `.lnk`, `.bat`, `.cmd`, `.ps1`, `.msi`, `.js`, …) rejects the whole torrent, as does an archive-only release or one with no full-length video in a container Findr takes (`.mkv`, `.webm`, `.mp4`, `.m4v`, `.mov`; AVI, MPEG-TS, VOB and the like are refused). Season packs must contain every aired episode. Only the needed video files are downloaded.
 5. **Watchdog** - while downloading, see above.
-6. **Sterilize** - mkvmerge rejects unreadable containers and files without a video stream.
+6. **Sterilize** - the file must really be Matroska/WebM or MP4/MOV, judged from its first bytes rather than its name. ffmpeg then reads it as exactly that format, from the local file only, and rejects it when it can't be read, has no video, or has video (or only audio) outside the allowed codecs: H.264, HEVC, AV1 and VP9 video; AAC, AC-3, E-AC-3, DTS, TrueHD, FLAC, Opus, MP3, Vorbis and PCM audio. What survives is remuxed, not re-encoded, to Matroska with only video and audio: no subtitles, attachments, cover art, chapters, tags or titles; audio keeps its language.
 7. **Stuck** - at any step, an attempt with no sign of life for `stuckTimeoutMinutes` is rejected, see above.

@@ -1,114 +1,94 @@
-# External services
+# Findr in Docker
 
-Findr downloads torrents with its own built-in client, so the only service it needs beside it is **Prowlarr**, to search your indexers. This folder runs it with Docker Compose, plus **FlareSolverr** as an optional helper for indexers behind Cloudflare. Findr itself runs on the host (`bun run dev`, `bun run start` or the `findr` binary).
+This folder is the whole stack as one Docker Compose file: **Findr** itself, **Prowlarr** to search your indexers, and **FlareSolverr** as an optional helper for indexers behind Cloudflare. Findr downloads torrents with its own built-in client, so nothing else is needed.
 
 | Service | Image | Port | Purpose |
 |---|---|---|---|
+| Findr | [`ghcr.io/benzo-fury/findr`](https://github.com/Benzo-Fury/Findr/pkgs/container/findr) | 34571 (localhost only), 6881 torrents | The downloader and web app |
 | Prowlarr | [`lscr.io/linuxserver/prowlarr`](https://docs.linuxserver.io/images/docker-prowlarr/) | 9696 (localhost only) | Indexer manager; Findr calls its search API |
 | FlareSolverr *(optional)* | [`ghcr.io/flaresolverr/flaresolverr`](https://github.com/FlareSolverr/FlareSolverr) | internal only | Cloudflare challenge solver used by Prowlarr |
 
-## Files
-
-| File | Committed | What it is |
-|---|---|---|
-| `compose.example.yml` | Yes | The stack, configured entirely from `.env` |
-| `.env.example` | Yes | Every variable, with placeholders |
-| `compose.yml`, `.env` | No (gitignored) | Your copies |
-| `config/` | No (gitignored) | Container state: Prowlarr's database and settings |
-
-## Setup
-
-### 1. Create your copies
+## Quick start
 
 ```bash
-cd docker
-cp compose.example.yml compose.yml
-cp .env.example .env
+mkdir -p findr/config/findr findr/config/prowlarr findr/media && cd findr
+curl -fsSL https://github.com/Benzo-Fury/Findr/releases/latest/download/compose.yml -o compose.yml
+docker compose up -d
+docker compose logs findr
 ```
 
-Edit `.env`:
+Making the folders first matters: Docker would otherwise create them owned by root, and the containers, which run as your user, couldn't write to them.
 
-- `PUID` / `PGID` - the output of `id -u` and `id -g`, so files the containers write belong to you.
-- `TZ` - your timezone, e.g. `Europe/London`.
-- `PROWLARR_API_KEY` - any 32-character hex string (`openssl rand -hex 16`). The compose file passes it to Prowlarr as `PROWLARR__AUTH__APIKEY`, which overrides the key Prowlarr would otherwise generate, so Findr and Prowlarr agree from the first start.
+The log shows a **setup code**. Open http://localhost:34571, enter the code, and choose your email and password. Setup then walks you through the rest:
 
-### 2. Start
+- **Your TMDB API key** - free from [themoviedb.org](https://www.themoviedb.org/settings/api).
+- **Prowlarr** - already filled in. Findr reaches it at `http://prowlarr:9696` and reads its API key from Prowlarr's own settings, so there's nothing to copy across.
+- **Library folders** - already filled in: `/media/movies`, `/media/tv` and `/media/downloads`, which are `media/` in your `findr` folder.
+- **ffmpeg** - included in the image.
 
-```bash
-docker compose up -d                          # Prowlarr
-docker compose --profile flaresolverr up -d   # ...and FlareSolverr
-docker compose ps
-```
+Claiming the server with the code also turns on **Settings → Access → Allow remote access**, so you can use Findr from the browser you claimed it from.
 
-### 3. Prowlarr
+### Prowlarr
 
 Open http://localhost:9696. On first visit Prowlarr asks you to choose an authentication method for its web UI; pick **Forms** and set a login. This doesn't affect Findr, which uses the API key.
 
-Then add indexers under **Indexers → Add Indexer**. Findr searches every enabled indexer. [Internet Archive](https://archive.org) is a good first one to confirm everything works, since it's public and its content is legal to download. Note that it reports every torrent as 1 seeder (archive.org serves them over HTTP), so Findr's default minimum of 5 seeders rejects them all; lower **Settings → Release preferences → Minimum seeders** while testing with it.
+Then add indexers under **Indexers → Add Indexer**. Findr searches every enabled indexer. [Internet Archive](https://archive.org) is a good first one to confirm everything works, since it's public and its content is legal to download. It reports every torrent as 1 seeder (archive.org serves them over HTTP), so Findr's default minimum of 5 seeders rejects them all; lower **Settings → Release preferences → Minimum seeders** while testing with it.
 
-If you started FlareSolverr and an indexer needs it:
+If an indexer needs FlareSolverr, start it with `docker compose --profile flaresolverr up -d`, then:
 
-1. **Settings → Indexers → Add → FlareSolverr**, host `http://flaresolverr:8191/`, and give it a tag such as `flaresolverr`.
+1. **Settings → Indexers → Add → FlareSolverr** in Prowlarr, host `http://flaresolverr:8191/`, with a tag such as `flaresolverr`.
 2. Add the same tag to each indexer that sits behind Cloudflare. Untagged indexers don't use it.
 
-### 4. Point Findr at it
+## Changing the container defaults
 
-Start Findr and sign in. On **Settings → Services**, set:
+Everything about Findr itself is changed under **Settings**. A few things are decided by Docker before Findr starts, so Settings can't change them. To change one, put it in a `.env` file beside `compose.yml` and run `docker compose up -d` again. [`.env.example`](.env.example) lists them all, including image tags; the ones you're most likely to need:
 
-- **Prowlarr URL** - `http://localhost:9696`
-- **Prowlarr API key** - the same value as `PROWLARR_API_KEY` in `docker/.env`. (If you're pointing Findr at a Prowlarr instance you didn't set up with this stack, find the key instead in Prowlarr's own UI under **Settings → General → Security → API Key**.)
-
-Then set the library paths on **Settings → Library paths**.
+- `BIND_ADDRESS` - `127.0.0.1` (the default) keeps the web UIs private to this machine, even with **Allow remote access** on. Use `0.0.0.0` to reach them from other devices, behind a firewall or VPN.
+- `PUID` / `PGID` - the user and group that own the files the containers write (`id -u`, `id -g`); default 1000.
+- `MEDIA_ROOT` - the host folder mounted at `/media` in Findr; default `./media`. Library paths in Settings are inside this folder.
+- `TORRENT_PORT` - the torrent port Docker opens (default 6881). If you change it, set the same value under **Settings → Torrent client**.
 
 ## Everyday use
 
 ```bash
-docker compose logs -f prowlarr               # follow a service's logs
-docker compose pull && docker compose up -d   # update images
-docker compose down                           # stop (state in config/ is kept)
+docker compose logs -f findr                  # follow Findr's log
+docker compose pull && docker compose up -d   # update
+docker compose down                           # stop (everything in config/ and media/ is kept)
 ```
 
-To pin versions, set `PROWLARR_TAG` and `FLARESOLVERR_TAG` in `.env` to specific tags.
+Findr knows it runs in a container (the image sets `FINDR_CONTAINER=true`), so it only announces new releases rather than updating itself. Update while no downloads are running if you can.
 
-## Running Findr in Docker
+## Running Findr on the host instead
 
-Every release also publishes a container image for `linux/amd64` and `linux/arm64`: `ghcr.io/benzo-fury/findr`, tagged with the version (`1.4.0`), the minor line (`1.4`) and `latest`. It holds the release's executable plus mkvmerge, ffmpeg and `ip`, so there is nothing else to install. Add it to your `compose.yml`:
-
-```yaml
-  findr:
-    image: ghcr.io/benzo-fury/findr:latest    # or pin a version, e.g. :1.4
-    container_name: findr
-    user: "1000:1000"                         # the host user that owns the library folders
-    environment:
-      - TZ=Etc/UTC
-    volumes:
-      - ./config/findr:/data                  # database, session secret, optional .env
-      - /srv/media:/srv/media                 # library and scratch folders, at the same paths
-    ports:
-      - 127.0.0.1:34571:34571                 # web app
-      - 6881:6881                             # torrent port (TCP and UDP)
-      - 6881:6881/udp
-    restart: unless-stopped
-```
-
-- **Paths** - mount the library and downloads folders at the paths you enter under **Settings → Library paths**; mounting them at the same path inside and out keeps that simple. Point **Prowlarr URL** at `http://prowlarr:9696` when both are in this stack.
-- **First sign-in** - the initial `admin` / `admin` login, and replacing it, are only accepted from the machine Findr runs on. Through a published port a request comes from Docker's network, not loopback, so do this one step from inside the container, choosing your own email and password:
-
-  ```bash
-  docker exec findr sh -c '
-    H="-H Origin:http://localhost:34571 -H Content-Type:application/json"
-    curl -sf -c /tmp/jar $H http://localhost:34571/api/auth/sign-in/email -d "{\"email\":\"admin\",\"password\":\"admin\"}" > /dev/null &&
-    curl -sf -b /tmp/jar $H http://localhost:34571/api/account/credentials -d "{\"email\":\"you@example.com\",\"password\":\"a long password\"}" &&
-    curl -sf -b /tmp/jar $H -X PATCH http://localhost:34571/api/settings -d "{\"access\":{\"allowRemote\":true}}" > /dev/null &&
-    echo "Credentials set, remote access on"; rm -f /tmp/jar'
-  ```
-
-  This also turns on **Settings → Access → Allow remote access**, without which Findr refuses every request from outside the container. Then sign in from the browser with your new credentials; behind a reverse proxy, set **Public URL** too.
-- **Updates** - Findr knows it runs in a container (the image sets `FINDR_CONTAINER=true`), so it only announces new releases. Update with `docker compose pull findr && docker compose up -d findr`, ideally while no downloads are running. Everything that matters lives in `/data`, so it carries over.
-- **On a VPN** - give it `network_mode: "service:gluetun"` instead of `ports:`, as in [docs/VPN.md](../docs/VPN.md#linux-a-network-namespace-or-docker-with-a-vpn-container), and set the killswitch's interface to the VPN container's (`tun0` or `wg0`).
+Using the `findr` binary or `bun run start`? Start only Prowlarr with `docker compose up -d prowlarr`, and in Findr's setup use `http://localhost:9696` and the key from Prowlarr's **Settings → General → Security → API Key**.
 
 ## Notes
 
-- **Prowlarr's web UI is bound to 127.0.0.1** so only this machine can reach it. If Findr runs on another host, set `BIND_ADDRESS=0.0.0.0` and put it behind a firewall or VPN.
-- **Prowlarr's download links** point at the address Findr used to search (the Prowlarr URL in its settings). Findr fetches `.torrent` files itself, so nothing else needs to reach Prowlarr.
-- **Torrent traffic** comes from Findr, not from this stack. Its port is set under **Settings → Torrent client** in Findr (default 6881); forward it on your router for better speeds. To keep it on a VPN, use Findr's VPN killswitch; to put Prowlarr and FlareSolverr on the VPN too, see [docs/VPN.md](../docs/VPN.md#prowlarr-and-flaresolverr).
+- **The image** is published for `linux/amd64` and `linux/arm64` with every release, tagged with the version (`1.4.0`), the minor line (`1.4`) and `latest`. It holds the release's executable, with its ffmpeg, plus `ip` and the VA-API and Quick Sync drivers.
+- **Behind a reverse proxy**, set **Settings → Access → Public URL**.
+- **Casting to TVs** - Findr finds DLNA TVs with a multicast search that doesn't cross Docker's bridge network, so to cast to one give the `findr` service `network_mode: host` instead of `ports:` (TVs then reach it on the host's own address). On a bridge network, Chromecast and AirPlay still work from the browser, but set **Settings → Playback → Address for TVs** (`castBaseUrl`) to an address TVs can reach, such as `http://192.168.1.10:34571`. To cast to DLNA TVs on a different network from the server's, run a [cast bridge](../docs/Playback.md#tvs-on-another-network) on that network: `docker run -d --restart unless-stopped --network host -e FINDR_BRIDGE_TOKEN=<token> ghcr.io/benzo-fury/findr findr bridge --server <Findr's address>`. See [docs/Playback.md](../docs/Playback.md#casting).
+- **Hardware encoding** - the image's ffmpeg has every hardware encoder, and the image includes the VA-API drivers for Intel and AMD graphics and Intel's Quick Sync runtime (amd64 only). Pass the devices through and add the container's user to the host's `render` group (`group_add: ["<render group id>"]`):
+  - **Intel or AMD:** `devices: ["/dev/dri:/dev/dri"]`.
+  - **NVIDIA:** the NVIDIA container runtime (`runtime: nvidia`, or a `deploy.resources.reservations.devices` entry for the GPU) with `NVIDIA_DRIVER_CAPABILITIES=compute,video,utility`.
+  - **Rockchip** (a board on Rockchip's own kernel): every one of `/dev/mpp_service`, `/dev/rga`, `/dev/dri`, `/dev/dma_heap` and `/dev/mali0` that exists, plus the host's `video` group. Docker hides the device tree from containers, and Rockchip's MPP needs it to know which chip it runs on, so also add `security_opt: [systempaths=unconfined, apparmor=unconfined]` (as Jellyfin does for Rockchip). `/dev/mali0` lets an RK3588 tone map HDR on its GPU, using the Mali driver the arm64 image carries:
+
+    ```yaml
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/dma_heap:/dev/dma_heap
+      - /dev/mpp_service:/dev/mpp_service
+      - /dev/rga:/dev/rga
+      - /dev/mali0:/dev/mali0
+    group_add:
+      - "44"    # the host's video group: getent group video
+    security_opt:
+      - systempaths=unconfined
+      - apparmor=unconfined
+    ```
+
+  Settings → Playback lists anything still missing once Findr is running.
+
+  **Test encoder** under **Settings → Playback** confirms it works.
+- **On a VPN** - give Findr `network_mode: "service:gluetun"` instead of `ports:`, as in [docs/VPN.md](../docs/VPN.md#linux-a-network-namespace-or-docker-with-a-vpn-container), and set the killswitch's interface to the VPN container's (`tun0` or `wg0`).
+- **Prowlarr's download links** point at the address Findr used to search. Findr fetches `.torrent` files itself, so nothing else needs to reach Prowlarr.
+- **Torrent traffic** comes from Findr, not Prowlarr. Forward `TORRENT_PORT` on your router for better speeds. To keep it on a VPN, use Findr's VPN killswitch; to put Prowlarr and FlareSolverr on the VPN too, see [docs/VPN.md](../docs/VPN.md#prowlarr-and-flaresolverr).

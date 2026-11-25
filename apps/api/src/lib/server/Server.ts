@@ -8,6 +8,7 @@
  */
 
 import { Hono } from "hono"
+import { websocket } from "hono/bun"
 import { METHODS } from "hono/router"
 import type { Route, HttpMethod } from "../../types/Route"
 import { RateLimiter } from "../../middleware/RateLimiter"
@@ -38,12 +39,18 @@ export class Server extends Hono {
 
   /**
    * Binds the server via `Bun.serve` to the port from the settings (or the
-   * `PORT` override). Must be called after `constructRoutes` has registered
-   * all endpoints.
+   * `PORT` override), or to `port` when given, as tests do. Must be called
+   * after `constructRoutes` has registered all endpoints. WebSocket routes
+   * (cast bridges) are served by Hono's Bun handler.
    */
-  start() {
-    this.listener = Bun.serve({ fetch: this.fetch, port: ServerAddress.port })
-    console.log(`[Server] Listening on ${ServerAddress.localUrl}`)
+  start(port: number = ServerAddress.port) {
+    this.listener = Bun.serve({ fetch: this.fetch, websocket, port })
+    console.log(`[Server] Listening on http://localhost:${this.listener.port}`)
+  }
+
+  /** The port it listens on, once started. */
+  get port(): number | null {
+    return this.listener?.port ?? null
   }
 
   /** Stops listening and closes open connections, freeing the port for another process. */

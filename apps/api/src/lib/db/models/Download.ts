@@ -5,6 +5,7 @@
  * with it.
  */
 
+import { existsSync } from "node:fs";
 import {
   TERMINAL_DOWNLOAD_STATUSES,
   type ActiveAttempt,
@@ -104,6 +105,11 @@ export class Download extends Model {
   }
 
   /** Whether the download has reached a status it never leaves on its own. */
+  /** Absolute library paths of every file this download has saved so far. */
+  public get savedFiles(): string[] {
+    return this.resultValue?.files ?? [];
+  }
+
   public get isFinished(): boolean {
     return TERMINAL_DOWNLOAD_STATUSES.includes(this.statusValue);
   }
@@ -150,6 +156,15 @@ export class Download extends Model {
       .query<DownloadRow, []>(`${SELECT_DOWNLOAD} WHERE d.status NOT IN (${TERMINAL_SQL}) ORDER BY d.created_at`)
       .all()
       .map((row) => new Download(row));
+  }
+
+  /** Every download that has saved at least one file to the library, oldest first. */
+  public static withSavedFiles(): Download[] {
+    return this.db
+      .query<DownloadRow, []>(`${SELECT_DOWNLOAD} WHERE d.result IS NOT NULL ORDER BY d.created_at`)
+      .all()
+      .map((row) => new Download(row))
+      .filter((download) => download.savedFiles.length > 0);
   }
 
   /** A page of downloads, most recently updated first. */
@@ -275,7 +290,14 @@ export class Download extends Model {
       createdAt: this.createdAt,
       updatedAt: this.updatedAtValue,
       activeAttempt: this.activeAttempt(),
+      missingFiles: this.missingFiles(),
     };
+  }
+
+  /** How many saved files are gone from disk; only finished downloads are checked, as running ones are still writing theirs. */
+  private missingFiles(): number {
+    if (!this.isFinished) return 0;
+    return this.savedFiles.filter((path) => !existsSync(path)).length;
   }
 
   /** The summary plus every episode, candidate and attempt. */

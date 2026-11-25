@@ -79,6 +79,7 @@ export class SettingsStore extends Model {
       access: { ...current.access, ...patch.access },
       vpn: { ...current.vpn, ...patch.vpn },
       updates: { ...current.updates, ...patch.updates },
+      playback: { ...current.playback, ...patch.playback },
     };
     const next = SettingsSchema.parse(merged);
 

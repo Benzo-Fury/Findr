@@ -10,6 +10,7 @@ import { migrateAuth, ROOT_EMAIL, seedRoot } from "../auth/client"
 import { database } from "../db/client"
 import { SettingsStore } from "../db/models/SettingsStore"
 import { env } from "../env/Env"
+import { SetupCode } from "../setup/SetupCode"
 import { Server } from "./Server"
 import { ServerAddress } from "./ServerAddress"
 
@@ -123,6 +124,7 @@ describe("settings response", () => {
 
 describe("remote access", () => {
   test("is refused by default, for the API and the web app alike", async () => {
+    SetupCode.clear()
     const api = await call("/api/health", { address: "192.168.1.20" })
     expect(api.status).toBe(403)
     expect(await api.json()).toEqual({ error: "remote_access_disabled" })
@@ -154,6 +156,57 @@ describe("remote access", () => {
   test("opens once enabled in the settings", async () => {
     SettingsStore.update({ access: { allowRemote: true } })
     expect((await call("/api/health", { address: "192.168.1.20" })).status).toBe(200)
+  })
+})
+
+describe("setup code", () => {
+  const remote = "192.168.1.20"
+  const claim = (code: string) => call("/api/setup/claim", { address: remote, body: { code, email: "me@example.com", password: "a-long-password" } })
+
+  test("lets a remote browser reach the web app and the claim route, but not admin / admin", async () => {
+    expect((await call("/", { address: remote })).status).not.toBe(403)
+    expect(await (await call("/api/setup/claim", { address: remote })).json()).toEqual({ pending: true, local: false })
+    expect((await call("/api/auth/sign-in/email", { address: remote, body: { email: "admin", password: "admin" } })).status).toBe(403)
+    expect((await call("/api/health", { address: remote })).status).toBe(403)
+  })
+
+  test("refuses a wrong code", async () => {
+    const res = await claim("AAAA-AAAA-AAAA")
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: "invalid_setup_code" })
+  })
+
+  test("replaces admin / admin, opens remote access, and can't be used twice", async () => {
+    const code = SetupCode.current!
+    expect((await claim(code.toLowerCase())).status).toBe(204)
+
+    expect(SettingsStore.section("access").allowRemote).toBe(true)
+    expect(SetupCode.pending).toBe(false)
+    expect(await signIn("admin", "admin")).toBeNull()
+    expect(await signIn("me@example.com", "a-long-password")).not.toBeNull()
+    expect((await claim(code)).status).toBe(409)
+  })
+
+  test("a local reset also ends the pending code", async () => {
+    const cookie = await signIn("admin", "admin")
+    await call("/api/account/credentials", { cookie: cookie!, body: { email: "me@example.com", password: "a-long-password" } })
+    expect(SetupCode.pending).toBe(false)
+    expect(SettingsStore.section("access").allowRemote).toBe(false)
+  })
+})
+
+describe("setup status", () => {
+  test("is for admins with their own credentials, and lists what is missing", async () => {
+    const cookie = await signIn("admin", "admin")
+    expect((await call("/api/setup", { cookie: cookie! })).status).toBe(403)
+
+    await call("/api/account/credentials", { cookie: cookie!, body: { email: "me@example.com", password: "a-long-password" } })
+    const status = await (await call("/api/setup", { cookie: cookie! })).json()
+    expect(status.complete).toBe(false)
+    expect(status.tmdb).toEqual({ configured: false })
+    expect(status.prowlarr).toEqual({ configured: false, reachable: null })
+    expect(status.paths.movies).toEqual({ set: false, exists: false, writable: false })
+    expect(status.tools.map((tool: { name: string }) => tool.name)).toEqual(["ffmpeg", "ffprobe"])
   })
 })
 

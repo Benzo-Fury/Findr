@@ -6,6 +6,7 @@ import {
   ArrowsClockwiseIcon,
   DotsThreeIcon,
   DownloadSimpleIcon,
+  FileXIcon,
   PlayIcon,
   StarIcon,
   TrashIcon,
@@ -13,15 +14,17 @@ import {
 } from "@phosphor-icons/react"
 import type { DownloadDetail, DownloadSummary } from "@findr/types/downloads"
 import { createDownload, deleteTitle, fetchDownload, fetchTMDBDetails, retryDownload } from "@/lib/api"
-import { ATTEMPT_PHASE, DOWNLOAD_STATUS, isActive } from "@/lib/download-status"
+import { ATTEMPT_PHASE, DOWNLOAD_STATUS, downloadStatus, filesMissing, isActive } from "@/lib/download-status"
 import { episodeCode, formatPercent, formatRuntime } from "@/lib/format"
 import { useLibrary, type LibraryEntry } from "@/lib/library"
 import { EASE_OUT, FADE, SPRING_SNAP, staggerDelay } from "@/lib/motion"
+import { usePlayback } from "@/lib/playback"
 import { cardKey } from "@/lib/title-cards"
 import { posterLayoutId, posterOriginFor, rememberPosterOrigin, type TitleRef } from "@/lib/title-route"
 import { tmdbImage } from "@/lib/tmdb-image"
 import { cn } from "@/lib/utils"
 import { ReleaseList } from "@/components/downloads/release-list"
+import { PlayActions } from "@/components/playback/play-actions"
 import { PosterCard } from "@/components/media/poster-card"
 import { Button } from "@/components/ui/button"
 import { Menu, MenuItem } from "@/components/ui/menu"
@@ -104,6 +107,20 @@ function TitleBody({ titleRef, onOpenTitle, onClose }: TitleBodyProps) {
   const title = details?.title ?? entry?.card?.title ?? ""
   const posterPath = details?.posterPath ?? entry?.card?.posterPath ?? null
 
+  /** Fetches the movie or selected season again, from the releases section. */
+  async function downloadAgain() {
+    const what = titleRef.mediaType === "tv" ? `${title}, season ${selectedSeason}` : title
+    try {
+      const download = await createDownload(
+        titleRef.mediaType === "tv" ? { tmdbId: titleRef.id, mediaType: "tv", season: selectedSeason } : { tmdbId: titleRef.id, mediaType: "movie" },
+      )
+      refresh()
+      toast({ title: "Download queued", description: what, action: { label: "View", onClick: () => navigate(`/downloads/${download.id}`) } })
+    } catch (error) {
+      toast({ title: "Could not queue the download", description: error instanceof Error ? error.message : undefined, tone: "bad" })
+    }
+  }
+
   /** Forgets the title and its history; library files stay. */
   async function remove(target: LibraryEntry) {
     try {
@@ -153,7 +170,7 @@ function TitleBody({ titleRef, onOpenTitle, onClose }: TitleBodyProps) {
             className="w-28 shrink-0 shadow-float ring-4 ring-surface md:w-36"
           />
           <div className="min-w-0 pb-1">
-            {current && <StatusLabel status={DOWNLOAD_STATUS[current.status]} variant="filled" className="mb-2" />}
+            {current && <StatusLabel status={downloadStatus(current)} variant="filled" className="mb-2" />}
             {title ? (
               <motion.h2
                 initial={{ opacity: 0, y: 8 }}
@@ -189,7 +206,15 @@ function TitleBody({ titleRef, onOpenTitle, onClose }: TitleBodyProps) {
 
         {details && <About details={details} />}
 
-        {current && <Releases download={current} mediaType={titleRef.mediaType} onChanged={refresh} />}
+        {current && (
+          <Releases
+            download={current}
+            mediaType={titleRef.mediaType}
+            onChanged={refresh}
+            onDownloadAgain={current.status === "completed" && !filesMissing(current) ? downloadAgain : undefined}
+            onViewProgress={() => navigate(`/downloads/${current.id}`)}
+          />
+        )}
 
         {details?.trailerKey && <Trailer videoKey={details.trailerKey} title={title} />}
 
@@ -299,15 +324,28 @@ interface ActionPanelProps {
 }
 
 /**
- * The part of the sheet that acts: pick a season, then download, follow,
- * retry or fetch again, depending on what the latest download did.
+ * The part of the sheet that acts: pick a season, play what is on disk, or
+ * download, follow or retry, depending on what the latest download did.
+ * Fetching a finished title again lives with its releases further down, so
+ * Play stands alone once something is in the library.
  */
 function ActionPanel({ titleRef, title, details, current, season, onSeason, entry, onChanged, onViewProgress }: ActionPanelProps) {
   const toast = useToast()
+  const playback = usePlayback()
   const [working, setWorking] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const isShow = titleRef.mediaType === "tv"
   const running = current ? isActive(current.status) : false
+  const completed = current?.status === "completed"
+  // Files deleted or moved by hand since they were saved
+  const gone = current ? filesMissing(current) : false
+  const someGone = current !== undefined && current.missingFiles > 0 && !gone
+
+  // Whether Play shows for this movie or season, which then needs nothing beneath it
+  const playable =
+    playback.enabled &&
+    entry !== undefined &&
+    playback.itemsOf(entry.title.id).some((item) => (isShow ? item.season === season : item.season === null))
   const what = isShow ? `${title}, season ${season}` : title
 
   React.useEffect(() => setError(null), [season])
@@ -340,45 +378,64 @@ function ActionPanel({ titleRef, title, details, current, season, onSeason, entr
         <SeasonPicker seasons={details.seasons} selected={season} onSelect={onSeason} entry={entry} />
       )}
 
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.div
-          key={`${season}-${current?.id ?? "none"}-${running}`}
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -4 }}
-          transition={{ duration: 0.22, ease: EASE_OUT }}
-        >
-          {running && current ? (
-            <LiveProgress download={current} onView={() => onViewProgress(current.id)} />
-          ) : (
-            <div className="flex flex-wrap items-center gap-3">
-              {!current && (
-                <Button variant="signal" size="lg" icon={DownloadSimpleIcon} loading={working} onClick={start} disabled={!details}>
-                  {isShow ? `Download season ${season}` : "Download"}
-                </Button>
-              )}
-              {current && current.status !== "completed" && (
-                <Button variant="signal" size="lg" icon={ArrowsClockwiseIcon} loading={working} onClick={retry}>
-                  Retry
-                </Button>
-              )}
-              {current?.status === "completed" && (
-                <Button variant="outline" size="lg" icon={DownloadSimpleIcon} loading={working} onClick={start}>
-                  Download again
-                </Button>
-              )}
-              {current && (
-                <Button variant="ghost" iconEnd={ArrowRightIcon} onClick={() => onViewProgress(current.id)}>
-                  Details
-                </Button>
-              )}
-            </div>
-          )}
-          {current && !running && current.statusMessage && current.status !== "completed" && (
-            <p className="mt-3 text-[0.875rem] leading-relaxed text-ink-2">{current.statusMessage}</p>
-          )}
-        </motion.div>
-      </AnimatePresence>
+      {entry && <PlayActions titleId={entry.title.id} mediaType={titleRef.mediaType} season={season} separated={!(completed && playable)} />}
+
+      {!(completed && playable) && (
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={`${season}-${current?.id ?? "none"}-${running}`}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.22, ease: EASE_OUT }}
+          >
+            {running && current ? (
+              <LiveProgress download={current} onView={() => onViewProgress(current.id)} />
+            ) : (
+              <div className="flex flex-wrap items-center gap-3">
+                {!current && (
+                  <Button variant="signal" size="lg" icon={DownloadSimpleIcon} loading={working} onClick={start} disabled={!details}>
+                    {isShow ? `Download season ${season}` : "Download"}
+                  </Button>
+                )}
+                {current && current.status !== "completed" && (
+                  <Button variant="signal" size="lg" icon={ArrowsClockwiseIcon} loading={working} onClick={retry}>
+                    Retry
+                  </Button>
+                )}
+                {completed && gone && (
+                  <Button variant="signal" size="lg" icon={DownloadSimpleIcon} loading={working} onClick={start} disabled={!details}>
+                    Download again
+                  </Button>
+                )}
+                {completed && !gone && <p className="text-[0.9375rem] text-ink-2">In your library.</p>}
+                {current && (
+                  <Button variant="ghost" iconEnd={ArrowRightIcon} onClick={() => onViewProgress(current.id)}>
+                    Details
+                  </Button>
+                )}
+              </div>
+            )}
+            {current && !running && current.statusMessage && current.status !== "completed" && !gone && (
+              <p className="mt-3 text-[0.875rem] leading-relaxed text-ink-2">{current.statusMessage}</p>
+            )}
+            {gone && !running && (
+              <MissingNote>
+                {isShow
+                  ? `This season's files were deleted or moved after Findr saved them, so there's nothing to play.`
+                  : `The file was deleted or moved after Findr saved it, so there's nothing to play.`}
+              </MissingNote>
+            )}
+          </motion.div>
+        </AnimatePresence>
+      )}
+
+      {someGone && playable && current && (
+        <MissingNote>
+          {current.missingFiles === 1 ? "One episode" : `${current.missingFiles} episodes`} from this season {current.missingFiles === 1 ? "is" : "are"} no
+          longer on disk, so {current.missingFiles === 1 ? "it isn't" : "they aren't"} listed.
+        </MissingNote>
+      )}
 
       {error && (
         <p role="alert" className="mt-3 text-[0.875rem] font-medium text-bad">
@@ -393,6 +450,16 @@ function ActionPanel({ titleRef, title, details, current, season, onSeason, entr
         </p>
       )}
     </section>
+  )
+}
+
+/** Why there is less to play than was downloaded: files gone from disk since. */
+function MissingNote({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="mt-3 flex items-start gap-2 text-[0.875rem] leading-relaxed text-ink-2">
+      <FileXIcon aria-hidden weight="bold" className="mt-0.5 size-4 shrink-0 text-warn" />
+      <span>{children}</span>
+    </p>
   )
 }
 
@@ -411,7 +478,7 @@ function SeasonPicker({ seasons, selected, onSelect, entry }: SeasonPickerProps)
       <div role="radiogroup" aria-label="Season" className="scroll-x -mx-1 flex gap-1.5 px-1 pb-1">
         {seasons.map((season) => {
           const download = entry?.title.downloads.find((item) => item.season === season.number)
-          const status = download ? DOWNLOAD_STATUS[download.status] : null
+          const status = download ? downloadStatus(download) : null
           const active = season.number === selected
           const StatusIcon = status?.icon
           return (
@@ -495,11 +562,19 @@ interface ReleasesProps {
   download: DownloadSummary
   mediaType: TitleRef["mediaType"]
   onChanged: () => void
+  /** Fetches the title again; offered once the download has finished. */
+  onDownloadAgain?: () => Promise<void>
+  onViewProgress: () => void
 }
 
-/** The current download's movie or season-pack releases, re-read as it runs. */
-function Releases({ download, mediaType, onChanged }: ReleasesProps) {
+/**
+ * The current download's movie or season-pack releases, re-read as it runs.
+ * A finished download can be fetched again from here, beside the releases
+ * it would choose from.
+ */
+function Releases({ download, mediaType, onChanged, onDownloadAgain, onViewProgress }: ReleasesProps) {
   const toast = useToast()
+  const [queueing, setQueueing] = React.useState(false)
   const [detail, setDetail] = React.useState<DownloadDetail | null>(null)
   const [tryingId, setTryingId] = React.useState<string | null>(null)
   const running = isActive(download.status)
@@ -526,10 +601,35 @@ function Releases({ download, mediaType, onChanged }: ReleasesProps) {
     }
   }
 
+  async function downloadAgain() {
+    if (!onDownloadAgain) return
+    setQueueing(true)
+    try {
+      await onDownloadAgain()
+    } finally {
+      setQueueing(false)
+    }
+  }
+
   const main = detail?.candidates.filter((candidate) => candidate.episodeId === null) ?? []
 
   return (
-    <Section title="Releases" count={detail ? main.length : undefined}>
+    <Section
+      title="Releases"
+      count={detail ? main.length : undefined}
+      action={
+        onDownloadAgain && (
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" iconEnd={ArrowRightIcon} onClick={onViewProgress}>
+              Details
+            </Button>
+            <Button variant="outline" size="sm" icon={DownloadSimpleIcon} loading={queueing} onClick={() => void downloadAgain()}>
+              Download again
+            </Button>
+          </div>
+        )
+      }
+    >
       <p className="mb-3 text-[0.875rem] text-ink-2">
         {running ? "Releases being tried for this download." : "Pick a different release to try it first."}
       </p>
@@ -619,16 +719,21 @@ function Cast({ cast }: CastProps) {
 interface SectionProps {
   title: string
   count?: number
+  /** Controls at the end of the heading. */
+  action?: React.ReactNode
   children: React.ReactNode
 }
 
-function Section({ title, count, children }: SectionProps) {
+function Section({ title, count, action, children }: SectionProps) {
   return (
     <section className="mt-9">
-      <h3 className="heading mb-3 flex items-baseline gap-2 text-xl text-ink">
-        {title}
-        {count !== undefined && <span className="font-mono text-sm font-medium text-ink-3 tabular">{count}</span>}
-      </h3>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <h3 className="heading flex items-baseline gap-2 text-xl text-ink">
+          {title}
+          {count !== undefined && <span className="font-mono text-sm font-medium text-ink-3 tabular">{count}</span>}
+        </h3>
+        {action}
+      </div>
       {children}
     </section>
   )

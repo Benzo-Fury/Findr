@@ -16,6 +16,7 @@ import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/a
 import { admin } from "better-auth/plugins"
 import { client, database } from "../db/client"
 import { ServerAddress } from "../server/ServerAddress"
+import { SetupCode } from "../setup/SetupCode"
 import { AuthSecret } from "./AuthSecret"
 
 // ---------- Initial admin ---------- //
@@ -128,10 +129,13 @@ export async function migrateAuth(): Promise<void> {
  * Writes through the internal adapter rather than the admin plugin's
  * `createUser`, since `admin` is neither a valid email nor a long enough
  * password for the public endpoints.
+ *
+ * Either way, prints a setup code while the initial admin still has to
+ * reset (`SetupCode`), so the install can be claimed from another machine.
  */
 export async function seedRoot(): Promise<void> {
   const context = await auth.$context
-  if ((await context.internalAdapter.countTotalUsers()) > 0) return
+  if ((await context.internalAdapter.countTotalUsers()) > 0) return SetupCode.sync()
 
   // The user, then the password it signs in with
   const user = await context.internalAdapter.createUser({
@@ -148,4 +152,5 @@ export async function seedRoot(): Promise<void> {
     password: await context.password.hash(ROOT_LOGIN),
   })
   console.log(`[Auth] Created the initial admin; sign in as ${ROOT_LOGIN} / ${ROOT_LOGIN} from this machine to set real credentials`)
+  await SetupCode.sync()
 }

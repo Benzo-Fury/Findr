@@ -6,16 +6,20 @@
  * 2. **Asset map** — scans the built web app and generates `src/_asset.map.ts`,
  *    importing every file with the `file` loader so it ships with the build.
  * 3. **Bundle** — `Bun.build` bundles `src/index.ts` into `dist/index.js`,
- *    copying the web files into `dist/web/`.
+ *    copying the web files into `dist/web/`. It carries no ffmpeg, so it
+ *    uses the one on `PATH`.
  * 4. **Compile** — `Bun.build` with `compile` produces the standalone
- *    `dist/findr` executable with the web files embedded in it. Pass
- *    `--target <bun target>` (repeatable, e.g. `linux-x64`, `linux-arm64`,
- *    `windows-x64`, `darwin-arm64`) to cross-compile `dist/findr-<target>`
- *    instead.
+ *    `dist/findr` executable with the web files embedded in it, plus that
+ *    target's ffmpeg and ffprobe (`scripts/toolmap.ts`, pinned in
+ *    `scripts/tools.json`). Pass `--target <bun target>` (repeatable, e.g.
+ *    `linux-x64`, `linux-arm64`, `windows-x64`, `darwin-arm64`) to
+ *    cross-compile `dist/findr-<target>` instead, and `--no-tools` to leave
+ *    ffmpeg out (an offline build).
  *
- * Nothing in the build is native code — the torrent engine, TinyTorrent, is
- * pure TypeScript — so it behaves the same on every machine and
- * cross-compiles to any platform Bun targets.
+ * Findr's own code has no native parts — the torrent engine, TinyTorrent, is
+ * pure TypeScript — so it cross-compiles to any platform Bun targets. The
+ * only native code is the pinned ffmpeg builds, downloaded per target (once,
+ * then cached) and checked against their pinned hashes.
  *
  * `process.env.NODE_ENV` is inlined as `"production"` in both outputs so the
  * dev-only route glob and Vite proxy are dead-code eliminated, and
@@ -57,7 +61,7 @@ const define = { "process.env.NODE_ENV": '"production"', "process.env.FINDR_VERS
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
-  options: { target: { type: "string", multiple: true } },
+  options: { target: { type: "string", multiple: true }, "no-tools": { type: "boolean" } },
 })
 
 /** Accepts `linux-x64` or `bun-linux-x64`; Bun.build rejects anything it does not know. */
@@ -75,6 +79,9 @@ const targets = (values.target ?? []).map(compileTarget)
 
 await $`bun run ${import.meta.dir}/cartographer.ts`
 await $`bun run ${import.meta.dir}/assetmap.ts`
+
+// The plain bundle carries no ffmpeg; each executable gets its own target's below
+await $`bun run ${import.meta.dir}/toolmap.ts --empty`
 
 // ---------- Bundle ---------- //
 
@@ -115,6 +122,7 @@ const compiles: Array<{ target?: Bun.Build.CompileTarget; name: string; outfile:
     : [{ name: hostTarget, outfile: `${dist}/findr` }]
 
 for (const { target, name, outfile } of compiles) {
+  await $`bun run ${import.meta.dir}/toolmap.ts --target ${name} ${values["no-tools"] ? ["--empty"] : []}`
   await build({
     entrypoints: [entry],
     minify: true,
@@ -123,3 +131,6 @@ for (const { target, name, outfile } of compiles) {
   })
   console.log(`Build: compiled standalone executable → dist/${basename(outfile)}`)
 }
+
+// Leave the map empty again, so running from source never unpacks a bundled ffmpeg
+await $`bun run ${import.meta.dir}/toolmap.ts --empty`.quiet()
