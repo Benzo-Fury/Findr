@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { copyFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -201,6 +201,9 @@ describe.skipIf(!hasFfmpeg)("CreditsLocator", () => {
     });
     TheIntroDb.baseUrl = `http://127.0.0.1:${server.port}`;
 
+    // The copies sound the same, so read only their black frames, whether or not ffmpeg has Chromaprint
+    spyOn(CreditsDetector, "supportsFingerprints").mockResolvedValue(false);
+
     // Three copies of it as episodes of one show
     const title = Title.findOrCreate(424_242, "tv");
     const probe: ProbeInfo = {
@@ -218,6 +221,7 @@ describe.skipIf(!hasFfmpeg)("CreditsLocator", () => {
   });
 
   afterAll(async () => {
+    mock.restore();
     TheIntroDb.baseUrl = original;
     server.stop(true);
     await rm(root, { recursive: true, force: true });

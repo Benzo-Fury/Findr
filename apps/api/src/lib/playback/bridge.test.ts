@@ -330,7 +330,7 @@ describe.skipIf(!hasFfmpeg)("Casting through a bridge", () => {
   });
 
   test("lists the bridge's TVs, named for where they are", async () => {
-    const renderers = await DlnaController.getInstance().list(true);
+    const renderers = await bridgeRenderers();
     expect(renderers).toEqual([expect.objectContaining({ id: `${bridge.id}:den-tv`, name: "Den TV", manufacturer: null, model: null, direct: true, place: "Home" })]);
     expect(BridgeHub.getInstance().record(bridge, DlnaController.getInstance().countOn(bridge.id))).toMatchObject({ name: "Home", online: true, address: mediaUrl, renderers: 1 });
   });
@@ -363,6 +363,11 @@ describe.skipIf(!hasFfmpeg)("Casting through a bridge", () => {
 
     // Its TV stays only while still being driven
     await DlnaController.getInstance().stopAll();
-    expect(await DlnaController.getInstance().list(true)).toEqual([]);
+    expect(await bridgeRenderers()).toEqual([]);
   });
+
+  /** The renderers found through this bridge, leaving out any another test left on the local network. */
+  async function bridgeRenderers() {
+    return (await DlnaController.getInstance().list(true)).filter((renderer) => renderer.id.startsWith(`${bridge.id}:`));
+  }
 });
