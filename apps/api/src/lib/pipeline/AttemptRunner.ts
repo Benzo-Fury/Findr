@@ -152,7 +152,6 @@ export class AttemptRunner {
           library: request.mediaType === "movie" ? settings.paths.movies : settings.paths.series,
           bytes,
         });
-        attempt.setBytes(bytes);
       },
       onDownloadStart: () => {
         heartbeat.enter("downloading");
