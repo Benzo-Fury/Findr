@@ -11,14 +11,22 @@ interface RenderersState {
   search: (refresh: boolean) => Promise<void>
 }
 
+/** How each kind of TV is named when two share a name, as a Google TV listed by both Cast and DLNA is. */
+const KIND_LABELS: Record<RendererRecord["kind"], string> = { googlecast: "Google Cast", dlna: "DLNA" }
+
 /**
  * What a TV list shows under a TV's name: nothing, since the name is what
- * people know a TV by, unless another TV in the list shares it, when the
- * place each is reached through tells them apart.
+ * people know a TV by, unless another TV in the list shares it, when how
+ * each is reached (Google Cast or DLNA) and where tell them apart.
  */
 export function rendererDetail(renderer: RendererRecord, listed: RendererRecord[]): string | null {
-  const shared = listed.some((other) => other.id !== renderer.id && other.name === renderer.name)
-  return shared ? (renderer.place ? `via ${renderer.place}` : "On the server's network") : null
+  const namesakes = listed.filter((other) => other.id !== renderer.id && other.name === renderer.name)
+  if (namesakes.length === 0) return null
+  const parts: string[] = []
+  if (namesakes.some((other) => other.kind !== renderer.kind)) parts.push(KIND_LABELS[renderer.kind])
+  if (namesakes.some((other) => other.place !== renderer.place) || parts.length === 0) parts.push(renderer.place ? `via ${renderer.place}` : "on the server's network")
+  const detail = parts.join(", ")
+  return detail.charAt(0).toUpperCase() + detail.slice(1)
 }
 
 /** Every TV on the server's network and its cast bridges', of any kind, searched for when the caller mounts. */

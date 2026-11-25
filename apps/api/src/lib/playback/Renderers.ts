@@ -22,7 +22,16 @@ interface Controller {
 export class Renderers {
   /** Every TV on every network that can be reached, by name; both kinds are searched together. */
   public static async list(refresh = false): Promise<RendererRecord[]> {
-    const [dlna, cast] = await Promise.all([DlnaController.getInstance().list(refresh), GoogleCastController.getInstance().list(refresh)]);
+    // A Cast search that fails leaves the DLNA TVs listed
+    const [dlna, cast] = await Promise.all([
+      DlnaController.getInstance().list(refresh),
+      GoogleCastController.getInstance()
+        .list(refresh)
+        .catch((error: unknown) => {
+          console.warn(`[Playback] Couldn't list Cast devices: ${error instanceof Error ? error.message : String(error)}`);
+          return [];
+        }),
+    ]);
     return [...dlna, ...cast].sort((a, b) => a.name.localeCompare(b.name) || (a.place ?? "").localeCompare(b.place ?? ""));
   }
 

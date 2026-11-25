@@ -148,8 +148,12 @@ export class BridgedRendererNetwork implements RendererNetwork {
     try {
       message = BridgeMessageSchema.parse(JSON.parse(data));
     } catch {
+      // Dropped rather than removed: the bridge reconnects instead of giving up
       console.warn(`[Playback] Cast bridge ${this.place} sent something unreadable; disconnecting it`);
-      return this.close();
+      this.drop(new Error("bridge sent something unreadable"));
+      this.socket = null;
+      socket.close(1008, "unreadable message");
+      return;
     }
 
     switch (message.type) {

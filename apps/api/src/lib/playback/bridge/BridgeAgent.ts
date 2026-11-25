@@ -20,7 +20,7 @@ import { Ssdp } from "../dlna/Ssdp";
 import { CastChannel } from "../googlecast/CastChannel";
 import type { CastDevice } from "../googlecast/CastLink";
 import { Mdns } from "../googlecast/Mdns";
-import { BRIDGE_CONNECT_PATH, BRIDGE_PROTOCOL, MAX_BODY_BYTES, type ServerMessage, ServerMessageSchema } from "./BridgeProtocol";
+import { BRIDGE_CONNECT_PATH, BRIDGE_PROTOCOL, CastFrameSchema, MAX_BODY_BYTES, type ServerMessage, ServerMessageSchema } from "./BridgeProtocol";
 import { BridgeMediaProxy } from "./BridgeMediaProxy";
 
 // ---------- Options ---------- //
@@ -83,8 +83,8 @@ export class BridgeAgent {
   private readonly proxy: BridgeMediaProxy;
   /** Hosts that answered a search, with when they last did. Only these may be sent requests. */
   private readonly devices = new Map<string, number>();
-  /** Cast devices that answered a search, by host: the port they advertised and when they last answered. */
-  private readonly castDevices = new Map<string, { port: number; seen: number }>();
+  /** Cast devices that answered a search, by `host:port` (a speaker group shares its leader's host), with when they last answered. */
+  private readonly castDevices = new Map<string, { seen: number }>();
   /** Cast connections held for the server, by channel id. */
   private readonly channels = new Map<string, CastChannel>();
   private nextChannel = 0;
@@ -350,8 +350,8 @@ export class BridgeAgent {
   public async searchCast(): Promise<CastDevice[]> {
     const devices = await this.discoverCast();
     const now = Date.now();
-    for (const device of devices) this.castDevices.set(device.host, { port: device.port, seen: now });
-    for (const [host, { seen }] of this.castDevices) if (now - seen > DEVICE_TTL_MS) this.castDevices.delete(host);
+    for (const device of devices) this.castDevices.set(`${device.host}:${device.port}`, { seen: now });
+    for (const [key, { seen }] of this.castDevices) if (now - seen > DEVICE_TTL_MS) this.castDevices.delete(key);
     return devices;
   }
 
@@ -361,10 +361,15 @@ export class BridgeAgent {
    * device advertising that port.
    */
   public async openCast(socket: WebSocket, host: string, port: number): Promise<string> {
-    const found = this.castDevices.get(host);
-    if (!found || found.port !== port || Date.now() - found.seen > DEVICE_TTL_MS) throw new Error(`${host}:${port} isn't a Cast device this bridge found`);
+    const found = this.castDevices.get(`${host}:${port}`);
+    if (!found || Date.now() - found.seen > DEVICE_TTL_MS) throw new Error(`${host}:${port} isn't a Cast device this bridge found`);
 
+    // A server that went away while connecting no longer wants it
     const channel = await CastChannel.open(host, port);
+    if (this.socket !== socket || this.stopped) {
+      channel.close();
+      throw new Error("the server disconnected");
+    }
     const id = String(++this.nextChannel);
     this.channels.set(id, channel);
     // A device being driven stays reachable between searches
@@ -374,7 +379,13 @@ export class BridgeAgent {
     const relay = (message: object) => {
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
     };
+    // A frame the server couldn't read ends this connection, not the bridge's
     channel.onMessage = (frame) => {
+      if (!CastFrameSchema.safeParse(frame).success) {
+        console.warn(`[Bridge] ${host} sent a Cast message too large to pass on; closing that connection`);
+        channel.close();
+        return;
+      }
       found.seen = Date.now();
       relay({ type: "castMessage", channel: id, frame });
     };

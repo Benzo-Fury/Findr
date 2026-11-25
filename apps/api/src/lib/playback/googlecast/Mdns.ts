@@ -27,6 +27,9 @@ const TYPE = { A: 1, PTR: 12, TXT: 16, SRV: 33 } as const;
 /** The Cast port, when an answer leaves it out. */
 const DEFAULT_PORT = 8009;
 
+/** The capability bit (`ca` in its TXT record) of a device that can show video; speakers and speaker groups lack it. */
+const VIDEO_OUT = 1;
+
 /** One resource record, as far as it is read. */
 interface DnsRecord {
   name: string;
@@ -120,11 +123,15 @@ export class Mdns {
     const instanceName = instance ? Mdns.readName(message, instance.dataOffset)[0] : records.find((record) => record.type === TYPE.TXT)?.name;
     if (!instanceName) return null;
 
-    // Its TXT keys: id, fn (friendly name), md (model)
+    // Its TXT keys: id, fn (friendly name), md (model), ca (capabilities)
     const txt = records.find((record) => record.type === TYPE.TXT && record.name === instanceName);
     const keys = txt ? Mdns.readTxt(txt.data) : new Map<string, string>();
     const id = keys.get("id");
     if (!id) return null;
+
+    // Speakers and speaker groups have no screen to cast a film to
+    const capabilities = Number(keys.get("ca"));
+    if (Number.isInteger(capabilities) && (capabilities & VIDEO_OUT) === 0) return null;
 
     // Its port
     const srv = records.find((record) => record.type === TYPE.SRV && record.name === instanceName);

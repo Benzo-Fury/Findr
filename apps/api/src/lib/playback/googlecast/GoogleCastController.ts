@@ -372,6 +372,8 @@ export default class GoogleCastController extends SelfManagedSingleton {
     const base = receiver.network.mediaBase();
     if (!base || this.active.has(rendererId)) return;
     try {
+      // Someone watching another app on it keeps it
+      if (await receiver.inUseElsewhere()) return;
       await receiver.load({ url: `${base}${CastAccess.SPLASH_PATH}`, contentType: "image/jpeg", title: "Findr", startMs: 0, imageUrl: null });
     } catch (error) {
       console.warn(`[Playback] ${receiver.device.name} didn't take the splash: ${error instanceof Error ? error.message : String(error)}`);
@@ -384,7 +386,10 @@ export default class GoogleCastController extends SelfManagedSingleton {
   public async hideSplash(rendererId: string, userId: string): Promise<void> {
     if (this.splashes.get(rendererId) !== userId) return;
     this.splashes.delete(rendererId);
-    if (!this.active.has(rendererId)) await this.receivers.get(rendererId)?.stop().catch(() => {});
+    if (this.active.has(rendererId)) return;
+    const receiver = this.receivers.get(rendererId);
+    await receiver?.stop().catch(() => {});
+    receiver?.disconnect();
   }
 
   /** Stops every receiver Findr is driving, as when playback or casting is turned off. */
@@ -394,6 +399,9 @@ export default class GoogleCastController extends SelfManagedSingleton {
       this.report(active, "stop");
       await this.release(rendererId, true);
     }
+
+    // Nothing is driven any more, so no connection need stay open
+    for (const receiver of this.receivers.values()) receiver.disconnect();
   }
 
   /**
@@ -406,6 +414,7 @@ export default class GoogleCastController extends SelfManagedSingleton {
       clearInterval(active.timer);
       this.active.delete(rendererId);
       await active.receiver.stop().catch(() => {});
+      active.receiver.disconnect();
     }
   }
 
@@ -478,6 +487,14 @@ export default class GoogleCastController extends SelfManagedSingleton {
       return;
     }
 
+    // Something else took the receiver over: let it go at once rather than take it back
+    if (playback.takenOver) {
+      this.report(active, "stop");
+      await this.release(rendererId, false);
+      active.receiver.disconnect();
+      return;
+    }
+
     // An episode that ran to its end (or into its credits) moves on to the next
     const finished = active.positionMs >= active.media.durationMs - FINISHED_MARGIN_MS || (active.creditsMs !== null && active.positionMs >= active.creditsMs);
     if (active.started && finished && this.autoplays(active)) return this.advance(rendererId, active);
@@ -537,7 +554,10 @@ export default class GoogleCastController extends SelfManagedSingleton {
     if (!active) return;
     clearInterval(active.timer);
     this.active.delete(rendererId);
-    if (stop) await active.receiver.stop().catch(() => {});
+    if (stop) {
+      await active.receiver.stop().catch(() => {});
+      active.receiver.disconnect();
+    }
     const session = this.session(active);
     if (session) await PlaybackService.getInstance().end(session.id, null);
   }

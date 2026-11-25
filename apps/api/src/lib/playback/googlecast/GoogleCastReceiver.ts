@@ -34,6 +34,8 @@ interface RunningApp {
   appId: string;
   sessionId: string;
   transportId: string;
+  /** Set on the screen a receiver shows while nothing is cast to it. */
+  isIdleScreen?: boolean;
 }
 
 /** The receiver's own status: volume and what runs. */
@@ -70,6 +72,8 @@ export interface CastPlayback {
   state: RendererState;
   /** Whether it stopped on an error rather than by itself or the viewer. */
   failed: boolean;
+  /** Whether it stopped because something else took the receiver over, such as another phone casting to it. */
+  takenOver?: boolean;
   positionMs: number;
 }
 
@@ -127,6 +131,7 @@ export class GoogleCastReceiver {
   public toRecord(): RendererRecord {
     return {
       id: this.id,
+      kind: "googlecast",
       name: this.device.name,
       manufacturer: "Google",
       model: this.device.model,
@@ -245,7 +250,7 @@ export class GoogleCastReceiver {
     await this.request(RECEIVER_NS, PLATFORM_ID, { type: "GET_STATUS" });
     if (!this.runningApps().some((running) => running.sessionId === app.sessionId)) {
       this.app = null;
-      return { state: "stopped", failed: false, positionMs: this.positionMs };
+      return { state: "stopped", failed: false, takenOver: true, positionMs: this.positionMs };
     }
 
     await this.request(MEDIA_NS, app.transportId, { type: "GET_STATUS" });
@@ -271,7 +276,13 @@ export class GoogleCastReceiver {
     return { volume: typeof level === "number" ? Math.round(level * 100) : null, muted: this.receiverStatus.volume?.muted ?? false };
   }
 
-  /** Drops the connection, as when the receiver is forgotten. */
+  /** Whether someone is using the receiver for something other than Findr's player, such as another app. */
+  public async inUseElsewhere(): Promise<boolean> {
+    await this.request(RECEIVER_NS, PLATFORM_ID, { type: "GET_STATUS" });
+    return this.runningApps().some((running) => running.appId !== DEFAULT_RECEIVER && !running.isIdleScreen);
+  }
+
+  /** Drops the connection, as when the receiver is forgotten or Findr stops driving it; the next request opens a new one. */
   public disconnect(): void {
     this.link?.close();
     this.link = null;

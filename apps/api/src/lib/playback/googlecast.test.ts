@@ -84,6 +84,11 @@ describe("Google Cast discovery", () => {
     expect(Mdns.parse(castAnswer(["id=abc123", "fn=TV"], "127.0.0.1"), "192.168.1.50")?.host).toBe("192.168.1.50");
   });
 
+  test("leaves out speakers and speaker groups, which have no screen", () => {
+    expect(Mdns.parse(castAnswer(["id=speaker", "fn=Kitchen speaker", "ca=2052"], "192.168.1.51"), "192.168.1.51")).toBeNull();
+    expect(Mdns.parse(castAnswer(["id=tv", "fn=Living room TV", "ca=4101"], "192.168.1.50"), "192.168.1.50")?.id).toBe("tv");
+  });
+
   test("ignores answers that name no device", () => {
     expect(Mdns.parse(castAnswer(["fn=No id"], "192.168.1.50"), "192.168.1.50")).toBeNull();
   });
@@ -341,7 +346,8 @@ describe("Driving a Chromecast", () => {
     await play(0);
     expect(controller().castsOf(viewer)).toHaveLength(1);
     fake.takeOver();
-    await until(() => controller().status(rendererId, viewer).state === "stopped");
+    // Let go at once, leaving the other phone's app playing
+    await until(() => controller().castsOf(viewer).length === 0);
     expect(fake.apps[0]?.appId).toBe("OTHER");
   });
 
