@@ -36,7 +36,7 @@ import { PlayerMessage } from "@/components/playback/player"
 import { Panel, PanelDetail, PanelGroup, PanelOption } from "@/components/playback/player-panel"
 
 /**
- * The remote for a DLNA TV. Findr's server drives the TV; this page sends it
+ * The remote for a TV Findr drives (DLNA or Chromecast). Findr's server drives the TV; this page sends it
  * commands and shows what it reports: position, play state and volume. The
  * TV keeps playing when the page is left, and "Watch here" stops it and
  * carries on in the browser from the same moment. Opened on a TV already

@@ -6,7 +6,7 @@
 import { CreateCastBridgeSchema, type CreatedCastBridge } from "@findr/types/playback"
 import { CastBridge } from "../../../lib/db/models/CastBridge"
 import BridgeHub from "../../../lib/playback/bridge/BridgeHub"
-import DlnaController from "../../../lib/playback/dlna/DlnaController"
+import { Renderers } from "../../../lib/playback/Renderers"
 import { factory } from "../../../lib/routing/factory"
 import { bodyOf } from "../../../lib/routing/input"
 
@@ -15,8 +15,7 @@ export default factory({
 
   GET: (c) => {
     const hub = BridgeHub.getInstance()
-    const controller = DlnaController.getInstance()
-    return c.json(CastBridge.all().map((bridge) => hub.record(bridge, controller.countOn(bridge.id))))
+    return c.json(CastBridge.all().map((bridge) => hub.record(bridge, Renderers.countOn(bridge.id))))
   },
 
   POST: {

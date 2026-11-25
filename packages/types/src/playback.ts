@@ -390,9 +390,11 @@ export const RendererOverridesSchema = z.object({
 });
 export type RendererOverrides = z.infer<typeof RendererOverridesSchema>;
 
-/** A TV or other DLNA renderer found on the local network. */
+/** A TV Findr found to cast to, by DLNA or Google Cast. */
 export interface RendererRecord {
   id: string;
+  /** How Findr drives it: DLNA, or Google Cast (Chromecasts and Google TVs). */
+  kind: "dlna" | "googlecast";
   name: string;
   manufacturer: string | null;
   model: string | null;

@@ -16,8 +16,8 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { LocalNetwork } from "../LocalNetwork";
 
-/** The paths a TV fetches: `/api/playback/stream/<token>/<file>` and the splash. */
-const MEDIA_PATH = /^\/api\/playback\/(stream\/[^/]+\/[^/]+|splash)$/;
+/** The paths a TV fetches: `/api/playback/stream/<token>/<file>`, `/api/playback/cast/<ticket>/<file>` and the splash. */
+const MEDIA_PATH = /^\/api\/playback\/((stream|cast)\/[^/]+\/[^/]+|splash)$/;
 
 /** Headers that belong to one connection, never passed on. */
 const HOP_BY_HOP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "host", "content-encoding"]);
@@ -103,7 +103,10 @@ export class BridgeMediaProxy {
   public async handle(request: Request, address: string | null): Promise<Response> {
     // Local machines only, media only
     if (!address || !LocalNetwork.isPrivate(address)) return new Response("Forbidden", { status: 403 });
-    if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405, headers: { allow: "GET, HEAD" } });
+    // Cast receivers are web apps, which may ask first whether they may fetch
+    if (request.method !== "GET" && request.method !== "HEAD" && request.method !== "OPTIONS") {
+      return new Response("Method not allowed", { status: 405, headers: { allow: "GET, HEAD, OPTIONS" } });
+    }
     const url = new URL(request.url);
     if (!MEDIA_PATH.test(url.pathname)) return new Response("Not found", { status: 404 });
 
@@ -118,7 +121,7 @@ export class BridgeMediaProxy {
     try {
       upstream = await fetch(`${this.server}${url.pathname}${url.search}`, { method: request.method, headers, redirect: "manual", signal: request.signal });
     } catch (error) {
-      console.warn(`[Bridge] Couldn't fetch ${url.pathname.replace(/stream\/[^/]+/, "stream/…")} from the server: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`[Bridge] Couldn't fetch ${url.pathname.replace(/(stream|cast)\/[^/]+/, "$1/…")} from the server: ${error instanceof Error ? error.message : String(error)}`);
       return new Response("Bad gateway", { status: 502 });
     }
 
@@ -127,6 +130,7 @@ export class BridgeMediaProxy {
     for (const [name, value] of upstream.headers) {
       if (!HOP_BY_HOP.has(name) && name !== "set-cookie") answer.set(name, value);
     }
-    return new Response(request.method === "HEAD" ? null : upstream.body, { status: upstream.status, headers: answer });
+    const bodiless = request.method === "HEAD" || request.method === "OPTIONS";
+    return new Response(bodiless ? null : upstream.body, { status: upstream.status, headers: answer });
   }
 }

@@ -339,6 +339,7 @@ describe("DlnaRenderer", () => {
     const listed = { hevc: true, uhd: false, hdr: false };
     expect(renderer?.toRecord()).toEqual({
       id: "1234-abcd",
+      kind: "dlna",
       name: "Living Room TV & Sound",
       manufacturer: "Acme",
       model: "Screen 9000",

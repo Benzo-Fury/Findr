@@ -2,7 +2,7 @@
 
 import { RendererOverridesSchema } from "@findr/types/playback"
 import { PlaybackError } from "../../../../lib/playback/PlaybackService"
-import DlnaController from "../../../../lib/playback/dlna/DlnaController"
+import { Renderers } from "../../../../lib/playback/Renderers"
 import { requirePlayback } from "../../../../lib/playback/requirePlayback"
 import { factory } from "../../../../lib/routing/factory"
 import { bodyOf } from "../../../../lib/routing/input"
@@ -15,7 +15,7 @@ export default factory({
     body: RendererOverridesSchema,
     handler: (c) => {
       try {
-        return c.json(DlnaController.getInstance().setOverrides(c.req.param("id") ?? "", bodyOf(c, RendererOverridesSchema)))
+        return c.json(Renderers.of(c.req.param("id") ?? "").setOverrides(c.req.param("id") ?? "", bodyOf(c, RendererOverridesSchema)))
       } catch (error) {
         if (error instanceof PlaybackError) return c.json({ error: error.code }, error.status)
         throw error

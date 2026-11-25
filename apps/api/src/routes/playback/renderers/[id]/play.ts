@@ -4,7 +4,7 @@ import { RendererPlaySchema } from "@findr/types/playback"
 import { SettingsStore } from "../../../../lib/db/models/SettingsStore"
 import { MediaResponse } from "../../../../lib/playback/MediaResponse"
 import { PlaybackError } from "../../../../lib/playback/PlaybackService"
-import DlnaController from "../../../../lib/playback/dlna/DlnaController"
+import { Renderers } from "../../../../lib/playback/Renderers"
 import { requirePlayback } from "../../../../lib/playback/requirePlayback"
 import { factory } from "../../../../lib/routing/factory"
 import { bodyOf } from "../../../../lib/routing/input"
@@ -19,7 +19,7 @@ export default factory({
       // The TV may take a while to load and start the stream
       MediaResponse.allowSlow(c, 60)
       try {
-        const status = await DlnaController.getInstance().play(c.req.param("id") ?? "", bodyOf(c, RendererPlaySchema), c.get("session").user.id)
+        const status = await Renderers.of(c.req.param("id") ?? "").play(c.req.param("id") ?? "", bodyOf(c, RendererPlaySchema), c.get("session").user.id)
         return c.json(status)
       } catch (error) {
         if (error instanceof PlaybackError) {

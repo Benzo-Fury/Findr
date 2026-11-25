@@ -11,16 +11,25 @@ interface RenderersState {
   search: (refresh: boolean) => Promise<void>
 }
 
+/** How each kind of TV is named when two share a name, as a Google TV listed by both Cast and DLNA is. */
+const KIND_LABELS: Record<RendererRecord["kind"], string> = { googlecast: "Google Cast", dlna: "DLNA" }
+
 /**
- * What a TV list shows under a TV's name: the bridge it is reached through,
- * then its make and model; null when there is nothing to say.
+ * What a TV list shows under a TV's name: nothing, since the name is what
+ * people know a TV by, unless another TV in the list shares it, when how
+ * each is reached (Google Cast or DLNA) and where tell them apart.
  */
-export function rendererDetail(renderer: RendererRecord): string | null {
-  const model = [renderer.manufacturer, renderer.model].filter(Boolean).join(" ")
-  return [renderer.place ? `via ${renderer.place}` : null, model || null].filter(Boolean).join(", ") || null
+export function rendererDetail(renderer: RendererRecord, listed: RendererRecord[]): string | null {
+  const namesakes = listed.filter((other) => other.id !== renderer.id && other.name === renderer.name)
+  if (namesakes.length === 0) return null
+  const parts: string[] = []
+  if (namesakes.some((other) => other.kind !== renderer.kind)) parts.push(KIND_LABELS[renderer.kind])
+  if (namesakes.some((other) => other.place !== renderer.place) || parts.length === 0) parts.push(renderer.place ? `via ${renderer.place}` : "on the server's network")
+  const detail = parts.join(", ")
+  return detail.charAt(0).toUpperCase() + detail.slice(1)
 }
 
-/** DLNA TVs on the server's network and its cast bridges', searched for when the caller mounts. */
+/** Every TV on the server's network and its cast bridges', of any kind, searched for when the caller mounts. */
 export function useRenderers(): RenderersState {
   const [renderers, setRenderers] = React.useState<RendererRecord[] | null>(null)
   const [error, setError] = React.useState<string | null>(null)

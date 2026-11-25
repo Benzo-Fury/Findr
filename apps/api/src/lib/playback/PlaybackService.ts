@@ -7,8 +7,8 @@
  *
  * Sessions come in three kinds that share the limit and the reaper: HLS for
  * a browser, HLS for a Google Cast receiver (made when the receiver first
- * asks for its cast URL), and a single progressive stream for a DLNA
- * renderer.
+ * asks for its cast URL, whether the browser or Findr itself cast it), and a
+ * single progressive stream for a DLNA renderer.
  */
 
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
@@ -22,6 +22,7 @@ import type {
   PlaybackItemKey,
   PlaybackSessionRecord,
   PlaybackSettings,
+  RendererCapabilities,
   RendererPlay,
 } from "@findr/types/playback";
 import { MediaItem } from "../db/models/MediaItem";
@@ -35,6 +36,8 @@ import SelfManagedSingleton from "../other/SelfManagedSingleton";
 import { CastAddress } from "./CastAddress";
 import { CastTicket, type CastTicketData } from "./CastTicket";
 import DlnaController from "./dlna/DlnaController";
+import GoogleCastController from "./googlecast/GoogleCastController";
+import { GoogleCastReceiver } from "./googlecast/GoogleCastReceiver";
 import { Ffmpeg } from "./Ffmpeg";
 import HardwareProbe from "./HardwareProbe";
 import MediaIndexer from "./MediaIndexer";
@@ -231,6 +234,42 @@ export default class PlaybackService extends SelfManagedSingleton {
   }
 
   /**
+   * A cast URL for a Google Cast receiver Findr drives itself, sized for what
+   * that receiver decodes, with where it should start: the resume point
+   * unless told otherwise. Nothing is started until the receiver asks.
+   */
+  public castFor(
+    request: RendererPlay,
+    receiver: { capabilities: RendererCapabilities; local: boolean },
+    base: string,
+    userId: string,
+  ): { ticket: string; url: string; startMs: number; item: MediaItem } {
+    if (!this.running) throw new PlaybackError("playback_disabled", 404);
+    const item = MediaItem.findForKey(request);
+    if (!item) throw new PlaybackError("not_playable", 404);
+    if (request.audioTrack !== null && !item.probe.audio[request.audioTrack]) throw new PlaybackError("audio_track_not_found", 404);
+
+    const settings = SettingsStore.section("playback");
+    const ticket = CastTicket.issue({
+      userId,
+      titleId: item.titleId,
+      season: item.season,
+      episode: item.episode,
+      audioTrack: request.audioTrack,
+      maxBitrate: this.bitrateCap(null, settings, receiver.local),
+      capabilities: receiver.capabilities,
+    });
+    return { ticket, url: `${base}/api/playback/cast/${ticket}/index.m3u8`, startMs: this.startOf(userId, request, item), item };
+  }
+
+  /** The session a cast ticket has become, once the receiver has asked for it. */
+  public sessionOfTicket(ticket: string): PlaybackSession | null {
+    const id = this.castSessions.get(ticket);
+    const session = id ? this.sessions.get(id) : undefined;
+    return session instanceof PlaybackSession ? session : null;
+  }
+
+  /**
    * The session a cast ticket stands for, made on the receiver's first
    * request. The receiver is told where to start by the sender, so packaging
    * waits for its first segment request rather than guessing.
@@ -241,7 +280,8 @@ export default class PlaybackService extends SelfManagedSingleton {
     if (session instanceof PlaybackSession) return session;
     if (!SettingsStore.section("playback").casting) throw new PlaybackError("casting_disabled", 404);
 
-    const prepared = await this.prepare({ ...data, startMs: 0 }, CAST_PROFILES[SettingsStore.section("playback").chromecastProfile], { userId: data.userId, local: true });
+    const profile = data.capabilities ? GoogleCastReceiver.profileOf(data.capabilities) : CAST_PROFILES[SettingsStore.section("playback").chromecastProfile];
+    const prepared = await this.prepare({ ...data, startMs: 0 }, profile, { userId: data.userId, local: true });
 
     // A new ticket for the same item replaces the receiver's stream, as when the viewer switches audio
     // track, so the old one's work stops now rather than counting toward the transcode limit until reaped
@@ -333,6 +373,7 @@ export default class PlaybackService extends SelfManagedSingleton {
     for (const [ticket, sessionId] of this.castSessions) if (sessionId === id) this.castSessions.delete(ticket);
     this.log(session);
     if (session instanceof ProgressiveSession) await DlnaController.getInstance().released(id);
+    else if (session.device === "cast") await GoogleCastController.getInstance().released(id);
     await session.close();
     return true;
   }
@@ -390,6 +431,7 @@ export default class PlaybackService extends SelfManagedSingleton {
     this.reaper = null;
     MediaIndexer.getInstance().stop();
     await DlnaController.getInstance().stopAll();
+    await GoogleCastController.getInstance().stopAll();
     for (const id of [...this.sessions.keys()]) await this.end(id, null);
     console.log("[Playback] Disabled");
   }
@@ -397,6 +439,7 @@ export default class PlaybackService extends SelfManagedSingleton {
   /** Ends every session on another device, as when casting is turned off. */
   private async endCasts(): Promise<void> {
     await DlnaController.getInstance().stopAll();
+    await GoogleCastController.getInstance().stopAll();
     for (const session of [...this.sessions.values()]) {
       if (session.device !== "browser") await this.end(session.id, null);
     }
@@ -451,10 +494,16 @@ export default class PlaybackService extends SelfManagedSingleton {
       throw error;
     }
 
-    // Resume where the user left off unless told where to start; a finished item keeps no position, so one is a rewatch part-way
-    const resume = PlaybackProgress.find(client.userId, request)?.positionMs ?? 0;
-    const startMs = Math.min(request.startMs ?? resume, Math.max(item.durationMs - 1000, 0));
-    return { item, plan, audio, startMs, settings };
+    return { item, plan, audio, startMs: this.startOf(client.userId, request, item), settings };
+  }
+
+  /**
+   * Where to start: where asked, else where the user left off. A finished
+   * item keeps no position, so one is a rewatch part-way.
+   */
+  private startOf(userId: string, request: PlaybackItemKey & { startMs: number | null }, item: MediaItem): number {
+    const resume = PlaybackProgress.find(userId, request)?.positionMs ?? 0;
+    return Math.min(request.startMs ?? resume, Math.max(item.durationMs - 1000, 0));
   }
 
   /** Opens an HLS session in its own scratch directory. */

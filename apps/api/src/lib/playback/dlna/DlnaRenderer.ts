@@ -117,6 +117,7 @@ export class DlnaRenderer {
   public toRecord(): RendererRecord {
     return {
       id: this.id,
+      kind: "dlna",
       name: this.name,
       manufacturer: this.manufacturer,
       model: this.model,
