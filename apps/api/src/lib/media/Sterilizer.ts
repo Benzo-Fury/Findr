@@ -15,7 +15,8 @@
  * rather than hours and is lossless. The output is always `.mkv`.
  */
 
-import { AttemptFailure, CancelledError, FatalDownloadError } from "../pipeline/errors";
+import { DiskSpace } from "../pipeline/DiskSpace";
+import { AttemptFailure, CancelledError, DiskFullError, FatalDownloadError } from "../pipeline/errors";
 import { FfmpegLocator } from "./FfmpegLocator";
 import { MediaInput, type ContainerFormat } from "./MediaInput";
 
@@ -96,6 +97,8 @@ export class Sterilizer {
 
     if (result.exitCode !== 0) {
       const error = result.stderr.trim().split("\n").at(-1) || `ffmpeg exited with code ${result.exitCode}`;
+      // A full disk is no fault of the release
+      if (DiskSpace.isNoSpace(result.stderr)) throw new DiskFullError(`ffmpeg: ${error}`);
       throw new AttemptFailure(`Sterilize failed: ${error}`);
     }
     onProgress(1);

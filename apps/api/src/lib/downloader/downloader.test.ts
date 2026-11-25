@@ -39,7 +39,7 @@ describe("FileInspector", () => {
 
   test("prefers a supported video over an unsupported one beside it", () => {
     const result = inspector.inspect(files(["M/M.ts", 6 * GB], ["M/M.mkv", 4 * GB]), { kind: "movie" });
-    expect(result).toEqual({ accepted: true, files: [{ index: 1, path: "M/M.mkv", episodes: [] }] });
+    expect(result).toEqual({ accepted: true, files: [{ index: 1, path: "M/M.mkv", sizeBytes: 4 * GB, episodes: [] }] });
   });
 
   test("picks the feature and skips samples and extras", () => {
@@ -47,7 +47,7 @@ describe("FileInspector", () => {
       files(["M/Sample/m-sample.mkv", 50_000_000], ["M/M.mkv", 4 * GB], ["M/M.nfo", 1000], ["M/Featurette.mkv", 300_000_000]),
       { kind: "movie" },
     );
-    expect(result).toEqual({ accepted: true, files: [{ index: 1, path: "M/M.mkv", episodes: [] }] });
+    expect(result).toEqual({ accepted: true, files: [{ index: 1, path: "M/M.mkv", sizeBytes: 4 * GB, episodes: [] }] });
   });
 
   test("rejects a movie whose largest video is tiny", () => {
@@ -74,8 +74,8 @@ describe("FileInspector", () => {
       { kind: "season", season: 1, requiredEpisodes: [1, 2, 3] },
     );
     expect(result.accepted && result.files).toEqual([
-      { index: 0, path: "Show.S01E01E02.mkv", episodes: [1, 2] },
-      { index: 1, path: "Show.S01E03.mkv", episodes: [3] },
+      { index: 0, path: "Show.S01E01E02.mkv", sizeBytes: 2 * GB, episodes: [1, 2] },
+      { index: 1, path: "Show.S01E03.mkv", sizeBytes: GB, episodes: [3] },
     ]);
   });
 
@@ -89,7 +89,7 @@ describe("FileInspector", () => {
 
   test("an episode release with one unnamed video is that episode", () => {
     const result = inspector.inspect(files(["video.mkv", GB]), { kind: "episode", season: 1, episode: 4 });
-    expect(result).toEqual({ accepted: true, files: [{ index: 0, path: "video.mkv", episodes: [4] }] });
+    expect(result).toEqual({ accepted: true, files: [{ index: 0, path: "video.mkv", sizeBytes: GB, episodes: [4] }] });
   });
 });
 
@@ -232,7 +232,7 @@ describe("TorrentSession", () => {
     const { fetched, progress } = run(downloader);
 
     expect(await fetched).toEqual([
-      { index: 0, path: "M/M.mkv", episodes: [], absolutePath: "/downloads/d/c/payload/M/M.mkv" },
+      { index: 0, path: "M/M.mkv", sizeBytes: 4 * GB, episodes: [], absolutePath: "/downloads/d/c/payload/M/M.mkv" },
     ]);
     expect(downloader.started).toEqual([0]);
     expect(downloader.stopped).toBe(true);

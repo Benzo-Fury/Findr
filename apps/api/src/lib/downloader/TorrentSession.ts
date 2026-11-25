@@ -24,6 +24,11 @@ export interface FetchRequest {
   tag: string;
   target: InspectionTarget;
   signal: AbortSignal;
+  /**
+   * Called with the chosen files once inspection passes, before any payload is
+   * requested. Throwing here ends the attempt without downloading a byte.
+   */
+  beforeDownload?: (files: SelectedFile[]) => Promise<void>;
   /** Called when the payload transfer begins, after inspection passes. */
   onDownloadStart: () => void;
   /** Called with 0–1 progress on each poll while downloading. */
@@ -74,6 +79,7 @@ export class TorrentSession {
     // Decide what to fetch before a single payload byte arrives
     const inspection = this.inspector.inspect(files, request.target);
     if (!inspection.accepted) throw new AttemptFailure(inspection.reason);
+    await request.beforeDownload?.(inspection.files);
 
     // Download only the chosen files
     await this.downloader.start(handle, inspection.files.map((file) => file.index));

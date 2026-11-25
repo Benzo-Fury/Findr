@@ -19,6 +19,7 @@
  */
 
 import { join } from "node:path";
+import type { AttemptPhase } from "@findr/types/downloads";
 import type { MediaType } from "@findr/types/media";
 import type { Settings } from "@findr/types/settings";
 import type { Attempt } from "../db/models/Attempt";
@@ -30,7 +31,8 @@ import { TorrentSession } from "../downloader/TorrentSession";
 import { LibrarySaver, type TitleNaming } from "../media/LibrarySaver";
 import { Sterilizer } from "../media/Sterilizer";
 import Prowlarr from "../prowlarr/Prowlarr";
-import { SuspendedError, throwIfCancelled } from "./errors";
+import { DiskSpace, type SpaceReservation } from "./DiskSpace";
+import { OutOfSpaceError, SuspendedError, throwIfCancelled } from "./errors";
 import { Heartbeat } from "./Heartbeat";
 
 // ---------- Types ---------- //
@@ -64,13 +66,29 @@ const CLEANUP_TIMEOUT_MS = 60_000;
 
 const MINUTE = 60_000;
 
+/** Each phase as the step a "disk filled up" message names. */
+const PHASE_WORDS: Record<AttemptPhase, string> = {
+  metadata: "preparing the release",
+  downloading: "downloading",
+  sterilizing: "sterilizing",
+  saving: "saving",
+  done: "finishing",
+};
+
 // ---------- Runner ---------- //
 
 export class AttemptRunner {
   private readonly sterilizer = new Sterilizer();
   private readonly inspector = new FileInspector();
 
-  constructor(private readonly downloader: Downloader) {}
+  /**
+   * `space` is shared by every attempt this runner starts, so attempts running
+   * side by side account for each other's reservations.
+   */
+  constructor(
+    private readonly downloader: Downloader,
+    private readonly space = new DiskSpace(),
+  ) {}
 
   /** Runs the attempt to completion. Throws the pipeline's error types on failure. */
   public async run(request: AttemptRequest): Promise<AttemptResult> {
@@ -80,12 +98,13 @@ export class AttemptRunner {
     const heartbeat = new Heartbeat(request.signal, { limitMs: settings.watchdog.stuckTimeoutMinutes * MINUTE });
 
     let paused = false;
+    const reservation: { held: SpaceReservation | null } = { held: null };
     try {
       // Give up on the work the moment it is cancelled or stops showing signs of life
-      return await heartbeat.guard(this.work(request, workspace, session, heartbeat));
+      return await heartbeat.guard(this.work(request, workspace, session, heartbeat, reservation));
     } catch (error) {
       paused = error instanceof SuspendedError;
-      throw error;
+      throw this.explainNoSpace(error, request);
     } finally {
       // Leave nothing behind, whatever happened above, except the files of a
       // transfer the killswitch paused. The client already let go of those, so
@@ -94,6 +113,7 @@ export class AttemptRunner {
       heartbeat.dispose();
       await this.settle(`remove the torrent for attempt ${request.attempt.id}`, session.discard());
       if (!paused) await this.settle(`remove workspace ${workspace.root}`, workspace.dispose());
+      reservation.held?.release();
     }
   }
 
@@ -103,6 +123,7 @@ export class AttemptRunner {
     workspace: AttemptWorkspace,
     session: TorrentSession,
     heartbeat: Heartbeat,
+    reservation: { held: SpaceReservation | null },
   ): Promise<AttemptResult> {
     const { attempt, settings } = request;
     const { signal } = heartbeat;
@@ -122,6 +143,17 @@ export class AttemptRunner {
       tag: `findr-${attempt.id}`,
       target: request.inspection,
       signal,
+      beforeDownload: async (files) => {
+        // Refuse a release the disks cannot hold before a byte of it arrives
+        const bytes = files.reduce((sum, file) => sum + file.sizeBytes, 0);
+        reservation.held = await this.space.reserve({
+          downloads: settings.paths.downloads,
+          workspace: workspace.root,
+          library: request.mediaType === "movie" ? settings.paths.movies : settings.paths.series,
+          bytes,
+        });
+        attempt.setBytes(bytes);
+      },
       onDownloadStart: () => {
         heartbeat.enter("downloading");
         attempt.setPhase("downloading");
@@ -167,6 +199,25 @@ export class AttemptRunner {
       episodes: [...new Set(sterilized.flatMap((item) => item.episodes))].sort((a, b) => a - b),
       saved: files.map((path, index) => ({ path, episodes: sterilized[index]?.episodes ?? [] })),
     };
+  }
+
+  /**
+   * Turns a disk filling up during any step (the workspace, the torrent,
+   * ffmpeg, the save) into `OutOfSpaceError`, so the download stops with a
+   * message naming the step and the folder to clear instead of failing as a
+   * bug or blaming the release. The technical cause goes to the log. Other
+   * errors, and the space check's own refusal, pass through.
+   */
+  private explainNoSpace(error: unknown, request: AttemptRequest): unknown {
+    if (error instanceof OutOfSpaceError || !DiskSpace.isNoSpace(error)) return error;
+    const { downloads, movies, series } = request.settings.paths;
+    const phase = request.attempt.phase;
+
+    // Only the save writes to the library; everything before it writes to the downloads folder
+    const [disk, folder] = phase === "saving" ? ["library", request.mediaType === "movie" ? movies : series] : ["downloads", downloads];
+    return new OutOfSpaceError(`The ${disk} disk filled up while ${PHASE_WORDS[phase]}. Free some space in ${folder}, then retry.`, {
+      cause: error,
+    });
   }
 
   /** Waits for a cleanup step, but no longer than the cleanup limit. Never throws. */

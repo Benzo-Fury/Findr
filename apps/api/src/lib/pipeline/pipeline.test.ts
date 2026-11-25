@@ -21,7 +21,8 @@ import { AttemptRunner } from "./AttemptRunner";
 import DownloadQueue from "./DownloadQueue";
 import { DownloadRunner } from "./DownloadRunner";
 import { ReleaseParser } from "../releases/ReleaseParser";
-import { FatalDownloadError, SuspendedError } from "./errors";
+import { DiskSpace, type Volume, type VolumeProbe } from "./DiskSpace";
+import { DiskFullError, FatalDownloadError, SuspendedError } from "./errors";
 import VpnGuard from "../vpn/VpnGuard";
 
 const hasTools = Bun.which("ffmpeg") !== null && Bun.which("ffprobe") !== null;
@@ -116,6 +117,10 @@ class FakeDownloader implements Downloader {
   public freeze = false;
   public unavailable = false;
   public suspended: string | null = null;
+  /** Thrown by `start`, as when writing the payload fails. */
+  public writeError: Error | null = null;
+  /** Handles whose files were requested. */
+  public readonly startedHandles: string[] = [];
   public readonly resumedFrom: string[] = [];
   public readonly live = new Map<string, { hash: string; directory: string; tag: string; started: boolean }>();
   private next = 0;
@@ -143,6 +148,8 @@ class FakeDownloader implements Downloader {
     const files = (await this.files(handle)) ?? [];
     if (!torrent) return;
     torrent.started = true;
+    this.startedHandles.push(handle);
+    if (this.writeError) throw this.writeError;
 
     // Materialise each selected file as a real, playable Matroska file, or
     // only a partial one while transfers hang
@@ -178,6 +185,27 @@ class FakeDownloader implements Downloader {
   }
 }
 
+// ---------- Disk ---------- //
+
+/**
+ * One disk of a chosen size for downloads and library alike. Workspaces are
+ * counted as empty, which is what they hold when an attempt is checked.
+ */
+class FakeDisk implements VolumeProbe {
+  public freeBytes = 1000 * GB;
+
+  public async volume(): Promise<Volume> {
+    return { device: 1, freeBytes: this.freeBytes };
+  }
+
+  public async allocated(): Promise<number> {
+    return 0;
+  }
+}
+
+let disk: FakeDisk;
+let space: DiskSpace;
+
 // ---------- Harness ---------- //
 
 beforeAll(async () => {
@@ -207,6 +235,8 @@ beforeEach(async () => {
     services: { tmdbApiKey: "test-tmdb-key", prowlarrUrl: "http://prowlarr.test:9696", prowlarrApiKey: "test-prowlarr-key" },
   });
   mockNetwork();
+  disk = new FakeDisk();
+  space = new DiskSpace(disk);
 });
 
 afterEach(() => {
@@ -222,7 +252,7 @@ async function runDownload(
   signal = new AbortController().signal,
 ): Promise<Download> {
   const download = Download.create(Title.findOrCreate(tmdbId, mediaType), season, null);
-  await new DownloadRunner(download, new AttemptRunner(downloader), signal).run();
+  await new DownloadRunner(download, new AttemptRunner(downloader, space), signal).run();
   const reloaded = Download.find(download.id);
   if (!reloaded) throw new Error("download vanished");
   return reloaded;
@@ -297,6 +327,78 @@ describe.skipIf(!hasTools)("download pipeline", () => {
     expect(download.toSummary().statusMessage).toBe("The torrent client is unavailable");
     expect(candidateStatuses(download.id)["The.Matrix.1999.1080p.WEB-DL.x265-FLUX"]).toBe("pending");
     expect(Attempt.forDownload(download.id)[0]?.toRecord().outcome).toBe("interrupted");
+  });
+
+  test("a release the disk cannot hold fails the download before a byte arrives, blaming no release", async () => {
+    disk.freeBytes = 6 * GB;
+    const downloader = new FakeDownloader();
+    const download = await runDownload(downloader, 603, "movie", null);
+
+    // The 4 GB release needs 9 GB with the margin; nothing was requested
+    expect(download.status).toBe("failed");
+    expect(download.toSummary().statusMessage).toBe(
+      `Not enough disk space: this release needs 9.0 GB free in the downloads folder (${join(root, "downloads")}), ` +
+        "and only 6.0 GB is available. Free some space, then retry.",
+    );
+    expect(downloader.startedHandles).toEqual([]);
+    expect(candidateStatuses(download.id)).toEqual({
+      "The.Matrix.1999.1080p.WEB-DL.x265-FLUX": "rejected: Contains a blocked file type: Codec.exe",
+      "The.Matrix.1999.1080p.WEBRip.x264-GRP": "pending",
+      "The.Matrix.1999.CAM.x264": "rejected: Blacklisted release type CAM",
+    });
+    expect(Attempt.forDownload(download.id).map((attempt) => attempt.toRecord().outcome)).toEqual(["interrupted", "failed"]);
+    expect(downloader.live.size).toBe(0);
+    expect(await readdir(join(root, "downloads"))).toEqual([]);
+
+    // Once space is freed, a retry takes the same release and finishes
+    disk.freeBytes = 100 * GB;
+    download.startNewRun();
+    await new DownloadRunner(download, new AttemptRunner(downloader, space), new AbortController().signal).run();
+    expect(Download.find(download.id)?.status).toBe("completed");
+    expect(candidateStatuses(download.id)["The.Matrix.1999.1080p.WEBRip.x264-GRP"]).toBe("succeeded");
+  });
+
+  test("a season the disk cannot hold stops at the first episode instead of trying every one", async () => {
+    disk.freeBytes = 2 * GB;
+    const downloader = new FakeDownloader();
+    const download = await runDownload(downloader, 100, "tv", 1);
+
+    // The incomplete pack is turned down as usual; the first episode then doesn't fit, and nothing else is tried
+    expect(download.status).toBe("failed");
+    expect(download.toSummary().statusMessage).toStartWith("Not enough disk space: this release needs 3.0 GB free");
+    expect(downloader.startedHandles).toEqual([]);
+    expect(candidateStatuses(download.id)).toEqual({
+      "Show.S01.1080p.WEB-DL.x265-GRP": "rejected: Incomplete season pack: missing E03",
+      "Show.S01E01.1080p.WEB-DL.x265-GRP": "pending",
+    });
+    expect(Episode.forDownload(download.id).some((episode) => episode.status === "completed")).toBe(false);
+  });
+
+  test("a disk that fills up mid-download stops the download without blaming the release", async () => {
+    const downloader = new FakeDownloader();
+    downloader.writeError = Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
+    const download = await runDownload(downloader, 603, "movie", null);
+
+    expect(download.status).toBe("failed");
+    expect(download.toSummary().statusMessage).toBe(
+      `The downloads disk filled up while preparing the release. Free some space in ${join(root, "downloads")}, then retry.`,
+    );
+    expect(candidateStatuses(download.id)["The.Matrix.1999.1080p.WEBRip.x264-GRP"]).toBe("pending");
+    expect(Attempt.forDownload(download.id)[0]?.toRecord().outcome).toBe("interrupted");
+    expect(downloader.live.size).toBe(0);
+    expect(await readdir(join(root, "downloads"))).toEqual([]);
+  });
+
+  test("the engine reporting a full disk stops the download the same way", async () => {
+    const downloader = new FakeDownloader();
+    downloader.writeError = new DiskFullError("Torrent write failed: ENOSPC: no space left on device, write");
+    const download = await runDownload(downloader, 603, "movie", null);
+
+    expect(download.status).toBe("failed");
+    expect(download.toSummary().statusMessage).toBe(
+      `The downloads disk filled up while preparing the release. Free some space in ${join(root, "downloads")}, then retry.`,
+    );
+    expect(candidateStatuses(download.id)["The.Matrix.1999.1080p.WEBRip.x264-GRP"]).toBe("pending");
   });
 
   test("cancelling mid-download cleans up and releases the candidate", async () => {
@@ -386,7 +488,7 @@ describe.skipIf(!hasTools)("download pipeline", () => {
     await downloader.add({ kind: "magnet", uri: "magnet:?xt=urn:btih:matrix-old" }, { directory: scratch, tag: `findr-${attempt.id}` });
 
     // Recover with the fake client, then let the resumed download finish
-    const queue = DownloadQueue.getInstance().useDownloader(downloader);
+    const queue = DownloadQueue.getInstance().useDownloader(downloader, space);
     await queue.recover();
     await queue.idle();
 
@@ -427,7 +529,7 @@ describe.skipIf(!hasTools)("download pipeline", () => {
     // Start a download whose transfer never finishes on its own
     const downloader = new FakeDownloader();
     downloader.hang = true;
-    const queue = DownloadQueue.getInstance().useDownloader(downloader);
+    const queue = DownloadQueue.getInstance().useDownloader(downloader, space);
     const download = Download.create(Title.findOrCreate(603, "movie"), null, null);
     await queue.recover();
     await waitFor(() => Attempt.activeFor(download.id)?.phase === "downloading");

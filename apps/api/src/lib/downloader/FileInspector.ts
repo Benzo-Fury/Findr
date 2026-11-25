@@ -50,6 +50,8 @@ export type InspectionTarget =
 export interface SelectedFile {
   index: number;
   path: string;
+  /** Size in bytes, as the torrent lists it. */
+  sizeBytes: number;
   /** Empty for movies. More than one for multi-episode files. */
   episodes: number[];
 }
@@ -101,7 +103,7 @@ export class FileInspector {
     if (largest.sizeBytes < MIN_FEATURE_BYTES) {
       return { accepted: false, reason: "No full-length video (largest file is under 100 MB)" };
     }
-    return { accepted: true, files: [{ index: largest.index, path: largest.path, episodes: [] }] };
+    return { accepted: true, files: [{ index: largest.index, path: largest.path, sizeBytes: largest.sizeBytes, episodes: [] }] };
   }
 
   /**
@@ -133,7 +135,7 @@ export class FileInspector {
     for (const episode of required) {
       const entry = byEpisode.get(episode);
       if (entry && !selected.has(entry.file.index)) {
-        selected.set(entry.file.index, { index: entry.file.index, path: entry.file.path, episodes: entry.episodes });
+        selected.set(entry.file.index, { index: entry.file.index, path: entry.file.path, sizeBytes: entry.file.sizeBytes, episodes: entry.episodes });
       }
     }
     return { accepted: true, files: [...selected.values()] };
@@ -148,12 +150,12 @@ export class FileInspector {
     });
     if (named.length > 0) {
       const file = this.largest(named);
-      return { accepted: true, files: [{ index: file.index, path: file.path, episodes: [episode] }] };
+      return { accepted: true, files: [{ index: file.index, path: file.path, sizeBytes: file.sizeBytes, episodes: [episode] }] };
     }
 
     // A single unnamed video in an episode release is that episode
     if (videos.length === 1 && videos[0]) {
-      return { accepted: true, files: [{ index: videos[0].index, path: videos[0].path, episodes: [episode] }] };
+      return { accepted: true, files: [{ index: videos[0].index, path: videos[0].path, sizeBytes: videos[0].sizeBytes, episodes: [episode] }] };
     }
 
     return { accepted: false, reason: `No file for S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` };
