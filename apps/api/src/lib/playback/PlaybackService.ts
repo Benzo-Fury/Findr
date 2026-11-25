@@ -11,7 +11,7 @@
  * renderer.
  */
 
-import { stat, mkdir, rm } from "node:fs/promises";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type {
   CreateCastUrl,
@@ -104,6 +104,9 @@ export const CAST_PROFILES: Record<ChromecastProfile, DeviceProfile> = {
 
 /** A session with no request or progress report for this long is ended. */
 const IDLE_MS = 60_000;
+
+/** A session's scratch folder, named for its id; the only folders cleared on start, since the scratch folder may be shared. */
+const SESSION_FOLDER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** What `prepare` settles before a session of any kind is made. */
 interface Prepared {
@@ -367,9 +370,13 @@ export default class PlaybackService extends SelfManagedSingleton {
   private async turnOn(): Promise<void> {
     this.running = true;
 
-    // Clear segments a previous process left behind
+    // Clear the session folders a previous process left behind, and nothing else the folder holds
     const root = this.scratchRootOrNull(SettingsStore.section("playback"));
-    if (root) await rm(root, { recursive: true, force: true }).catch(() => {});
+    if (root) {
+      const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+      const stale = entries.filter((entry) => entry.isDirectory() && SESSION_FOLDER.test(entry.name));
+      await Promise.all(stale.map((entry) => rm(join(root, entry.name), { recursive: true, force: true }).catch(() => {})));
+    }
 
     this.reaper = setInterval(() => void this.reap(), IDLE_MS / 4);
     this.reaper.unref?.();

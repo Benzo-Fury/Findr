@@ -6,7 +6,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DeviceProfile } from "@findr/types/playback";
@@ -29,6 +29,7 @@ describe.skipIf(!hasFfmpeg)("Streaming through the server", () => {
   const server = new Server();
   const viewer = "stream-viewer";
   let root: string;
+  const stale = "0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e";
   let titleId: string;
 
   /** Fetches a path through the app as if from `address`. */
@@ -66,12 +67,21 @@ describe.skipIf(!hasFfmpeg)("Streaming through the server", () => {
       access: { allowRemote: false },
       playback: { enabled: true, casting: true, trickplay: false, transcodesPath: join(root, "transcodes"), castBaseUrl: "http://192.168.1.10:34571" },
     });
+
+    // A scratch folder shared with other files, and a session folder a previous run left
+    await mkdir(join(root, "transcodes", stale), { recursive: true });
+    await writeFile(join(root, "transcodes", "keep.txt"), "not Findr's");
     await PlaybackService.getInstance().start();
   }, 60_000);
 
   afterAll(async () => {
     await PlaybackService.getInstance().stop();
     await rm(root, { recursive: true, force: true });
+  });
+
+  test("clears only the session folders a previous run left in the scratch folder", async () => {
+    expect(await Bun.file(join(root, "transcodes", "keep.txt")).exists()).toBe(true);
+    expect(await stat(join(root, "transcodes", stale)).catch(() => null)).toBeNull();
   });
 
   test("plays from the playlist down to its segments under the signed path", async () => {

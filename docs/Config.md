@@ -195,7 +195,7 @@ How each check works, what it can't cover, and how to add a killswitch outside F
 |---|---|---|
 | `enabled` | `true` | Let signed-in users watch library files in Findr. Turning it off at once ends every session, stops their ffmpeg runs and hides playback in the web app; what was indexed and watched is kept for when it comes back on. |
 | `transcoding` | `true` | Re-encode video a device can't play as it is. Off means such files fail with `transcode_required`; audio is still converted. |
-| `transcodesPath` | - | Scratch folder for prepared segments. Empty uses `.transcodes` inside the downloads path. Cleared when Findr starts. |
+| `transcodesPath` | - | Scratch folder for prepared segments. Empty uses `.transcodes` inside the downloads path. Session folders left from a previous run are cleared when Findr starts; anything else in it is left alone. |
 | `maxConcurrentTranscodes` | `2` | Video transcodes at once. Sessions that copy the video are cheap and not counted. |
 | `remoteMaxBitrateMbps` | `0` | Bitrate cap for clients outside the local network (anything not loopback, private, link-local or unique-local). `0` means none. |
 | `maxTranscodeResolution` | `1080p` | The tallest picture a transcode produces. |
