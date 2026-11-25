@@ -40,6 +40,17 @@ const MAX_GAP_SECONDS = 3.5;
 /** The shortest shared run that counts as credits; shorter ones are a studio logo's sting. */
 const MIN_MATCH_SECONDS = 15;
 
+/** How far apart two points of one ending are compared to tell whether its audio changes at all. */
+const STATIC_LAG_SECONDS = 2;
+
+/**
+ * The most of a shared run that may match itself `STATIC_LAG_SECONDS` later.
+ * Silence, a steady hum or noise fingerprints the same throughout and so
+ * "matches" any other ending like it; speech and music almost never repeat
+ * like that.
+ */
+const MAX_STATIC_SHARE = 0.3;
+
 /** Credits, found either way, must last to within this of the end of the file; what follows is a logo. */
 const END_SLACK_SECONDS = 60;
 
@@ -152,7 +163,22 @@ export class CreditsDetector {
     const slack = END_SLACK_SECONDS / POINT_SECONDS;
     if (best.points * POINT_SECONDS < MIN_MATCH_SECONDS) return null;
     if (best.a + best.points < a.length - slack && best.b + best.points < b.length - slack) return null;
+
+    // Audio that never changes matches anything like it, so it says nothing about credits
+    if (this.staticShare(a, best.a, best.points) > MAX_STATIC_SHARE) return null;
     return best;
+  }
+
+  /** How much of a run of points matches the point `STATIC_LAG_SECONDS` after it. */
+  private static staticShare(points: Uint32Array, start: number, length: number): number {
+    const lag = Math.round(STATIC_LAG_SECONDS / POINT_SECONDS);
+    let compared = 0;
+    let same = 0;
+    for (let index = start; index < start + length && index + lag < points.length; index++) {
+      compared++;
+      if (this.bits((points[index] ?? 0) ^ (points[index + lag] ?? 0)) <= MAX_POINT_BITS) same++;
+    }
+    return compared === 0 ? 1 : same / compared;
   }
 
   // ---------- Black frames ---------- //
