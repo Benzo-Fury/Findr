@@ -1,9 +1,11 @@
 /**
- * A network Findr finds and drives DLNA renderers on. The server's own
- * network is one; each connected cast bridge is another, standing in for
- * the server on a network it can't reach. The controller does the same work
- * on every network, through these three operations.
+ * A network Findr finds and drives TVs on: DLNA renderers and Google Cast
+ * devices. The server's own network is one; each connected cast bridge is
+ * another, standing in for the server on a network it can't reach. The
+ * controllers do the same work on every network, through these operations.
  */
+
+import type { CastDevice, CastLink } from "../googlecast/CastLink";
 
 /** One HTTP request to a renderer: reading its description or calling an action. */
 export interface HttpExchange {
@@ -42,4 +44,10 @@ export interface RendererNetwork {
 
   /** The base URL renderers on it fetch media from, or null when there is none. */
   mediaBase(): string | null;
+
+  /** Searches for Google Cast devices. Never rejects. */
+  searchCast(): Promise<CastDevice[]>;
+
+  /** Connects to a Google Cast device a search on this network found; throws when it can't. */
+  openCast(device: CastDevice): Promise<CastLink>;
 }

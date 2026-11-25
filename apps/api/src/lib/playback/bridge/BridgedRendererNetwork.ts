@@ -1,13 +1,24 @@
 /**
  * The network a cast bridge is on, as the server sees it: searches and TV
  * requests are sent down the bridge's WebSocket and answered by the bridge,
+ * Cast connections are held by the bridge and relayed over the same socket,
  * and TVs fetch media from the bridge's own proxy, which passes it on from
  * the server. One stands for each bridge for as long as the server runs, so
  * a bridge that reconnects finds its TVs as they were.
  */
 
 import type { HttpExchange, HttpReply, RendererNetwork } from "../dlna/RendererNetwork";
-import { BRIDGE_PROTOCOL, BridgeMessageSchema, HttpResultSchema, SearchResultSchema, type ServerMessage } from "./BridgeProtocol";
+import type { CastDevice, CastLink } from "../googlecast/CastLink";
+import type { CastFrame } from "../googlecast/CastMessage";
+import {
+  BRIDGE_PROTOCOL,
+  BridgeMessageSchema,
+  CastOpenResultSchema,
+  CastSearchResultSchema,
+  HttpResultSchema,
+  SearchResultSchema,
+  type ServerMessage,
+} from "./BridgeProtocol";
 
 /** The part of a WebSocket the network writes to; Hono's `WSContext` is one. */
 export interface BridgeSocket {
@@ -28,8 +39,50 @@ interface Hello {
   mediaBase: string | null;
 }
 
-/** How long a bridge gets to search: its SSDP search takes 2.5 seconds, then the answer travels. */
+/** How long a bridge gets to search: its SSDP or mDNS search takes 2.5 seconds, then the answer travels. */
 const SEARCH_TIMEOUT_MS = 10_000;
+
+/** How long a bridge gets to connect to a Cast device. */
+const CAST_OPEN_TIMEOUT_MS = 10_000;
+
+// ---------- Relayed Cast connection ---------- //
+
+/** A Cast connection the bridge holds, as the server uses it. */
+class BridgedCastLink implements CastLink {
+  public onMessage: ((frame: CastFrame) => void) | null = null;
+  public onClose: (() => void) | null = null;
+  private ended = false;
+
+  constructor(
+    private readonly network: BridgedRendererNetwork,
+    /** The bridge's id for the connection. */
+    public readonly channel: string,
+  ) {}
+
+  public get closed(): boolean {
+    return this.ended;
+  }
+
+  public send(frame: CastFrame): void {
+    if (!this.ended) this.network.relay({ type: "castSend", channel: this.channel, frame });
+  }
+
+  public close(): void {
+    if (this.ended) return;
+    this.network.relay({ type: "castClose", channel: this.channel });
+    this.finish();
+  }
+
+  /** Ends the link from the bridge's side, or as the bridge goes away. */
+  public finish(): void {
+    if (this.ended) return;
+    this.ended = true;
+    this.network.forgetLink(this.channel);
+    this.onClose?.();
+  }
+}
+
+// ---------- Network ---------- //
 
 /** Time allowed on top of a TV request's own timeout for the round trip to the bridge. */
 const RELAY_MARGIN_MS = 5000;
@@ -42,6 +95,8 @@ export class BridgedRendererNetwork implements RendererNetwork {
   private socket: BridgeSocket | null = null;
   private hello: Hello | null = null;
   private readonly pending = new Map<string, Pending>();
+  /** Open Cast connections, by the bridge's channel id. */
+  private readonly links = new Map<string, BridgedCastLink>();
   private nextId = 0;
 
   constructor(
@@ -122,6 +177,14 @@ export class BridgedRendererNetwork implements RendererNetwork {
 
       case "ping":
         return;
+
+      // Cast connections the bridge holds
+      case "castMessage":
+        this.links.get(message.channel)?.onMessage?.(message.frame);
+        return;
+      case "castClosed":
+        this.links.get(message.channel)?.finish();
+        return;
     }
   }
 
@@ -143,6 +206,38 @@ export class BridgedRendererNetwork implements RendererNetwork {
 
   public mediaBase(): string | null {
     return this.hello?.mediaBase ?? null;
+  }
+
+  /** Asks the bridge to search its network for Cast devices; finds nothing while it is away or slow. */
+  public async searchCast(): Promise<CastDevice[]> {
+    try {
+      return CastSearchResultSchema.parse(await this.ask({ type: "castSearch", id: "" }, SEARCH_TIMEOUT_MS));
+    } catch (error) {
+      console.warn(`[Playback] Cast bridge ${this.place} couldn't search for Cast devices: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
+  }
+
+  /** Has the bridge connect to a Cast device it found, relaying the connection from then on. */
+  public async openCast(device: CastDevice): Promise<CastLink> {
+    const { channel } = CastOpenResultSchema.parse(await this.ask({ type: "castOpen", id: "", device: { host: device.host, port: device.port } }, CAST_OPEN_TIMEOUT_MS));
+    const link = new BridgedCastLink(this, channel);
+    this.links.set(channel, link);
+    return link;
+  }
+
+  /** Sends a message that wants no reply; dropped while the bridge is away. */
+  public relay(message: ServerMessage): void {
+    try {
+      if (this.connected) this.socket?.send(JSON.stringify(message));
+    } catch {
+      // The connection is going; its links are ended with it
+    }
+  }
+
+  /** Forgets a Cast link that has ended. */
+  public forgetLink(channel: string): void {
+    this.links.delete(channel);
   }
 
   // ---------- Inner workings ---------- //
@@ -177,5 +272,7 @@ export class BridgedRendererNetwork implements RendererNetwork {
     }
     this.pending.clear();
     this.hello = null;
+    // The bridge closes its Cast connections as the socket goes
+    for (const link of [...this.links.values()]) link.finish();
   }
 }

@@ -215,7 +215,7 @@ function CastTargets({ target, onPick }: CastTargetsProps) {
             key={renderer.id}
             icon={TelevisionSimpleIcon}
             name={renderer.name}
-            detail={rendererDetail(renderer)}
+            detail={rendererDetail(renderer, shown)}
             selected={target?.id === renderer.id}
             onClick={() => onPick(renderer)}
           />
@@ -230,7 +230,7 @@ function CastTargets({ target, onPick }: CastTargetsProps) {
       ) : (
         listed.length === 0 && (
           <p className="px-3 py-2.5 text-[0.8125rem] leading-relaxed text-ink-2">
-            No TVs answered. A TV must be on, with DLNA or screen sharing turned on, and on the same network as the Findr server.
+            No TVs answered. A TV must be on, with casting or screen sharing turned on, and on the same network as the Findr server.
           </p>
         )
       )}

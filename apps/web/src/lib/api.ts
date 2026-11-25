@@ -380,7 +380,7 @@ export function updatePlaybackPrefs(prefs: PlaybackPrefs): Promise<PlaybackPrefs
   return request("/api/playback/prefs", json(prefs, "PUT"))
 }
 
-/** DLNA TVs on the local network; `refresh` searches again rather than reusing a recent search. */
+/** TVs Findr can cast to, of any kind; `refresh` searches again rather than reusing a recent search. */
 export function fetchRenderers(refresh = false): Promise<RendererRecord[]> {
   return request(`/api/playback/renderers${refresh ? "?refresh=1" : ""}`)
 }

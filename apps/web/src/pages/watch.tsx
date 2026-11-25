@@ -24,7 +24,7 @@ import { TvRemote } from "@/components/playback/tv-remote"
  * this user already has playing, as the Cast button links to.
  */
 
-/** A DLNA TV playing this, with where and in which language it started. */
+/** A TV Findr drives playing this, with where and in which language it started. */
 interface TvChoice {
   renderer: RendererRecord
   startMs: number

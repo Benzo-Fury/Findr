@@ -1,12 +1,13 @@
 /**
  * Findr run as a cast bridge (`findr bridge`): on a network the server can't
- * reach, it finds the DLNA TVs there and drives them for the server. It holds
- * one WebSocket open to the server, reconnecting whenever it drops, and runs
- * the media proxy TVs fetch from.
+ * reach, it finds the DLNA TVs and Google Cast devices there and drives them
+ * for the server. It holds one WebSocket open to the server, reconnecting
+ * whenever it drops, and runs the media proxy TVs fetch from.
  *
- * The server can only ask for what driving a TV needs: a search, and HTTP
- * requests to devices the bridge itself found answering one. Anything else on
- * the bridge's network stays out of the server's reach. It needs no database
+ * The server can only ask for what driving a TV needs: searches, HTTP
+ * requests to DLNA devices the bridge itself found answering one, and Cast
+ * connections to the port a Cast device its own search found advertised.
+ * Anything else on the bridge's network stays out of the server's reach. It needs no database
  * and reads no settings; everything comes from its command line or environment.
  */
 
@@ -16,6 +17,9 @@ import { LanInterface } from "../LanInterface";
 import { LanHttp } from "../dlna/LanHttp";
 import type { HttpExchange } from "../dlna/RendererNetwork";
 import { Ssdp } from "../dlna/Ssdp";
+import { CastChannel } from "../googlecast/CastChannel";
+import type { CastDevice } from "../googlecast/CastLink";
+import { Mdns } from "../googlecast/Mdns";
 import { BRIDGE_CONNECT_PATH, BRIDGE_PROTOCOL, MAX_BODY_BYTES, type ServerMessage, ServerMessageSchema } from "./BridgeProtocol";
 import { BridgeMediaProxy } from "./BridgeMediaProxy";
 
@@ -79,24 +83,31 @@ export class BridgeAgent {
   private readonly proxy: BridgeMediaProxy;
   /** Hosts that answered a search, with when they last did. Only these may be sent requests. */
   private readonly devices = new Map<string, number>();
+  /** Cast devices that answered a search, by host: the port they advertised and when they last answered. */
+  private readonly castDevices = new Map<string, { port: number; seen: number }>();
+  /** Cast connections held for the server, by channel id. */
+  private readonly channels = new Map<string, CastChannel>();
+  private nextChannel = 0;
   private socket: WebSocket | null = null;
   private pinger: ReturnType<typeof setInterval> | null = null;
   private retryMs = RETRY_MIN_MS;
   private stopped = false;
 
   private readonly discover: () => Promise<Set<string>>;
+  private readonly discoverCast: () => Promise<CastDevice[]>;
   private readonly onFatal: (reason: string) => void;
 
   /**
    * A bridge with `options`. Tests replace how it finds devices (an SSDP
-   * search) and what it does when it can't go on (log and exit).
+   * search and an mDNS query) and what it does when it can't go on (log and exit).
    */
   constructor(
     private readonly options: BridgeOptions,
-    hooks: { discover?: () => Promise<Set<string>>; onFatal?: (reason: string) => void } = {},
+    hooks: { discover?: () => Promise<Set<string>>; discoverCast?: () => Promise<CastDevice[]>; onFatal?: (reason: string) => void } = {},
   ) {
     this.proxy = new BridgeMediaProxy(options.server, options.port);
     this.discover = hooks.discover ?? (() => Ssdp.search(LanInterface.address()));
+    this.discoverCast = hooks.discoverCast ?? (() => Mdns.search(LanInterface.address()));
     this.onFatal =
       hooks.onFatal ??
       ((reason) => {
@@ -183,6 +194,7 @@ export class BridgeAgent {
   public async stop(): Promise<void> {
     this.stopped = true;
     if (this.pinger) clearInterval(this.pinger);
+    this.closeChannels();
     this.socket?.close(1000, "bridge stopping");
     await this.proxy.stop();
   }
@@ -232,6 +244,8 @@ export class BridgeAgent {
     socket.addEventListener("close", (event) => {
       if (this.socket !== socket) return;
       this.socket = null;
+      // Cast connections belong to the server's session with the bridge
+      this.closeChannels();
       if (this.pinger) clearInterval(this.pinger);
       this.pinger = null;
       if (this.stopped) return;
@@ -298,14 +312,83 @@ export class BridgeAgent {
       return;
     }
 
+    // Cast traffic on an open channel wants no reply
+    if (message.type === "castSend") {
+      this.channels.get(message.channel)?.send(message.frame);
+      return;
+    }
+    if (message.type === "castClose") {
+      this.channels.get(message.channel)?.close();
+      return;
+    }
+
     let reply: object;
     try {
-      const result = message.type === "search" ? [...(await this.search())] : await this.send(message.exchange);
+      let result: unknown;
+      switch (message.type) {
+        case "search":
+          result = [...(await this.search())];
+          break;
+        case "http":
+          result = await this.send(message.exchange);
+          break;
+        case "castSearch":
+          result = await this.searchCast();
+          break;
+        case "castOpen":
+          result = { channel: await this.openCast(socket, message.device.host, message.device.port) };
+          break;
+      }
       reply = { type: "reply", id: message.id, ok: true, result };
     } catch (error) {
       reply = { type: "reply", id: message.id, ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 500) };
     }
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(reply));
+  }
+
+  /** Searches for Cast devices, remembering each one's host and advertised port so the server may connect to it. */
+  public async searchCast(): Promise<CastDevice[]> {
+    const devices = await this.discoverCast();
+    const now = Date.now();
+    for (const device of devices) this.castDevices.set(device.host, { port: device.port, seen: now });
+    for (const [host, { seen }] of this.castDevices) if (now - seen > DEVICE_TTL_MS) this.castDevices.delete(host);
+    return devices;
+  }
+
+  /**
+   * Connects to a Cast device for the server, relaying its messages over
+   * `socket` until either side closes it. Refused unless a search found that
+   * device advertising that port.
+   */
+  public async openCast(socket: WebSocket, host: string, port: number): Promise<string> {
+    const found = this.castDevices.get(host);
+    if (!found || found.port !== port || Date.now() - found.seen > DEVICE_TTL_MS) throw new Error(`${host}:${port} isn't a Cast device this bridge found`);
+
+    const channel = await CastChannel.open(host, port);
+    const id = String(++this.nextChannel);
+    this.channels.set(id, channel);
+    // A device being driven stays reachable between searches
+    found.seen = Date.now();
+
+    // Its messages go to the server; its closing too
+    const relay = (message: object) => {
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+    };
+    channel.onMessage = (frame) => {
+      found.seen = Date.now();
+      relay({ type: "castMessage", channel: id, frame });
+    };
+    channel.onClose = () => {
+      this.channels.delete(id);
+      relay({ type: "castClosed", channel: id });
+    };
+    return id;
+  }
+
+  /** Closes every Cast connection held for the server. */
+  private closeChannels(): void {
+    for (const channel of [...this.channels.values()]) channel.close();
+    this.channels.clear();
   }
 
   /** Searches the network, remembering which hosts answered so the server may reach them. */

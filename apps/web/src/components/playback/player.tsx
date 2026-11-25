@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react"
 import { ArrowLeftIcon, ArrowsClockwiseIcon, SkipForwardIcon, SunDimIcon, TelevisionSimpleIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react"
 import { Container, Hotkey } from "@videojs/react"
 import { GoogleCast } from "@videojs/react/extensions/google-cast"
-import { AirPlayEnterIcon, CastEnterIcon, CastExitIcon, SpeechIcon, SwitchesIcon } from "@videojs/react/icons"
+import { CastEnterIcon, CastExitIcon, SpeechIcon, SwitchesIcon } from "@videojs/react/icons"
 import { HlsJsVideo } from "@videojs/react/media/hlsjs-video"
 import { VideoPlayer, usePlayer } from "@videojs/react/video"
 import type { PlaybackItemKey, PlaybackPrefs, PlaybackSessionRecord, RendererRecord } from "@findr/types/playback"
@@ -48,10 +48,11 @@ import { VideoSkin } from "@/components/videojs/video/skin"
  * audio here mean a new session, so they are Findr's own submenus beside the
  * skin's speed and captions) and add a TV button to its control bar.
  *
- * Casting: the skin's Cast button sends a TV its own session through the
- * Google Cast extension, Safari's AirPlay button hands over the stream
- * itself (so Safari plays HLS natively there), and the TV button beside them
- * lists DLNA renderers, which Findr then drives from the server. While a
+ * Casting: the Cast menu lists every TV Findr finds by name (DLNA TVs and
+ * Chromecasts alike), which Findr then drives from the server. Below them,
+ * "Other devices" opens the browser's own picker: Google Cast sends a TV its
+ * own session through the Google Cast extension, and AirPlay hands over the
+ * stream itself (so Safari plays HLS natively there). While a
  * Google Cast receiver plays, a new audio track or quality is loaded on the
  * receiver directly and the browser's own stream catches up once casting ends.
  *
@@ -75,7 +76,7 @@ interface PlayerProps {
   /** How many episodes in a row have started on their own, for the "still watching" check. */
   autoplayed: number
   onPlayNext: (automatic: boolean) => void
-  /** Moves playback to a DLNA TV from where the player is. */
+  /** Moves playback to a TV Findr drives, from where the player is. */
   onPlayOnTv: (renderer: RendererRecord, positionMs: number, audioTrack: number | null) => void
   onExit: () => void
 }
@@ -717,9 +718,10 @@ function SettingsItems({ session, choice, prefs, onQuality, onAudio, onServerTon
 
 /**
  * The control bar's one cast button, in place of the skin's Cast and AirPlay
- * buttons: Chromecast and AirPlay, where the browser offers them, open the
- * browser's own device picker, and below them the DLNA TVs on the network,
- * searched for each time the menu opens.
+ * buttons: every TV Findr finds on the network by name, searched for each
+ * time the menu opens, then, where the browser can cast too, its own device
+ * picker for anything Findr can't reach (AirPlay, or a Chromecast on another
+ * network).
  */
 function CastMenu({ onPick }: { onPick: (renderer: RendererRecord) => void }) {
   const store = usePlayer()
@@ -736,16 +738,6 @@ function CastMenu({ onPick }: { onPick: (renderer: RendererRecord) => void }) {
 
   return (
     <BarMenu icon={connected ? CastExitIcon : CastEnterIcon} label={connected ? "Casting" : "Cast"} open={open} onOpenChange={setOpen}>
-      {GOOGLE_CAST && availability !== "unsupported" && (
-        <MenuRow icon={CastEnterIcon} onSelect={prompt} disabled={!connected && availability !== "available"}>
-          {connected ? "Stop casting" : availability === "available" ? "Chromecast" : "No Chromecast found"}
-        </MenuRow>
-      )}
-      {AIRPLAY && availability === "available" && (
-        <MenuRow icon={AirPlayEnterIcon} onSelect={prompt}>
-          {connected ? "Stop AirPlay" : "AirPlay"}
-        </MenuRow>
-      )}
       {open && (
         <TvList
           onPick={(renderer) => {
@@ -754,6 +746,11 @@ function CastMenu({ onPick }: { onPick: (renderer: RendererRecord) => void }) {
             onPick(renderer)
           }}
         />
+      )}
+      {(GOOGLE_CAST || AIRPLAY) && (connected || availability === "available") && (
+        <MenuRow icon={CastEnterIcon} onSelect={prompt}>
+          {connected ? "Stop casting" : "Other devices"}
+        </MenuRow>
       )}
     </BarMenu>
   )
@@ -773,14 +770,16 @@ function TvList({ onPick }: { onPick: (renderer: RendererRecord) => void }) {
         </div>
       ) : renderers.length === 0 ? (
         <p className="w-0 min-w-full whitespace-normal px-2 py-1 leading-snug text-media-muted-foreground">
-          No TVs answered. A TV must be on, with DLNA or screen sharing turned on, and on the same network as the Findr server.
+          No TVs answered. A TV must be on, with casting or screen sharing turned on, and on the same network as the Findr server.
         </p>
       ) : (
         renderers.map((renderer) => (
           <MenuRow key={renderer.id} icon={TelevisionSimpleIcon} onSelect={() => onPick(renderer)}>
             <span className="min-w-0">
               <span className="block truncate">{renderer.name}</span>
-              {rendererDetail(renderer) && <span className="block truncate text-media-sm text-media-muted-foreground">{rendererDetail(renderer)}</span>}
+              {rendererDetail(renderer, renderers) && (
+                <span className="block truncate text-media-sm text-media-muted-foreground">{rendererDetail(renderer, renderers)}</span>
+              )}
             </span>
           </MenuRow>
         ))

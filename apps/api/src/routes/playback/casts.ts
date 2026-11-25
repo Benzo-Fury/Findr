@@ -5,7 +5,7 @@
  */
 
 import { SettingsStore } from "../../lib/db/models/SettingsStore"
-import DlnaController from "../../lib/playback/dlna/DlnaController"
+import { Renderers } from "../../lib/playback/Renderers"
 import { requirePlayback } from "../../lib/playback/requirePlayback"
 import { factory } from "../../lib/routing/factory"
 
@@ -14,6 +14,6 @@ export default factory({
 
   GET: (c) => {
     if (!SettingsStore.section("playback").casting) return c.json([])
-    return c.json(DlnaController.getInstance().castsOf(c.get("session").user.id))
+    return c.json(Renderers.castsOf(c.get("session").user.id))
   },
 })

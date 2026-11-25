@@ -12,15 +12,16 @@ interface RenderersState {
 }
 
 /**
- * What a TV list shows under a TV's name: the bridge it is reached through,
- * then its make and model; null when there is nothing to say.
+ * What a TV list shows under a TV's name: nothing, since the name is what
+ * people know a TV by, unless another TV in the list shares it, when the
+ * place each is reached through tells them apart.
  */
-export function rendererDetail(renderer: RendererRecord): string | null {
-  const model = [renderer.manufacturer, renderer.model].filter(Boolean).join(" ")
-  return [renderer.place ? `via ${renderer.place}` : null, model || null].filter(Boolean).join(", ") || null
+export function rendererDetail(renderer: RendererRecord, listed: RendererRecord[]): string | null {
+  const shared = listed.some((other) => other.id !== renderer.id && other.name === renderer.name)
+  return shared ? (renderer.place ? `via ${renderer.place}` : "On the server's network") : null
 }
 
-/** DLNA TVs on the server's network and its cast bridges', searched for when the caller mounts. */
+/** Every TV on the server's network and its cast bridges', of any kind, searched for when the caller mounts. */
 export function useRenderers(): RenderersState {
   const [renderers, setRenderers] = React.useState<RendererRecord[] | null>(null)
   const [error, setError] = React.useState<string | null>(null)
