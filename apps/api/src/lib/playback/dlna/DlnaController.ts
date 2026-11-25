@@ -268,6 +268,9 @@ export default class DlnaController extends SelfManagedSingleton {
       timer: setInterval(() => void this.poll(rendererId), POLL_MS),
     };
     active.timer.unref?.();
+
+    // A play that started while this one was starting is replaced, its polling stopped at once
+    void this.release(rendererId, false).catch(() => {});
     this.active.set(rendererId, active);
     if (active.resumeAt !== null) void this.resumeOnceStarted(rendererId, active, active.resumeAt);
 

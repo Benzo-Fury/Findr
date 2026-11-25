@@ -299,6 +299,12 @@ describe.skipIf(!hasFfmpeg)("DlnaController", () => {
     expect(tv.loads).toHaveLength(1);
   }, 30_000);
 
+  test("keeps one cast when play is pressed twice at once, ending the other", async () => {
+    await Promise.all([play(0), play(0)]);
+    await until(() => PlaybackService.getInstance().nowPlaying().length === 1);
+    expect(status().state).not.toBe("idle");
+  }, 30_000);
+
   test("takes no position from a TV still showing its last item", async () => {
     await play(0);
     // The first poll, two seconds in, finds the TV opening and reporting 1:11
