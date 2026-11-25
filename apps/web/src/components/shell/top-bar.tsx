@@ -1,13 +1,13 @@
 import { NavLink } from "react-router-dom"
 import { motion } from "motion/react"
 import { MagnifyingGlassIcon } from "@phosphor-icons/react"
-import type { Session } from "@/lib/auth"
+import { isAdmin, type Session } from "@/lib/auth"
 import { SPRING_SNAP } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 import { Kbd } from "@/components/ui/kbd"
 import { Brand } from "@/components/shell/brand"
 import { CountBadge } from "@/components/shell/count-badge"
-import { NAV_ITEMS } from "@/components/shell/nav-items"
+import { navItemsFor } from "@/components/shell/nav-items"
 import { UserMenu } from "@/components/shell/user-menu"
 
 interface TopBarProps {
@@ -32,7 +32,7 @@ export function TopBar({ session, activeCount, onSearch }: TopBarProps) {
 
         <nav aria-label="Primary" className="hidden justify-center md:flex">
           <div className="flex items-center gap-1 rounded-full bg-sunken p-1">
-            {NAV_ITEMS.map((item) => (
+            {navItemsFor(isAdmin(session)).map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}

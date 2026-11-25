@@ -202,4 +202,28 @@ export const migrations: Migration[] = [
       )`,
     ],
   },
+  {
+    name: "admin statistics",
+    statements: [
+      // How many bytes an attempt chose to download, and milliseconds spent in each phase as JSON
+      "ALTER TABLE attempts ADD COLUMN bytes INTEGER",
+      "ALTER TABLE attempts ADD COLUMN timings TEXT",
+      "CREATE INDEX attempts_finished_idx ON attempts (finished_at)",
+
+      // One row per finished playback session: who watched what, on which kind of device, and how it was sent
+      `CREATE TABLE play_log (
+        id          TEXT PRIMARY KEY NOT NULL,
+        user_id     TEXT REFERENCES user(id) ON DELETE SET NULL,
+        title_id    TEXT NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+        season      INTEGER,
+        episode     INTEGER,
+        device      TEXT NOT NULL,
+        mode        TEXT NOT NULL,
+        rung        TEXT,
+        started_at  INTEGER NOT NULL,
+        ended_at    INTEGER NOT NULL
+      )`,
+      "CREATE INDEX play_log_started_idx ON play_log (started_at)",
+    ],
+  },
 ];

@@ -27,6 +27,7 @@ import type {
 import { MediaItem } from "../db/models/MediaItem";
 import { PlaybackPrefs } from "../db/models/PlaybackPrefs";
 import { PlaybackProgress } from "../db/models/PlaybackProgress";
+import { PlayLog } from "../db/models/PlayLog";
 import { SettingsStore } from "../db/models/SettingsStore";
 import { Title } from "../db/models/Title";
 import { UserAccount } from "../db/models/UserAccount";
@@ -327,9 +328,31 @@ export default class PlaybackService extends SelfManagedSingleton {
     if (!session || (userId !== null && session.userId !== userId)) return false;
     this.sessions.delete(id);
     for (const [ticket, sessionId] of this.castSessions) if (sessionId === id) this.castSessions.delete(ticket);
+    this.log(session);
     if (session instanceof ProgressiveSession) await DlnaController.getInstance().released(id);
     await session.close();
     return true;
+  }
+
+  /** Records an ending session for the Admin page's playback figures. Never throws. */
+  private log(session: AnySession): void {
+    try {
+      PlayLog.record({
+        userId: session.userId,
+        titleId: session.item.titleId,
+        season: session.item.season,
+        episode: session.item.episode,
+        device: session.device,
+        mode: session instanceof ProgressiveSession && session.direct ? "direct" : session.plan.mode,
+        rung: session.rung,
+        startedAt: session.createdAt,
+        // When the player last asked for anything: a reaped session ended a minute before it was reaped
+        endedAt: Math.min(session.lastSeen, Date.now()),
+      });
+    } catch (error) {
+      // A title deleted while it played takes its rows with it
+      console.warn("[Playback] Could not log the session:", error);
+    }
   }
 
   /** Ends every session playing any file of a title, such as one being deleted. */

@@ -22,7 +22,12 @@ interface AttemptRow {
   reason: string | null;
   started_at: number;
   finished_at: number | null;
+  bytes: number | null;
+  timings: string | null;
 }
+
+/** Milliseconds an attempt spent in each phase it reached. */
+export type AttemptTimings = Partial<Record<Exclude<AttemptPhase, "done">, number>>;
 
 /** Identifies what an attempt is trying and on whose behalf. */
 export interface NewAttempt {
@@ -46,6 +51,12 @@ export class Attempt extends Model {
   private outcomeValue: AttemptOutcome | null;
   private reasonValue: string | null;
   private finishedAtValue: number | null;
+  private bytesValue: number | null;
+  private timingsValue: AttemptTimings;
+  /** When the current phase began, for timing it. */
+  private phaseStartedAt: number;
+  /** Whether this instance is running the attempt; one loaded later, as after a restart, doesn't time phases. */
+  private live = false;
 
   private constructor(row: AttemptRow) {
     super();
@@ -60,6 +71,9 @@ export class Attempt extends Model {
     this.outcomeValue = row.outcome;
     this.reasonValue = row.reason;
     this.finishedAtValue = row.finished_at;
+    this.bytesValue = row.bytes;
+    this.timingsValue = row.timings ? (JSON.parse(row.timings) as AttemptTimings) : {};
+    this.phaseStartedAt = row.started_at;
   }
 
   public get phase(): AttemptPhase {
@@ -86,6 +100,8 @@ export class Attempt extends Model {
       reason: null,
       started_at: Date.now(),
       finished_at: null,
+      bytes: null,
+      timings: null,
     };
 
     this.db
@@ -103,7 +119,9 @@ export class Attempt extends Model {
         startedAt: row.started_at,
       });
 
-    return new Attempt(row);
+    const attemptRecord = new Attempt(row);
+    attemptRecord.live = true;
+    return attemptRecord;
   }
 
   /** Every attempt of a download, newest first. */
@@ -153,13 +171,20 @@ export class Attempt extends Model {
 
   // ---------- Mutations ---------- //
 
-  /** Moves the attempt to a new phase, resetting progress unless given. */
+  /** Moves the attempt to a new phase, resetting progress unless given, and records how long the last one took. */
   public setPhase(phase: AttemptPhase, progress = 0): void {
+    const timings = this.closePhase();
     Attempt.db
-      .query("UPDATE attempts SET phase = $phase, progress = $progress WHERE id = $id")
-      .run({ id: this.id, phase, progress });
+      .query("UPDATE attempts SET phase = $phase, progress = $progress, timings = $timings WHERE id = $id")
+      .run({ id: this.id, phase, progress, timings });
     this.phaseValue = phase;
     this.progressValue = progress;
+  }
+
+  /** Records how many bytes the attempt chose to download, once its files are picked. */
+  public setBytes(bytes: number): void {
+    Attempt.db.query("UPDATE attempts SET bytes = $bytes WHERE id = $id").run({ id: this.id, bytes });
+    this.bytesValue = bytes;
   }
 
   /** Records progress within the current phase, clamped to 0–1. */
@@ -173,15 +198,36 @@ export class Attempt extends Model {
   public finish(outcome: AttemptOutcome, reason: string | null = null): void {
     const finishedAt = Date.now();
     const phase: AttemptPhase = outcome === "succeeded" ? "done" : this.phaseValue;
+    const timings = this.closePhase(finishedAt);
 
     Attempt.db
-      .query("UPDATE attempts SET outcome = $outcome, reason = $reason, phase = $phase, finished_at = $finishedAt WHERE id = $id")
-      .run({ id: this.id, outcome, reason, phase, finishedAt });
+      .query(
+        "UPDATE attempts SET outcome = $outcome, reason = $reason, phase = $phase, finished_at = $finishedAt, timings = $timings WHERE id = $id",
+      )
+      .run({ id: this.id, outcome, reason, phase, finishedAt, timings });
 
     this.outcomeValue = outcome;
     this.reasonValue = reason;
     this.phaseValue = phase;
     this.finishedAtValue = finishedAt;
+  }
+
+  /** Adds the time since the current phase began to its total, returning every total as JSON. */
+  private closePhase(now = Date.now()): string {
+    const phase = this.phaseValue;
+    if (this.live && phase !== "done") this.timingsValue[phase] = (this.timingsValue[phase] ?? 0) + Math.max(now - this.phaseStartedAt, 0);
+    this.phaseStartedAt = now;
+    return JSON.stringify(this.timingsValue);
+  }
+
+  /** Bytes chosen for download, once known. */
+  public get bytes(): number | null {
+    return this.bytesValue;
+  }
+
+  /** Milliseconds spent in each phase so far. */
+  public get timings(): AttemptTimings {
+    return { ...this.timingsValue };
   }
 
   // ---------- Serialisation ---------- //

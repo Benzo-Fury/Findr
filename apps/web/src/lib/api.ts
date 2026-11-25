@@ -16,6 +16,7 @@ import type {
   TitleSummary,
 } from "@findr/types/downloads"
 import type { CredentialsReset } from "@findr/types/account"
+import type { AdminHealth, AdminRange, AdminStats } from "@findr/types/admin"
 import type { ClaimStatus, SetupClaim, SetupStatus } from "@findr/types/setup"
 import type { CastBridgeRecord, CastUrlRecord, CreateCastBridge, CreateCastUrl, CreateSession, CreatedCastBridge, CreditsQuery, CreditsRecord, EncoderTestResult, MarkPlayed, NowPlayingRecord, PlaybackCapabilities, PlaybackDiagnostics, PlaybackLibrary, PlaybackPrefs, PlaybackSessionRecord, RendererCommand, RendererOverrides, RendererPlay, RendererRecord, RendererStatus, ReportProgress } from "@findr/types/playback"
 import type { SettingsPatch, SettingsResponse } from "@findr/types/settings"
@@ -286,6 +287,20 @@ export function fetchVpnStatus(init?: RequestInit): Promise<VpnStatus> {
 /** Runs every VPN check now, looking the public IP up afresh. Admins only. */
 export function checkVpn(): Promise<VpnStatus> {
   return request("/api/vpn/check", { method: "POST" })
+}
+
+/* -------------------------------------------------------------------------- */
+/* Admin                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/** The Admin page's figures for one period. Admins only. */
+export function fetchAdminStats(range: AdminRange, init?: RequestInit): Promise<AdminStats> {
+  return request(`/api/admin/stats?range=${range}`, init)
+}
+
+/** Live health of everything Findr depends on. Admins only. */
+export function fetchAdminHealth(init?: RequestInit): Promise<AdminHealth> {
+  return request("/api/admin/health", init)
 }
 
 /* -------------------------------------------------------------------------- */

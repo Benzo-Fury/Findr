@@ -4,9 +4,11 @@ import { MagnifyingGlassIcon } from "@phosphor-icons/react"
 import { SPRING_SNAP } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 import { CountBadge } from "@/components/shell/count-badge"
-import { NAV_ITEMS } from "@/components/shell/nav-items"
+import { navItemsFor, type NavItem } from "@/components/shell/nav-items"
+import { isAdmin, type Session } from "@/lib/auth"
 
 interface BottomTabsProps {
+  session: Session
   activeCount: number
   onSearch: () => void
 }
@@ -14,11 +16,12 @@ interface BottomTabsProps {
 const TAB_CLASS = "relative flex h-full flex-1 flex-col items-center justify-center gap-1 text-micro font-semibold"
 
 /**
- * Phone navigation within thumb reach: the three pages plus search, each a
- * full-height target. The current tab's icon sits on an amber pill.
+ * Phone navigation within thumb reach: the pages with search in the middle of
+ * the first two and the rest, each a full-height target. Admins get a fifth
+ * tab, Admin. The current tab's icon sits on an amber pill.
  */
-export function BottomTabs({ activeCount, onSearch }: BottomTabsProps) {
-  const [library, discover, downloads] = NAV_ITEMS
+export function BottomTabs({ session, activeCount, onSearch }: BottomTabsProps) {
+  const [library, discover, ...rest] = navItemsFor(isAdmin(session))
 
   return (
     <nav
@@ -33,14 +36,16 @@ export function BottomTabs({ activeCount, onSearch }: BottomTabsProps) {
           </span>
           Search
         </button>
-        {downloads && <Tab item={downloads} activeCount={activeCount} />}
+        {rest.map((item) => (
+          <Tab key={item.to} item={item} activeCount={activeCount} />
+        ))}
       </div>
     </nav>
   )
 }
 
 interface TabProps {
-  item: (typeof NAV_ITEMS)[number]
+  item: NavItem
   activeCount: number
 }
 

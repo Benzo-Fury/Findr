@@ -14,6 +14,7 @@ import { LibraryPage } from "@/pages/library"
 const DiscoverPage = React.lazy(() => import("@/pages/discover").then((module) => ({ default: module.DiscoverPage })))
 const DownloadsPage = React.lazy(() => import("@/pages/downloads").then((module) => ({ default: module.DownloadsPage })))
 const SettingsPage = React.lazy(() => import("@/pages/settings").then((module) => ({ default: module.SettingsPage })))
+const AdminPage = React.lazy(() => import("@/pages/admin").then((module) => ({ default: module.AdminPage })))
 const LoginPage = React.lazy(() => import("@/pages/login").then((module) => ({ default: module.LoginPage })))
 const CredentialsPage = React.lazy(() => import("@/pages/credentials").then((module) => ({ default: module.CredentialsPage })))
 // The player is its own chunk, so Video.js loads only when something plays
@@ -60,6 +61,7 @@ function App() {
                   <Route path="/downloads" element={<DownloadsPage />} />
                   <Route path="/downloads/:id" element={<DownloadsPage />} />
                   {isAdmin(session) && <Route path="/settings" element={<SettingsPage />} />}
+                  {isAdmin(session) && <Route path="/admin" element={<AdminPage />} />}
                 </Route>
                 <Route path="/watch/:titleId" element={<WatchPage />} />
                 <Route path="/login" element={<Navigate to="/" replace />} />

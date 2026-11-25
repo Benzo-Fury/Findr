@@ -293,6 +293,11 @@ describe.skipIf(!hasTools)("download pipeline", () => {
     });
     expect(Attempt.forDownload(download.id).map((attempt) => attempt.toRecord().outcome)).toEqual(["succeeded", "failed"]);
 
+    // The successful try is timed through every step, for the Admin page
+    const [succeeded] = Attempt.forDownload(download.id);
+    expect(succeeded?.bytes).toBeGreaterThan(0);
+    expect(Object.keys(succeeded?.timings ?? {}).sort()).toEqual(["downloading", "metadata", "saving", "sterilizing"]);
+
     // Cleanup: no torrents left in the client, no scratch directories
     expect(downloader.live.size).toBe(0);
     expect(await readdir(join(root, "downloads"))).toEqual([]);

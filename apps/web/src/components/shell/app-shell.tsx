@@ -70,7 +70,7 @@ export function AppShell({ session }: AppShellProps) {
         <Outlet />
       </main>
       <CastButton pinned={pathname === "/"} />
-      <BottomTabs activeCount={active.length} onSearch={openSearch} />
+      <BottomTabs session={session} activeCount={active.length} onSearch={openSearch} />
       <CommandPalette open={searchOpen} onClose={() => setSearchOpen(false)} onPick={openTitle} />
       <TitleSheet titleRef={open} onClose={closeTitle} onOpenTitle={openTitle} />
     </div>

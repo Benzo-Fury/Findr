@@ -22,6 +22,8 @@ type Access = "public" | "user" | "admin"
 /** The intended access of every route. A route missing here, or differing from it, fails the suite. */
 const EXPECTED: Record<string, Access> = {
   "/api/account/credentials": "user",
+  "/api/admin/health": "admin",
+  "/api/admin/stats": "admin",
   "/api/auth/**": "public",
   "/api/downloads": "user",
   "/api/downloads/:id": "user",
